@@ -25,7 +25,7 @@ VMROOT="$HERE/.vm"
 PORT=${PORT:-8000}
 
 DISTRO='' FW=uefi SESSION=i3 THEME=gruvbox FONT=jetbrains MODE=install
-RAM=${RAM:-4096} CPUS=${CPUS:-4} DISK_SIZE=${DISK_SIZE:-30G} GL=1 DISPLAY_OPT=''
+RAM=${RAM:-4096} CPUS=${CPUS:-4} DISK_SIZE=${DISK_SIZE:-30G} GL=0 DISPLAY_OPT=''
 usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; cat <<'EOF'
 Options:
   --bios | --uefi        firmware (default uefi)
@@ -34,7 +34,9 @@ Options:
   --font KEY             default jetbrains
   --boot                 boot the installed disk, skip the ISO
   --reset                delete this VM and exit
-  --no-gl                plain virtio-vga (use if the GL display fails to start)
+  --gl                   3D-accelerated virtio GPU (virgl). Smoother sway, but on many
+                         hosts (NVIDIA especially) the QEMU window stays black
+  --no-gl                plain virtio-vga (the default)
   --vnc                  no local window; VNC on :1 (port 5901)
 Env: RAM (MiB, 4096) CPUS (4) DISK_SIZE (30G) PORT (8000)
 EOF
@@ -50,6 +52,7 @@ while (($#)); do
     --boot) MODE=boot ;;
     --reset) MODE=reset ;;
     --no-gl) GL=0 ;;
+    --gl) GL=1 ;;
     --vnc) DISPLAY_OPT=vnc ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
