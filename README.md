@@ -139,11 +139,34 @@ dead SSD — that is what `tux-backup` is for.
 - `~/.bashrc.local` — your shell additions
 - Re-running the installer moves any config it would overwrite to `~/.local/state/tuxcraft/backup-<date>/`
 
+## Testing in a VM
+
+Before trusting it on a real disk, run a throwaway install in QEMU from your checkout:
+
+```sh
+tests/vm-test.sh arch                          # UEFI, i3
+tests/vm-test.sh debian --bios --session sway
+tests/vm-test.sh void --theme nord --font dos
+```
+
+It downloads and checksum-verifies the live ISO, serves the working tree to the VM, and prints
+the one line to type in the live console. The install then runs unattended (user `tux`,
+password `tux`) and reboots into the new system. There, open a terminal and run the checker:
+
+```sh
+curl -fsSL 10.0.2.2:8000/check | bash
+```
+
+`tests/vm-check.sh` reports PASS/WARN/FAIL for disk layout, snapshots and rollback tooling,
+services, login screen, session programs, TUI apps, theme rendering and fonts, and lists every
+package the installer had to skip. It also works on a real machine after an install.
+Host needs `qemu`, OVMF/edk2 for UEFI, and KVM for usable speed.
+
 ## Honest limitations
 
 - **Tested so far:** every script passes shellcheck; all ten themes are rendered and every generated
   TOML/INI/XML/Qt palette is parsed; the Void package names were checked against void-packages.
-  **Not yet tested:** a full install on real hardware or a VM for each distro. Treat the first runs
+  **Not yet tested:** a full install on real hardware or a VM for each distro — `tests/vm-test.sh` exists to do exactly that. Treat the first runs
   as beta and keep the log (`/var/log/tuxcraft.log`).
 - No disk encryption (LUKS) yet, and the installer always uses the whole disk (no dual-boot partitioning).
 - x86_64 only. Arch + NVIDIA Pascal or older needs the AUR `nvidia-580xx` driver (the script tells you).

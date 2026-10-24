@@ -27,6 +27,10 @@ case $session in
     export MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto QT_QPA_PLATFORM='wayland;xcb'
     export SDL_VIDEODRIVER='wayland,x11' _JAVA_AWT_WM_NONREPARENTING=1
     extra=''
+    # VMs without a GL-capable virtual GPU only have software rendering, which sway refuses by default.
+    case $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null) in
+      QEMU|innotek*|VMware*|Microsoft*) export WLR_RENDERER_ALLOW_SOFTWARE=1 ;;
+    esac
     if [ "${NVIDIA:-no}" = yes ]; then
       extra='--unsupported-gpu'
       export WLR_NO_HARDWARE_CURSORS=1 GBM_BACKEND=nvidia-drm __GLX_VENDOR_LIBRARY_NAME=nvidia
