@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# System menu (Super+Escape): every tuxcraft knob in one place.
+t="alacritty --class tux-float -e" T="alacritty --class tux-float-big -e"
+c=$(printf '%s\n' \
+  "󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰚰  Update system (sysup)" "󰆓  Snapshots" \
+  "󰁯  Back up to external drive" "󰖩  Network" "󰂯  Bluetooth" "󰕾  Audio mixer" "󰓃  Audio output" \
+  "󰾅  Power profile" "󰖔  Night light toggle" "󰹑  Compositor on/off (i3)" "󰍹  Displays" \
+  "󰌌  Keybindings" "󰋼  System info" "󰐥  Power menu" | tux-menu system) || exit 0
+case $c in
+  *theme) tux-theme --menu ;;
+  *Font) tux-font --menu ;;
+  *Wallpaper) tux-wallpaper --menu ;;
+  *sysup*) $T sysup --pause ;;
+  *Snapshots) $T tux-snap ;;
+  *external*) $T bash -c 'tux-backup; read -n1 -rp "Press any key"' ;;
+  *Network) $t nmtui ;;
+  *Bluetooth) $t bluetui ;;
+  *mixer) $t tux-mixer ;;
+  *output) tux-audio output ;;
+  *profile) tux-powerprofile ;;
+  *Night*) tux-nightlight toggle ;;
+  *Compositor*) pgrep -x picom >/dev/null && pkill -x picom || setsid -f picom ;;
+  *Displays) if [[ -n ${WAYLAND_DISPLAY:-} ]]; then $t bash -c 'swaymsg -t get_outputs; echo; echo "Edit ~/.config/kanshi/config to persist."; read -n1'; else arandr; fi ;;
+  *Keybindings) tux-keys ;;
+  *info) $t bash -c 'fastfetch; read -n1 -rp ""' ;;
+  *menu) tux-power ;;
+esac

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# tux-notes [--new] — browse/create markdown notes with fzf (from debi3n script-notes.sh).
+NOTES_DIR=${NOTES_DIR:-$HOME/Notes}
+SYNC="$NOTES_DIR/.sync"
+EDITOR=${EDITOR:-micro}
+mkdir -p "$NOTES_DIR"
+if [[ ${1:-} == --new || ${1:-} == -n ]]; then
+  name=$(fzf --print-query --prompt="New note name: " --header="Enter to create, Esc to cancel" --height=5 </dev/null | head -n1)
+  [[ -z $name ]] && exit 0
+  f="$NOTES_DIR/${name%.md}.md"; mkdir -p "$(dirname "$f")"; exec $EDITOR "$f"
+fi
+sync_bind=()
+[[ -x $SYNC ]] && sync_bind=(--bind "ctrl-s:execute('$SYNC'; read -n1 -r -p 'Press any key...')")
+sel=$(find -L "$NOTES_DIR" -type f -name '*.md' -printf '%P\n' | sed 's/\.md$//' | sort |
+  fzf --prompt="Notes > " --preview="bat --style=plain --color=always '$NOTES_DIR/{}.md' 2>/dev/null || cat '$NOTES_DIR/{}.md'" \
+      --preview-window=right:60%:wrap --header="Enter: open | Ctrl-/: preview$([[ -x $SYNC ]] && echo ' | Ctrl-S: sync')" \
+      --bind='ctrl-/:toggle-preview' "${sync_bind[@]}")
+[[ -n $sel ]] && exec $EDITOR "$NOTES_DIR/$sel.md"

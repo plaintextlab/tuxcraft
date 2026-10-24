@@ -1,0 +1,48 @@
+#!/bin/sh
+# tux-session [i3|sway] — started by the login screen. Sets up the environment, then
+# launches i3 (through startx) or sway. Log: ~/.local/state/tuxcraft/session.log
+[ -f /etc/tuxcraft/session.conf ] && . /etc/tuxcraft/session.conf
+session=${1:-${SESSION:-i3}}
+[ -f "$HOME/.config/tuxcraft/session" ] && [ -z "$1" ] && session=$(cat "$HOME/.config/tuxcraft/session")
+
+mkdir -p "$HOME/.local/state/tuxcraft"
+exec >"$HOME/.local/state/tuxcraft/session.log" 2>&1
+
+[ -f "$HOME/.config/tuxcraft/env.sh" ] && . "$HOME/.config/tuxcraft/env.sh"
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+export QT_QPA_PLATFORMTHEME=qt5ct          # read by qt5ct AND qt6ct
+export QT_AUTO_SCREEN_SCALE_FACTOR=1
+export XCURSOR_THEME=Adwaita XCURSOR_SIZE=24
+export _JAVA_AWT_WM_NONREPARENTING=1
+export TERMINAL=alacritty
+export BROWSER=${BROWSER:-firefox}
+
+# Systemd distros already run a user D-Bus; Void needs one per session.
+wrap=''
+[ -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ] || wrap='dbus-run-session --'
+
+case $session in
+  sway)
+    export XDG_CURRENT_DESKTOP=sway XDG_SESSION_DESKTOP=sway XDG_SESSION_TYPE=wayland
+    export MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto QT_QPA_PLATFORM='wayland;xcb'
+    export SDL_VIDEODRIVER='wayland,x11' _JAVA_AWT_WM_NONREPARENTING=1
+    extra=''
+    if [ "${NVIDIA:-no}" = yes ]; then
+      extra='--unsupported-gpu'
+      export WLR_NO_HARDWARE_CURSORS=1 GBM_BACKEND=nvidia-drm __GLX_VENDOR_LIBRARY_NAME=nvidia
+    fi
+    # shellcheck disable=SC2086
+    exec $wrap sway $extra
+    ;;
+  *)
+    export XDG_CURRENT_DESKTOP=i3 XDG_SESSION_DESKTOP=i3 XDG_SESSION_TYPE=x11
+    if [ -n "$DISPLAY" ]; then            # a display manager already started X
+      # shellcheck disable=SC2086
+      exec $wrap i3
+    fi
+    vt=''
+    [ -n "$XDG_VTNR" ] && vt="vt$XDG_VTNR"
+    # shellcheck disable=SC2086
+    exec $wrap startx "$HOME/.xinitrc" -- $vt -keeptty
+    ;;
+esac

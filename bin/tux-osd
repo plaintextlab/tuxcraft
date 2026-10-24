@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# tux-osd volume up|down|mute | mic mute | brightness up|down — change + show a bar
+# notification that replaces itself (from debi3n script-volume-slider.sh).
+bar() { local n=$(( $1 / 5 )); printf '%*s' "$n" '' | tr ' ' '█'; printf '%*s' $((20 - n)) '' | tr ' ' '░'; }
+note() { notify-send -a osd -u low -t 1200 -h string:x-dunst-stack-tag:osd -h "int:value:$3" "$1" "$2"; }
+case $1 in
+  volume)
+    case $2 in
+      up)   pactl set-sink-mute @DEFAULT_SINK@ 0; pactl set-sink-volume @DEFAULT_SINK@ +5% ;;
+      down) pactl set-sink-volume @DEFAULT_SINK@ -5% ;;
+      mute) pactl set-sink-mute @DEFAULT_SINK@ toggle ;;
+    esac
+    v=$(pactl get-sink-volume @DEFAULT_SINK@ | grep -o '[0-9]*%' | head -n1 | tr -d %)
+    (( v > 150 )) && { pactl set-sink-volume @DEFAULT_SINK@ 150%; v=150; }
+    if pactl get-sink-mute @DEFAULT_SINK@ | grep -q yes; then note "󰝟  Muted" "$(bar 0)" 0
+    else note "󰕾  Volume $v%" "$(bar $(( v > 100 ? 100 : v )))" "$v"; fi ;;
+  mic)
+    pactl set-source-mute @DEFAULT_SOURCE@ toggle
+    pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes && note "󰍭  Microphone muted" "" 0 || note "󰍬  Microphone on" "" 100 ;;
+  brightness)
+    case $2 in up) brightnessctl -q set 5%+ ;; down) brightnessctl -q set 5%- ;; esac
+    b=$(( $(brightnessctl get) * 100 / $(brightnessctl max) ))
+    note "󰃟  Brightness $b%" "$(bar "$b")" "$b" ;;
+esac

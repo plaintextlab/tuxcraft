@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# tux-open browser|browser-private
+. /etc/tuxcraft/session.conf 2>/dev/null
+STATE="$HOME/.config/tuxcraft/state"; . "$STATE" 2>/dev/null
+b=${BROWSER:-firefox}
+[[ $b == firefox ]] && ! command -v firefox >/dev/null && command -v firefox-esr >/dev/null && b=firefox-esr
+command -v "$b" >/dev/null || b=xdg-open
+mode=${1:-browser}; shift || true
+case $mode in
+  browser) exec "$b" "$@" ;;
+  browser-private)
+    case $b in firefox*) exec "$b" --private-window ;; chromium|brave*|google-chrome*) exec "$b" --incognito ;; *) exec "$b" ;; esac ;;
+esac

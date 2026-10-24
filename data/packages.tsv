@@ -1,0 +1,115 @@
+# group	arch	debian	void
+# One line per logical package. "-" means "not packaged / not needed on this distro".
+# Names that turn out to be unavailable at install time are skipped with a warning,
+# and the fallbacks in lib/extras.sh fill the gaps for a few important tools.
+#
+# ---- core: everything a working desktop session needs, regardless of X11/Wayland
+core	base-devel	build-essential	base-devel
+core	git curl wget rsync	git curl wget rsync ca-certificates	git curl wget rsync
+core	unzip p7zip zip	unzip p7zip-full zip	unzip p7zip zip
+core	man-db man-pages	man-db manpages	man-db man-pages
+core	pciutils usbutils lsof	pciutils usbutils lsof	pciutils usbutils lsof
+core	sudo	sudo	sudo
+core	bash-completion	bash-completion	bash-completion
+core	networkmanager	network-manager wpasupplicant	NetworkManager
+core	network-manager-applet	network-manager-applet	network-manager-applet
+core	pipewire pipewire-pulse pipewire-alsa wireplumber	pipewire pipewire-pulse pipewire-alsa wireplumber	pipewire wireplumber alsa-pipewire
+core	pipewire-jack	pipewire-jack	libjack-pipewire
+core	libnotify	libnotify-bin	libnotify
+core	dunst	dunst	dunst
+core	alacritty	alacritty	alacritty
+core	xdg-utils xdg-user-dirs	xdg-utils xdg-user-dirs	xdg-utils xdg-user-dirs
+core	xdg-desktop-portal xdg-desktop-portal-gtk	xdg-desktop-portal xdg-desktop-portal-gtk	xdg-desktop-portal xdg-desktop-portal-gtk
+core	polkit mate-polkit	polkitd mate-polkit	polkit mate-polkit
+core	gnome-keyring libsecret seahorse	gnome-keyring libsecret-1-0 seahorse	gnome-keyring libsecret seahorse
+core	udisks2 udiskie gvfs	udisks2 udiskie gvfs	udisks2 udiskie gvfs
+core	ntfs-3g exfatprogs dosfstools	ntfs-3g exfatprogs dosfstools	ntfs-3g exfatprogs dosfstools
+core	imv	imv	imv
+core	mpv	mpv	mpv
+core	ffmpeg	ffmpeg	ffmpeg
+core	playerctl	playerctl	playerctl
+core	brightnessctl	brightnessctl	brightnessctl
+core	gammastep	gammastep	gammastep
+core	imagemagick	imagemagick	ImageMagick
+core	jq	jq	jq
+core	python	python3	python3
+core	fontconfig	fontconfig	fontconfig
+core	noto-fonts noto-fonts-emoji noto-fonts-cjk ttf-dejavu ttf-liberation	fonts-noto-core fonts-noto-color-emoji fonts-noto-cjk fonts-dejavu fonts-liberation	noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf liberation-fonts-ttf
+core	papirus-icon-theme	papirus-icon-theme	papirus-icon-theme
+core	adw-gtk-theme	adw-gtk3	-
+core	gnome-themes-extra	gnome-themes-extra	gnome-themes-extra
+core	adwaita-cursors	adwaita-icon-theme	adwaita-icon-theme
+core	qt5ct qt6ct	qt5ct qt6ct	qt5ct qt6ct
+core	qt5-wayland qt6-wayland	qtwayland5 qt6-wayland	qt5-wayland qt6-wayland
+core	kbd	kbd	kbd
+core	greetd greetd-tuigreet	greetd tuigreet	greetd tuigreet
+core	-	-	dbus elogind
+core	-	-	chrony cronie socklog-void
+#
+# ---- x11: i3 session
+x11	xorg-server xorg-xinit xorg-xrandr xorg-xset xorg-xinput xorg-xprop xorg-xrdb xorg-xkill xorg-xsetroot	xserver-xorg-core xserver-xorg-input-libinput xinit x11-xserver-utils xinput	xorg-minimal xinit xrandr xset xinput xprop xrdb xkill xsetroot
+x11	i3-wm	i3-wm	i3
+x11	i3lock xss-lock	i3lock xss-lock	i3lock xss-lock
+x11	polybar	polybar	polybar
+x11	picom	picom	picom
+x11	rofi	rofi	rofi
+x11	feh	feh	feh
+x11	dex	dex	dex
+x11	numlockx	numlockx	numlockx
+x11	xsettingsd	xsettingsd	xsettingsd
+x11	autorandr arandr	autorandr arandr	autorandr arandr
+x11	maim slop xclip xdotool	maim slop xclip xdotool	maim slop xclip xdotool
+x11	copyq	copyq	copyq
+#
+# ---- wayland: sway session
+wayland	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle
+wayland	waybar	waybar	Waybar
+wayland	fuzzel	fuzzel	fuzzel
+wayland	grim slurp wl-clipboard cliphist wf-recorder	grim slurp wl-clipboard cliphist wf-recorder	grim slurp wl-clipboard cliphist wf-recorder
+wayland	xdg-desktop-portal-wlr	xdg-desktop-portal-wlr	xdg-desktop-portal-wlr
+wayland	xorg-xwayland	xwayland	xorg-server-xwayland
+wayland	kanshi	kanshi	kanshi
+#
+# ---- tui: the terminal app suite
+tui	btop	btop	btop
+tui	yazi	-	yazi
+tui	ffmpegthumbnailer poppler fd ripgrep fzf	ffmpegthumbnailer poppler-utils fd-find ripgrep fzf	ffmpegthumbnailer poppler-utils fd ripgrep fzf
+tui	bat eza zoxide	bat eza zoxide	bat eza zoxide
+tui	lazygit	lazygit	lazygit
+tui	ncdu	ncdu	ncdu
+tui	micro	micro	micro
+tui	neovim	neovim	neovim
+tui	fastfetch	fastfetch	fastfetch
+tui	starship	-	starship
+tui	pulsemixer	pulsemixer	pulsemixer
+tui	wiremix	-	wiremix
+tui	bluetui	-	bluetui
+tui	calcurse	calcurse	calcurse
+tui	libqalculate	qalc	libqalculate
+tui	tealdeer	tealdeer	tealdeer
+tui	trash-cli	trash-cli	trash-cli
+tui	chafa	chafa	chafa
+tui	tmux	tmux	tmux
+#
+# ---- optional bundles (chosen in the wizard)
+gui-fm	nemo nemo-fileroller	nemo	nemo
+music	mpd ncmpcpp mpc	mpd ncmpcpp mpc	mpd ncmpcpp mpc
+firefox	firefox	firefox-esr	firefox
+chromium	chromium	chromium	chromium
+dev	docker docker-compose lazydocker	docker.io docker-compose	docker docker-compose lazydocker
+dev	nodejs npm python-pip go rust	nodejs npm python3-pip golang rustc cargo	nodejs python3-pip go rust cargo
+flatpak	flatpak	flatpak	flatpak
+printing	cups cups-pdf system-config-printer	cups printer-driver-cups-pdf system-config-printer	cups cups-pdf system-config-printer
+printing	avahi nss-mdns	avahi-daemon libnss-mdns	avahi nss-mdns
+bluetooth	bluez bluez-utils	bluez	bluez
+laptop	power-profiles-daemon	power-profiles-daemon	power-profiles-daemon
+laptop	acpi	acpi	acpi
+gaming	steam gamemode lib32-gamemode mangohud	steam-installer gamemode mangohud	steam gamemode MangoHud
+office	libreoffice-fresh	libreoffice	libreoffice
+office	zathura zathura-pdf-mupdf	zathura	zathura zathura-pdf-mupdf
+#
+# ---- snapshots / rollback safety net
+snapshots	snapper snap-pac grub-btrfs inotify-tools btrfs-progs	snapper inotify-tools btrfs-progs	snapper grub-btrfs inotify-tools btrfs-progs
+#
+# ---- distro hygiene
+hygiene	pacman-contrib reflector	unattended-upgrades	xtools

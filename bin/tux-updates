@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Pending update count for the bar (no root needed). Prints nothing when up to date.
+mode=${1:---plain}
+. /etc/tuxcraft/session.conf 2>/dev/null
+case ${DISTRO:-} in
+  arch)   n=$( (checkupdates 2>/dev/null; command -v paru >/dev/null && paru -Qua 2>/dev/null) | wc -l) ;;
+  debian) n=$(apt list --upgradable 2>/dev/null | tail -n +2 | wc -l) ;;
+  void)   n=$(xbps-install -Mun 2>/dev/null | wc -l) ;;
+  *) exit 0 ;;
+esac
+((n > 0)) || { echo ""; exit 0; }
+if [[ $mode == --bar ]]; then . ~/.config/tuxcraft/colors.sh 2>/dev/null; echo "%{F${yellow:-#d79921}}󰚰 $n%{F-}"; else echo "󰚰 $n"; fi

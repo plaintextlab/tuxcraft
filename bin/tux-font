@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# tux-font — pick the UI font with real previews.
+#   tux-font                   menu + preview image
+#   tux-font set <key> [size]  e.g. tux-font set dos 13
+#   tux-font size <n>          change size only
+#   tux-font list
+# Fonts not yet installed are downloaded to ~/.local/share/fonts (no root needed).
+set -euo pipefail
+SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+TABLE="$SHARE/data/fonts.tsv"
+STATE="$HOME/.config/tuxcraft/state"
+UFONTS="$HOME/.local/share/fonts/tuxcraft"
+
+field() { awk -F'\t' -v k="$1" -v c="$2" '$1==k {print $c}' "$TABLE"; }
+state_set() { touch "$STATE"; grep -q "^$1=" "$STATE" && sed -i "s|^$1=.*|$1=\"$2\"|" "$STATE" || echo "$1=\"$2\"" >>"$STATE"; }
+
+ensure() {
+  local fam src; fam=$(field "$1" 2); src=$(field "$1" 3)
+  fc-list : family | grep -qxF "$fam" && return 0
+  case $src in
+    nerd:*)
+      notify-send -u low "Downloading ${src#nerd:} Nerd Font…" 2>/dev/null || echo "Downloading ${src#nerd:}…"
+      mkdir -p "$UFONTS/${src#nerd:}"
+      curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/${src#nerd:}.tar.xz" |
+        tar -xJ -C "$UFONTS/${src#nerd:}" ;;
+    bundled:*) install -Dm644 "$SHARE/assets/fonts/${src#bundled:}" "$UFONTS/bundled/${src#bundled:}" ;;
+  esac
+  fc-cache -f "$UFONTS" >/dev/null
+}
+
+apply() {  # apply key [size]
+  local key=$1 fam; fam=$(field "$key" 2)
+  [[ -n $fam ]] || { echo "Unknown font '$key'. Try: tux-font list" >&2; exit 1; }
+  ensure "$key"
+  state_set FONT "$fam"
+  if [[ $key == noto ]]; then state_set TERM_FONT "$(field jetbrains 2)"; ensure jetbrains; else state_set TERM_FONT "$fam"; fi
+  [[ -n ${2:-} ]] && { state_set FONT_SIZE "$2"; state_set TERM_FONT_SIZE "$(( $2 + 1 ))"; }
+  tux-theme apply
+}
+
+menu() {
+  local viewer='' pid=''
+  if [[ -f $SHARE/assets/font-previews/all.png ]]; then
+    for v in imv feh; do command -v $v >/dev/null && { viewer=$v; break; }; done
+    [[ -n $viewer ]] && { $viewer "$SHARE/assets/font-previews/all.png" >/dev/null 2>&1 & pid=$!; }
+  fi
+  local pick
+  pick=$(awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE" | tux-menu font) || true
+  [[ -n $pid ]] && kill "$pid" 2>/dev/null
+  [[ -n ${pick:-} ]] && apply "${pick%% *}"
+}
+
+case ${1:-} in
+  set) apply "${2:?font key}" "${3:-}" ;;
+  size) state_set FONT_SIZE "${2:?size}"; state_set TERM_FONT_SIZE "$(( $2 + 1 ))"; tux-theme apply ;;
+  list) awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE" ;;
+  ""|--menu) menu ;;
+  -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) apply "$1" "${2:-}" ;;
+esac

@@ -1,0 +1,34 @@
+// tuxcraft waybar (Wayland) — mirrors the polybar layout of the i3 session.
+{
+  "layer": "top",
+  "position": "top",
+  "height": 30,
+  "spacing": 6,
+  "modules-left": ["sway/workspaces", "sway/mode", "sway/window"],
+  "modules-right": ["custom/updates", "pulseaudio", "custom/net", "cpu", "memory", "battery", "custom/powerprofile", "clock", "tray"],
+
+  "sway/workspaces": { "disable-scroll": true, "all-outputs": false, "format": "{name}" },
+  "sway/mode": { "format": " {}" },
+  "sway/window": { "max-length": 60 },
+
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟 muted",
+    "format-icons": { "default": ["󰕿", "󰖀", "󰕾"] },
+    "on-click": "alacritty --class tux-float -e tux-mixer",
+    "on-click-right": "tux-osd volume mute"
+  },
+  "custom/net": { "exec": "tux-netinfo --plain", "interval": 5, "on-click": "alacritty --class tux-float -e nmtui" },
+  "cpu": { "format": " {usage}%", "interval": 2 },
+  "memory": { "format": " {percentage}%", "interval": 3 },
+  "battery": {
+    "states": { "warning": 25, "critical": 12 },
+    "format": "{icon} {capacity}%",
+    "format-charging": "󰂄 {capacity}%",
+    "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰂂", "󰁹"]
+  },
+  "custom/powerprofile": { "exec": "~/.config/polybar/scripts/powerprofile.sh", "interval": 5, "on-click": "tux-powerprofile" },
+  "custom/updates": { "exec": "tux-updates --plain", "interval": 1800, "on-click": "alacritty --class tux-float-big -e sysup --pause" },
+  "clock": { "format": "󰥔 {:%H:%M}", "format-alt": "󰃭 {:%a %d %b %Y  %H:%M:%S}", "interval": 1, "tooltip-format": "<tt>{calendar}</tt>" },
+  "tray": { "spacing": 8 }
+}

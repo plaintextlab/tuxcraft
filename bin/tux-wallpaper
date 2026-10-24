@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# tux-wallpaper set <file> | random | theme | restore | --menu
+# Wallpapers live in ~/Pictures/Wallpapers. "theme" generates a gradient in the current palette.
+DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Wallpapers"
+STATE="$HOME/.config/tuxcraft/state"
+GEN="$HOME/.local/share/tuxcraft/wallpapers"
+mkdir -p "$DIR" "$GEN"
+
+state_set() { touch "$STATE"; grep -q '^WALLPAPER=' "$STATE" && sed -i "s|^WALLPAPER=.*|WALLPAPER=\"$1\"|" "$STATE" || echo "WALLPAPER=\"$1\"" >>"$STATE"; }
+
+show() {
+  local f=$1
+  if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+    pkill -x swaybg; setsid -f swaybg -m fill -i "$f" >/dev/null 2>&1
+  else
+    feh --no-fehbg --bg-fill "$f"
+  fi
+}
+
+theme_wall() {
+  . "$HOME/.config/tuxcraft/colors.sh"
+  local t; t=$(. "$STATE" 2>/dev/null; echo "${THEME:-default}")
+  local f="$GEN/$t.png" im
+  if [[ ! -f $f ]]; then
+    im=$(command -v magick || command -v convert) || { echo "imagemagick missing" >&2; return 1; }
+    "$im" -size 2560x1440 radial-gradient:"$bg_alt"-"$bg_dark" \
+      \( -size 2560x6 xc:"$accent" -alpha set -channel A -evaluate set 35% \) -gravity south -composite \
+      -attenuate 0.15 +noise Uniform -colorspace sRGB "$f" 2>/dev/null || return 1
+  fi
+  echo "$f"
+}
+
+case ${1:-restore} in
+  set)    [[ -f $2 ]] || { echo "No such file: $2" >&2; exit 1; }
+          f=$(readlink -f "$2"); show "$f"; state_set "$f" ;;
+  random) f=$(find -L "$DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) | shuf -n1)
+          [[ -n $f ]] || { notify-send "No wallpapers in $DIR"; exit 1; }
+          show "$f"; state_set "$f" ;;
+  theme)  f=$(theme_wall) && show "$f"; state_set theme ;;
+  restore)
+          w=$(. "$STATE" 2>/dev/null; echo "${WALLPAPER:-theme}")
+          if [[ $w == theme || ! -f $w ]]; then f=$(theme_wall) && show "$f"; else show "$w"; fi ;;
+  --menu)
+          pick=$( { echo "󰸉  Theme gradient"; echo "  Random"; find -L "$DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) -printf '%f\n' | sort; } | tux-menu wallpaper) || exit 0
+          case $pick in
+            *"Theme gradient") exec "$0" theme ;;
+            *Random) exec "$0" random ;;
+            *) exec "$0" set "$(find -L "$DIR" -type f -name "$pick" | head -n1)" ;;
+          esac ;;
+esac

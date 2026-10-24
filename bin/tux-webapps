@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Open sites as app windows (from debi3n rofi-webapps.sh). Edit the list in
+# ~/.config/tuxcraft/webapps ("Name|https://url" per line). Needs a Chromium-based browser
+# for real app windows; with Firefox the site opens in a new window instead.
+list="$HOME/.config/tuxcraft/webapps"
+[[ -f $list ]] || printf '%s\n' "YouTube|https://www.youtube.com" "YouTube Music|https://music.youtube.com" \
+  "Gmail|https://mail.google.com" "Google Calendar|https://calendar.google.com" "WhatsApp|https://web.whatsapp.com" \
+  "ChatGPT|https://chatgpt.com" "Claude|https://claude.ai" >"$list"
+pick=$(cut -d'|' -f1 "$list" | tux-menu "web app") || exit 0
+url=$(awk -F'|' -v n="$pick" '$1==n{print $2; exit}' "$list"); [[ -z $url ]] && exit 0
+id=webapp-$(tr 'A-Z ' 'a-z-' <<<"$pick")
+for b in brave-origin brave chromium google-chrome-stable; do
+  command -v "$b" >/dev/null && exec "$b" --app="$url" --class="$id"
+done
+exec tux-open browser "$url"

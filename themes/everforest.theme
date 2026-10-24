@@ -1,0 +1,11 @@
+# Everforest Dark (medium)
+name="Everforest"
+variant=dark
+papirus=green
+ansi_accent=green
+bg=#2d353b bg_dark=#232a2e bg_alt=#343f44 bg_hl=#475258
+fg=#d3c6aa fg_dim=#9da9a0 muted=#7a8478
+accent=#a7c080 accent_fg=#2d353b
+red=#e67e80 orange=#e69875 yellow=#dbbc7f green=#a7c080 cyan=#83c092 blue=#7fbbb3 magenta=#d699b6
+color0=#343f44 color1=#e67e80 color2=#a7c080 color3=#dbbc7f color4=#7fbbb3 color5=#d699b6 color6=#83c092 color7=#d3c6aa
+color8=#7a8478 color9=#e67e80 color10=#a7c080 color11=#dbbc7f color12=#7fbbb3 color13=#d699b6 color14=#83c092 color15=#e6e2cc

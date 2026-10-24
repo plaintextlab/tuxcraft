@@ -1,0 +1,11 @@
+# Dracula
+name="Dracula"
+variant=dark
+papirus=violet
+ansi_accent=magenta
+bg=#282a36 bg_dark=#21222c bg_alt=#343746 bg_hl=#44475a
+fg=#f8f8f2 fg_dim=#e2e2dc muted=#6272a4
+accent=#bd93f9 accent_fg=#282a36
+red=#ff5555 orange=#ffb86c yellow=#f1fa8c green=#50fa7b cyan=#8be9fd blue=#bd93f9 magenta=#ff79c6
+color0=#21222c color1=#ff5555 color2=#50fa7b color3=#f1fa8c color4=#bd93f9 color5=#ff79c6 color6=#8be9fd color7=#f8f8f2
+color8=#6272a4 color9=#ff6e6e color10=#69ff94 color11=#ffffa5 color12=#d6acff color13=#ff92df color14=#a4ffff color15=#ffffff

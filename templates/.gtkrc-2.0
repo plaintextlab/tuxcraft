@@ -1,0 +1,4 @@
+gtk-theme-name="{{gtk_theme}}"
+gtk-icon-theme-name="{{icon_theme}}"
+gtk-cursor-theme-name="Adwaita"
+gtk-font-name="{{font}} {{font_size}}"

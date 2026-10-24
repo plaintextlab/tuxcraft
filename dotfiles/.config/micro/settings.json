@@ -1,0 +1,10 @@
+{
+    "colorscheme": "tuxcraft",
+    "autosu": true,
+    "mkparents": true,
+    "savecursor": true,
+    "scrollbar": true,
+    "softwrap": true,
+    "tabstospaces": true,
+    "tabsize": 4
+}

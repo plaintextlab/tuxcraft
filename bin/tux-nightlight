@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# tux-nightlight on|off|toggle — warm screen colours (gammastep; replaces debi3n's redshift binds).
+on()  { pkill -x gammastep; setsid -f gammastep -O "${TEMP:-3500}" -P >/dev/null 2>&1; notify-send -u low "Night light on"; }
+off() { pkill -x gammastep; [[ -z ${WAYLAND_DISPLAY:-} ]] && gammastep -x >/dev/null 2>&1; notify-send -u low "Night light off"; }
+case ${1:-toggle} in
+  on) on ;; off) off ;;
+  toggle) pgrep -x gammastep >/dev/null && off || on ;;
+esac

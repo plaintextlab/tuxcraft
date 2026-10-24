@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Container layout menu (from debi3n i3_layout.sh).
+msg=i3-msg; [[ -n ${SWAYSOCK:-} ]] && msg=swaymsg
+case $(printf '󰓩  Tabbed\n  Tiled\n  Stacked\n' | tux-menu layout) in
+  *Tabbed) $msg layout tabbed ;; *Tiled) $msg layout default ;; *Stacked) $msg layout stacking ;;
+esac >/dev/null

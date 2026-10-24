@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Re-push GTK/libadwaita settings into gsettings at login (they need a running D-Bus).
+STATE="$HOME/.config/tuxcraft/state"
+# shellcheck source=/dev/null
+[[ -f $STATE ]] && . "$STATE"
+command -v gsettings >/dev/null || exit 0
+gi=org.gnome.desktop.interface
+ini="$HOME/.config/gtk-3.0/settings.ini"
+gtk=$(sed -n 's/^gtk-theme-name=//p' "$ini"); icons=$(sed -n 's/^gtk-icon-theme-name=//p' "$ini")
+gsettings set $gi gtk-theme "$gtk"
+gsettings set $gi icon-theme "$icons"
+[[ $gtk == *dark* ]] && gsettings set $gi color-scheme prefer-dark || gsettings set $gi color-scheme prefer-light
+gsettings set $gi font-name "${FONT:-Noto Sans} ${FONT_SIZE:-11}"
+gsettings set $gi monospace-font-name "${TERM_FONT:-monospace} ${TERM_FONT_SIZE:-12}"
+gsettings set $gi cursor-theme Adwaita

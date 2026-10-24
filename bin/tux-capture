@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# tux-capture region|screen|menu|stop — screenshots and recordings (from debi3n
+# rofi-screen-capture.sh), for X11 (maim/slop/xclip) and Wayland (grim/slurp/wl-copy).
+SHOTS="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Screenshots"
+VIDS="$(xdg-user-dir VIDEOS 2>/dev/null || echo "$HOME/Videos")/Screen Captures"
+AUDIO="$HOME/Music/Voice Recordings"
+PID=${XDG_RUNTIME_DIR:-/tmp}/tux-record.pid INFO=${XDG_RUNTIME_DIR:-/tmp}/tux-record.file
+mkdir -p "$SHOTS" "$VIDS" "$AUDIO"
+ts=$(date +%Y-%m-%d_%H-%M-%S)
+wl() { [[ -n ${WAYLAND_DISPLAY:-} ]]; }
+
+copy_png() { if wl; then wl-copy -t image/png <"$1"; else xclip -selection clipboard -t image/png <"$1"; fi; }
+
+shot() {  # shot region|screen
+  local f="$SHOTS/${1}_$ts.png"
+  if wl; then
+    if [[ $1 == region ]]; then grim -g "$(slurp)" "$f" || exit 1; else grim "$f"; fi
+  else
+    if [[ $1 == region ]]; then maim -s -u "$f" || exit 1; else sleep 0.2; maim -u "$f"; fi
+  fi
+  copy_png "$f"
+  notify-send -a capture -i "$f" "Screenshot saved + copied" "${f/#$HOME/\~}"
+}
+
+record() {  # record screen|mic
+  [[ -f $PID ]] && kill -0 "$(cat "$PID")" 2>/dev/null && { notify-send "Already recording" "Super+Shift+Print stops it"; exit 1; }
+  local f mon mic
+  mon="$(pactl get-default-sink 2>/dev/null).monitor"; mic=$(pactl get-default-source 2>/dev/null)
+  if [[ $1 == mic ]]; then
+    f="$AUDIO/mic_$ts.mp3"
+    ffmpeg -y -f pulse -i "$mic" -c:a libmp3lame -q:a 2 "$f" >/dev/null 2>&1 &
+  elif wl; then
+    f="$VIDS/screen_$ts.mp4"
+    if command -v wf-recorder >/dev/null; then
+      wf-recorder --audio="$mon" -f "$f" >/dev/null 2>&1 &
+    else
+      notify-send "Install wf-recorder for screen recording on Wayland"; exit 1
+    fi
+  else
+    f="$VIDS/screen_$ts.mp4"
+    local res; res=$(xdpyinfo 2>/dev/null | awk '/dimensions/{print $2}'); res=${res:-$(xrandr | awk '/\*/{print $1; exit}')}
+    ffmpeg -y -f x11grab -framerate 30 -video_size "$res" -i "${DISPLAY}" \
+      -f pulse -i "$mon" -f pulse -i "$mic" \
+      -filter_complex "[1:a][2:a]amix=inputs=2:duration=longest[a]" -map 0:v -map "[a]" \
+      -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p -c:a aac -b:a 160k "$f" >/dev/null 2>&1 &
+  fi
+  echo $! >"$PID"; echo "$f" >"$INFO"
+  notify-send -a capture "● Recording" "Super+Shift+Print to stop"
+}
+
+stop() {
+  [[ -f $PID ]] || { notify-send "Nothing is recording"; exit 0; }
+  kill -INT "$(cat "$PID")" 2>/dev/null
+  notify-send -a capture "Recording saved" "$(sed "s#^$HOME#~#" "$INFO" 2>/dev/null)"
+  rm -f "$PID" "$INFO"
+}
+
+case ${1:-menu} in
+  region|screen) shot "$1" ;;
+  stop) stop ;;
+  menu)
+    c=$(printf '󰩭  Region screenshot\n󰹑  Full screenshot\n󰕧  Record screen\n󰍬  Record microphone\n󰓛  Stop recording\n' | tux-menu capture) || exit 0
+    case $c in
+      *Region*) sleep 0.2; shot region ;; *Full*) shot screen ;;
+      *screen) record screen ;; *microphone) record mic ;; *Stop*) stop ;;
+    esac ;;
+esac

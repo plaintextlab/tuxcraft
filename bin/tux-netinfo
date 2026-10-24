@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Short network status for the bars: wifi SSID+signal, wired, or offline.
+plain=0; [[ ${1:-} == --plain ]] && plain=1
+line=$(nmcli -t -f TYPE,STATE,CONNECTION device 2>/dev/null | awk -F: '$2=="connected" && ($1=="wifi"||$1=="ethernet"){print; exit}')
+type=${line%%:*}; name=${line##*:}
+case $type in
+  wifi) sig=$(nmcli -t -f IN-USE,SIGNAL dev wifi 2>/dev/null | awk -F: '$1=="*"{print $2; exit}'); echo "󰖩 ${name:0:16} ${sig:-?}%" ;;
+  ethernet) echo "󰈀 wired" ;;
+  *) ((plain)) && echo "󰖪 offline" || echo "%{F#888888}󰖪 offline%{F-}" ;;
+esac

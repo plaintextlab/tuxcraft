@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# tux-lock — themed lock screen. X11: pixelated screenshot + i3lock (from debi3n blur-lock,
+# but ~10x faster). Wayland: swaylock with the theme colours.
+. "$HOME/.config/tuxcraft/colors.sh" 2>/dev/null
+if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+  pgrep -x swaylock >/dev/null || exec swaylock -f
+fi
+pgrep -x i3lock >/dev/null && exit 0
+img="${XDG_RUNTIME_DIR:-/tmp}/tux-lock.png"
+playerctl pause 2>/dev/null
+if command -v maim >/dev/null && { command -v magick >/dev/null || command -v convert >/dev/null; }; then
+  im=$(command -v magick || command -v convert)
+  maim -u "$img" && "$im" "$img" -scale 5% -scale 2000% -fill "${bg:-#000000}" -colorize 35% "$img"
+  i3lock -n -e -i "$img" -c "${bg#\#}" ; rm -f "$img"
+else
+  i3lock -n -e -c "${bg#\#}"
+fi

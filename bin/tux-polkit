@@ -1,0 +1,10 @@
+#!/bin/sh
+# Start whichever polkit authentication agent is installed (paths differ per distro).
+for a in /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
+         /usr/libexec/polkit-mate-authentication-agent-1 \
+         /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 \
+         /usr/libexec/polkit-gnome-authentication-agent-1 \
+         /usr/lib/x86_64-linux-gnu/libexec/polkit-mate-authentication-agent-1; do
+  [ -x "$a" ] && exec "$a"
+done
+echo "tux-polkit: no polkit agent found" >&2; exit 1

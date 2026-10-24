@@ -1,0 +1,12 @@
+# key	family (as fontconfig names it)	source	description
+jetbrains	JetBrainsMono Nerd Font	nerd:JetBrainsMono	Clean, tall, very readable. The safe default.
+iosevka	Iosevka Nerd Font	nerd:Iosevka	Narrow, fits a lot on screen. Great for tiling.
+fira	FiraCode Nerd Font	nerd:FiraCode	Friendly, popular, with ligatures.
+cascadia	CaskaydiaCove Nerd Font	nerd:CascadiaCode	Microsoft's Cascadia Code, rounded and warm.
+plex	BlexMono Nerd Font	nerd:IBMPlexMono	IBM Plex Mono, a touch of typewriter.
+hack	Hack Nerd Font	nerd:Hack	Classic, no-nonsense workhorse.
+0xproto	0xProto Nerd Font	nerd:0xProto	Distinctive letterforms, made for legibility.
+terminus	Terminess Nerd Font	nerd:Terminus	Terminus bitmap look, crisp at small sizes.
+departure	DepartureMono Nerd Font	nerd:DepartureMono	Pixel font with a retro-futuristic feel.
+dos	More Perfect DOS VGA	bundled:MorePerfectDOSVGA.ttf	The real MS-DOS VGA look (from debi3n).
+noto	Noto Sans	system:	Proportional sans for the UI (terminal stays monospace).

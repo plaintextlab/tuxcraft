@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Pick a power profile (from debi3n rofi-powerprofiles.sh).
+command -v powerprofilesctl >/dev/null || { notify-send "power-profiles-daemon is not installed"; exit 1; }
+cur=$(powerprofilesctl get)
+pick=$(powerprofilesctl list | sed -n 's/^[ *]*\([a-z-]*\):$/\1/p' | sed "s/^$cur\$/$cur (current)/" | tux-menu "power profile") || exit 0
+powerprofilesctl set "${pick%% *}" && notify-send -u low "Power profile" "${pick%% *}"

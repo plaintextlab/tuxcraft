@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# tux-snap — btrfs snapshots without memorising snapper.
+#   tux-snap                      list snapshots of / and pick an action
+#   tux-snap list [root|home]
+#   tux-snap create [description] snapshot / and /home now
+#   tux-snap diff <n>             what changed since snapshot n (root)
+#   tux-snap restore <n> <path>   copy one file/dir back from snapshot n (root or home)
+#   tux-snap rollback <n>         make snapshot n the running system (reboot afterwards)
+#   tux-snap clean                delete old roots left behind by rollbacks
+#   tux-snap status               schedules, counts and space used
+#
+# Broken system that will not boot? In GRUB pick "tuxcraft snapshots", boot one
+# (it is read-only), log in, run `tux-snap rollback <n>` and reboot.
+set -euo pipefail
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+command -v snapper >/dev/null || { echo "snapper is not installed (is / on btrfs?)"; exit 1; }
+S="snapper --no-dbus"
+
+root_dev() { findmnt -no SOURCE / | sed 's/\[.*\]//'; }
+
+with_top() {  # run a function with the btrfs top level mounted at $TOP
+  TOP=$(mktemp -d /run/tux-top.XXXX)
+  mount -o subvolid=5 "$(root_dev)" "$TOP"
+  trap 'umount "$TOP" 2>/dev/null; rmdir "$TOP" 2>/dev/null' EXIT
+  "$@"
+}
+
+do_rollback() {
+  local n=$1 ts; ts=$(date +%Y%m%d-%H%M%S)
+  [[ -d $TOP/@snapshots/$n/snapshot ]] || { echo "Snapshot $n not found"; exit 1; }
+  [[ -d $TOP/@ ]] || { echo "Expected a subvolume named @ at the top level (tuxcraft layout)."; exit 1; }
+  $S -c root list --columns number,date,description | awk -v n="$n" '$1==n'
+  read -r -p "Replace the current system with snapshot $n? Your /home is not touched. [y/N] " a
+  [[ ${a,,} == y* ]] || exit 0
+  mv "$TOP/@" "$TOP/@.broken-$ts"
+  btrfs subvolume snapshot "$TOP/@snapshots/$n/snapshot" "$TOP/@" >/dev/null
+  echo "Done. Reboot to start snapshot $n."
+  echo "The previous root is kept as @.broken-$ts — remove it later with: tux-snap clean"
+}
+
+do_clean() {
+  local d found=0
+  for d in "$TOP"/@.broken-*; do
+    [[ -d $d ]] || continue; found=1
+    read -r -p "Delete $(basename "$d")? [y/N] " a
+    [[ ${a,,} == y* ]] || continue
+    # delete nested subvolumes (docker, machines) first
+    btrfs subvolume list -o "$d" 2>/dev/null | awk '{print $NF}' | sort -r | while read -r p; do
+      btrfs subvolume delete "$TOP/${p#<FS_TREE>/}" >/dev/null 2>&1 || true
+    done
+    btrfs subvolume delete "$d"
+  done
+  ((found)) || echo "Nothing to clean."
+}
+
+interactive() {
+  local n
+  n=$($S -c root list --columns number,date,description,userdata 2>/dev/null | tail -n +3 |
+      fzf --tac --prompt="snapshot > " --header="Enter: choose action  (Esc to quit)" \
+          --preview="snapper --no-dbus -c root status {1}..0 2>/dev/null | head -200" | awk '{print $1}') || exit 0
+  [[ -z $n || $n == 0 ]] && exit 0
+  case $(printf 'Show changes since then\nRollback to it\nDelete it\n' | fzf --prompt="snapshot $n > ") in
+    Show*) $S -c root status "$n..0" | ${PAGER:-less} ;;
+    Rollback*) with_top do_rollback "$n" ;;
+    Delete*) $S -c root delete "$n" && echo "Deleted $n" ;;
+  esac
+}
+
+case ${1:-} in
+  "") interactive ;;
+  list) $S -c "${2:-root}" list ;;
+  create)
+    d=${2:-manual}
+    $S -c root create -c number -u important=yes -d "$d" && echo "root snapshot created"
+    [[ -f /etc/snapper/configs/home ]] && $S -c home create -c number -d "$d" && echo "home snapshot created" ;;
+  diff) $S -c root status "${2:?snapshot number}..0" ;;
+  restore)
+    n=${2:?snapshot number}; p=$(readlink -m "${3:?path}")
+    if [[ $p == /home/* ]]; then src="/home/.snapshots/$n/snapshot${p#/home}"; else src="/.snapshots/$n/snapshot$p"; fi
+    [[ -e $src ]] || { echo "Not in snapshot $n: $p"; exit 1; }
+    if [[ -e $p ]]; then mv "$p" "$p.before-restore-$(date +%s)"; fi
+    cp -a "$src" "$p" && echo "Restored $p from snapshot $n" ;;
+  rollback) with_top do_rollback "${2:?snapshot number}" ;;
+  clean) with_top do_clean ;;
+  status)
+    for c in root home; do
+      [[ -f /etc/snapper/configs/$c ]] || continue
+      echo "[$c] $($S -c "$c" list | tail -n +3 | wc -l) snapshots"
+    done
+    if command -v systemctl >/dev/null; then systemctl list-timers 'snapper-*' --no-pager 2>/dev/null; fi
+    btrfs filesystem usage -h / 2>/dev/null | sed -n '1,8p' ;;
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unknown command. See tux-snap --help"; exit 1 ;;
+esac

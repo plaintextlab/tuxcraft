@@ -1,0 +1,3 @@
+#!/bin/sh
+# Best available TUI mixer.
+for m in wiremix pulsemixer alsamixer; do command -v $m >/dev/null && exec $m; done

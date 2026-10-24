@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Clipboard history picker: cliphist on Wayland, CopyQ on X11 (native or Flatpak).
+if [[ -n ${WAYLAND_DISPLAY:-} ]] && command -v cliphist >/dev/null; then
+  sel=$(cliphist list | tux-menu clip) && cliphist decode <<<"$sel" | wl-copy
+elif command -v copyq >/dev/null; then
+  copyq toggle
+elif command -v flatpak >/dev/null && flatpak info com.github.hluk.copyq >/dev/null 2>&1; then
+  flatpak run com.github.hluk.copyq toggle
+else
+  notify-send "No clipboard manager" "Install CopyQ (tux-pkg install copyq, or flatpak install flathub com.github.hluk.copyq)"
+fi

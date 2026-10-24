@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# tux-theme-system <theme> — the root-owned half of theming:
+# console (TTY) palette, the tuigreet login screen, Papirus folder colours.
+# wheel users may run it via sudo without a password (see /etc/sudoers.d/20-tuxcraft-theme).
+set -euo pipefail
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+name=${1:-}
+[[ $name =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system <theme>" >&2; exit 1; }
+tf=/usr/share/tuxcraft/themes/$name.theme
+[[ -f $tf ]] || { echo "Unknown system theme $name (custom themes stay per-user)" >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$tf"
+
+mkdir -p /etc/tuxcraft
+# Console palette: slot 0 = background, slot 7 = foreground, so the TTY looks like the desktop.
+c=("$bg" "$color1" "$color2" "$color3" "$color4" "$color5" "$color6" "$fg"
+   "$color8" "$color9" "$color10" "$color11" "$color12" "$color13" "$color14" "$color15")
+r='' g='' b=''
+for x in "${c[@]}"; do
+  x=${x#\#}
+  r+="$((16#${x:0:2})),"; g+="$((16#${x:2:2})),"; b+="$((16#${x:4:2})),"
+done
+printf '%s\n%s\n%s\n' "${r%,}" "${g%,}" "${b%,}" >/etc/tuxcraft/vtrgb
+command -v setvtrgb >/dev/null && setvtrgb /etc/tuxcraft/vtrgb 2>/dev/null || true
+
+a=${ansi_accent:-yellow}
+if [[ -f /etc/greetd/config.toml ]] && grep -q -- "--theme '" /etc/greetd/config.toml; then
+  sed -i -E "s/--theme '[^']*'/--theme 'border=$a;title=$a;greet=white;text=white;prompt=$a;input=white;time=bright-black;action=bright-black;button=$a;container=black'/" /etc/greetd/config.toml
+fi
+if [[ -f /etc/lightdm/lightdm-gtk-greeter.conf ]]; then
+  gt=adw-gtk3-dark it=Papirus-Dark
+  [[ $variant == light ]] && gt=adw-gtk3 it=Papirus-Light
+  printf '[greeter]\ntheme-name=%s\nicon-theme-name=%s\nbackground=%s\nfont-name=Noto Sans 11\n' "$gt" "$it" "$bg" \
+    >/etc/lightdm/lightdm-gtk-greeter.conf
+fi
+if command -v papirus-folders >/dev/null && [[ -n ${papirus:-} ]]; then
+  papirus-folders -C "$papirus" --theme Papirus-Dark >/dev/null 2>&1 || true
+  papirus-folders -C "$papirus" --theme Papirus-Light >/dev/null 2>&1 || true
+fi
+echo "$name" >/etc/tuxcraft/system-theme

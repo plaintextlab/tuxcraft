@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# tux-autostart i3|sway — everything a session needs, started once. Called from the WM config.
+session=${1:-i3}
+log="$HOME/.local/state/tuxcraft/autostart.log"; mkdir -p "${log%/*}"; exec >>"$log" 2>&1
+echo "--- $(date) $session"
+STATE="$HOME/.config/tuxcraft/state"; IDLE_LOCK_MIN=10
+# shellcheck source=/dev/null
+[[ -f $STATE ]] && . "$STATE"
+
+once() { pgrep -u "$UID" -x "$1" >/dev/null || { "$@" & }; }
+
+# Environment for D-Bus activated services (portals, keyring, notifications)
+vars="DISPLAY WAYLAND_DISPLAY SWAYSOCK XDG_CURRENT_DESKTOP XDG_SESSION_TYPE XAUTHORITY QT_QPA_PLATFORMTHEME"
+if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+  # shellcheck disable=SC2086
+  dbus-update-activation-environment --systemd $vars
+  systemctl --user restart xdg-desktop-portal.service 2>/dev/null &
+else
+  # shellcheck disable=SC2086
+  dbus-update-activation-environment $vars
+  # No systemd user units (Void): start the audio stack ourselves.
+  once pipewire
+fi
+
+once tux-polkit
+eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)" || true
+once dunst
+once nm-applet --indicator
+command -v udiskie >/dev/null && once udiskie --smart-tray --notify
+tux-theme-gsettings 2>/dev/null || true
+tux-wallpaper restore &
+
+idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))
+case $session in
+  i3)
+    once xsettingsd
+    command -v picom >/dev/null && once picom
+    command -v autorandr >/dev/null && autorandr --change --default default >/dev/null 2>&1
+    command -v numlockx >/dev/null && numlockx on
+    if (( idle > 0 )); then
+      xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
+      once xss-lock --transfer-sleep-lock -- tux-lock --now
+    else
+      xset s off -dpms
+    fi
+    if command -v copyq >/dev/null; then once copyq
+    elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &
+    fi
+    "$HOME/.config/polybar/launch.sh"
+    ;;
+  sway)
+    once waybar
+    command -v kanshi >/dev/null && once kanshi
+    once wl-paste --watch cliphist store
+    if (( idle > 0 )); then
+      once swayidle -w timeout "$idle" 'tux-lock --now' \
+        timeout $((idle + 300)) 'swaymsg "output * power off"' resume 'swaymsg "output * power on"' \
+        before-sleep 'tux-lock --now'
+    fi
+    ;;
+esac
+# Apps the user added to ~/.config/autostart
+command -v dex >/dev/null && dex --autostart --environment "$session" &

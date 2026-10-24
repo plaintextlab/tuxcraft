@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# tux-pkg install|remove|search|info|list-files <pkg...> — same words on Arch, Debian and Void.
+# Installs go through the normal package manager, so snapshots/hooks still apply.
+cmd=${1:-}; shift || true
+. /etc/tuxcraft/session.conf 2>/dev/null
+d=${DISTRO:-$(command -v pacman >/dev/null && echo arch || { command -v xbps-install >/dev/null && echo void || echo debian; })}
+aur=pacman; command -v paru >/dev/null && aur=paru
+case $d:$cmd in
+  arch:install)   if [[ $aur == paru ]]; then paru -S --needed "$@"; else sudo pacman -S --needed "$@"; fi ;;
+  arch:remove)    sudo pacman -Rns "$@" ;;
+  arch:search)    $aur -Ss "$@" ;;
+  arch:info)      pacman -Si "$@" 2>/dev/null || $aur -Si "$@" ;;
+  arch:list-files) pacman -Ql "$@" ;;
+  debian:install) sudo apt install "$@" ;;
+  debian:remove)  sudo apt remove --purge "$@" && sudo apt autoremove --purge ;;
+  debian:search)  apt search "$@" ;;
+  debian:info)    apt show "$@" ;;
+  debian:list-files) dpkg -L "$@" ;;
+  void:install)   sudo xbps-install -S "$@" ;;
+  void:remove)    sudo xbps-remove -R "$@" ;;
+  void:search)    xbps-query -Rs "$@" ;;
+  void:info)      xbps-query -R "$@" ;;
+  void:list-files) xbps-query -f "$@" ;;
+  *) sed -n '2,3p' "$0" | sed 's/^# //'; exit 1 ;;
+esac

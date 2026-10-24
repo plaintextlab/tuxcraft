@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# tux-menu <prompt> [-- extra launcher args] : dmenu-style picker on stdin.
+# rofi on X11, fuzzel on Wayland, fzf in a plain terminal.
+p=${1:-select}; shift || true; [[ ${1:-} == -- ]] && shift
+if [[ -n ${WAYLAND_DISPLAY:-} ]] && command -v fuzzel >/dev/null; then
+  exec fuzzel --dmenu --prompt "$p> " "$@"
+elif [[ -n ${DISPLAY:-} ]] && command -v rofi >/dev/null; then
+  exec rofi -dmenu -i -p "$p" "$@"
+else
+  exec fzf --prompt "$p> "
+fi

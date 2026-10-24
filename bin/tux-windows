@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Window switcher for sway (fuzzel has no window mode).
+sel=$(swaymsg -t get_tree | jq -r '.. | objects | select((.type=="con" or .type=="floating_con") and .pid != null) | "\(.id)\t\(.app_id // .window_properties.class)  —  \(.name)"' |
+  tux-menu windows) || exit 0
+swaymsg "[con_id=${sel%%$'\t'*}] focus" >/dev/null

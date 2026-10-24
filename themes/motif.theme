@@ -1,0 +1,11 @@
+# Motif Dark — muted CDE-inspired palette from the debi3n dunst/starship configs
+name="Motif"
+variant=dark
+papirus=grey
+ansi_accent=blue
+bg=#2e2e2b bg_dark=#252522 bg_alt=#3a3a36 bg_hl=#46463f
+fg=#d8d8ce fg_dim=#98988c muted=#62625a
+accent=#5d7a9e accent_fg=#f0f0e8
+red=#b84a4a orange=#a67a4a yellow=#b8985a green=#7a8f5a cyan=#5a8f8a blue=#5d7a9e magenta=#8a7a9e
+color0=#2e2e2b color1=#b84a4a color2=#7a8f5a color3=#b8985a color4=#5d7a9e color5=#8a7a9e color6=#5a8f8a color7=#d8d8ce
+color8=#62625a color9=#c85a5a color10=#8a9f6a color11=#c8a86a color12=#6d8aae color13=#9a8aae color14=#6a9f9a color15=#e8e8de

@@ -1,0 +1,11 @@
+# Nord
+name="Nord"
+variant=dark
+papirus=nordic
+ansi_accent=cyan
+bg=#2e3440 bg_dark=#242933 bg_alt=#3b4252 bg_hl=#434c5e
+fg=#eceff4 fg_dim=#d8dee9 muted=#616e88
+accent=#88c0d0 accent_fg=#2e3440
+red=#bf616a orange=#d08770 yellow=#ebcb8b green=#a3be8c cyan=#8fbcbb blue=#81a1c1 magenta=#b48ead
+color0=#3b4252 color1=#bf616a color2=#a3be8c color3=#ebcb8b color4=#81a1c1 color5=#b48ead color6=#88c0d0 color7=#e5e9f0
+color8=#4c566a color9=#bf616a color10=#a3be8c color11=#ebcb8b color12=#81a1c1 color13=#b48ead color14=#8fbcbb color15=#eceff4

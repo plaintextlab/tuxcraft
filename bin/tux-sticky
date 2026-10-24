@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Toggle sticky + say what happened (from debi3n i3-sticky-toggle.sh, path bug fixed).
+msg=i3-msg; [[ -n ${SWAYSOCK:-} ]] && msg=swaymsg
+$msg sticky toggle >/dev/null
+node=$($msg -t get_tree | jq -c '[.. | objects | select(.focused==true)][0] // {}')
+if [[ $(jq -r '.sticky // false' <<<"$node") == true ]]; then
+  notify-send -u low "Pinned to all workspaces" "$(jq -r '.name' <<<"$node")"
+else
+  notify-send -u low "Unpinned" "$(jq -r '.name' <<<"$node")"
+fi

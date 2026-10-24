@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Cheat sheet built from the "#: " comments in the WM configs.
+files=("$HOME/.config/tuxcraft/wm/common.conf")
+if [[ -n ${SWAYSOCK:-} ]]; then files+=("$HOME/.config/sway/config"); else files+=("$HOME/.config/i3/config"); fi
+grep -h '^#: ' "${files[@]}" 2>/dev/null | sed 's/^#: //' | tux-menu "keys" >/dev/null

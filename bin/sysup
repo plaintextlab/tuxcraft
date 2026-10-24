@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# sysup — the one safe way to update a tuxcraft system.
+#   1. sanity checks (battery, disk space)          5. flatpaks
+#   2. Arch: shows new Arch news and stops if any   6. cache + orphan cleanup
+#   3. snapshot before (and after) the update       7. config files that need merging
+#   4. the update itself                             8. reboot / failed-service hints
+# Options: --yes (no questions)  --pause (wait for a key at the end; used by Super+U)
+set -uo pipefail
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+YES=0 PAUSE=0
+for a in "$@"; do case $a in --yes|-y) YES=1 ;; --pause) PAUSE=1 ;; esac; done
+
+b=$'\e[1m' g=$'\e[32m' y=$'\e[33m' c=$'\e[36m' n=$'\e[0m'
+yflag=(); ((YES)) && yflag=(-y)
+step() { printf '\n%s==> %s%s\n' "$c$b" "$*" "$n"; }
+warn() { printf '%s !%s %s\n' "$y$b" "$n" "$*"; }
+ask()  { ((YES)) && return 0; read -r -p "$b? $1$n [Y/n] " x; [[ -z $x || ${x,,} == y* ]]; }
+finish() { ((PAUSE)) && read -n1 -rsp $'\nPress any key to close…'; exit "${1:-0}"; }
+
+DISTRO=''
+# shellcheck source=/dev/null
+[[ -f /etc/tuxcraft/session.conf ]] && . /etc/tuxcraft/session.conf
+if [[ -z $DISTRO ]]; then
+  if command -v pacman >/dev/null; then DISTRO=arch; elif command -v xbps-install >/dev/null; then DISTRO=void; else DISTRO=debian; fi
+fi
+STAMP=/var/lib/tuxcraft/last-sysup; mkdir -p "${STAMP%/*}"
+have_snapper() { command -v snapper >/dev/null && [[ -f /etc/snapper/configs/root ]]; }
+user=${SUDO_USER:-}
+
+step "Checks"
+for bat in /sys/class/power_supply/BAT*; do
+  [[ -r $bat/capacity ]] || continue
+  if [[ $(<"$bat/status") == Discharging && $(<"$bat/capacity") -lt 30 ]]; then
+    warn "On battery at $(<"$bat/capacity")%. A dying battery mid-update is the classic way to break a system."
+    ask "Continue anyway?" || finish 1
+  fi
+done
+free_mb=$(df -Pm / | awk 'NR==2{print $4}')
+if (( free_mb < 3000 )); then
+  warn "Only ${free_mb} MB free on /."
+  have_snapper && echo "   Old snapshots can be removed with: tux-snap  (or snapper -c root cleanup number)"
+  ask "Continue anyway?" || finish 1
+fi
+echo "${g}ok$n"
+
+if [[ $DISTRO == arch ]]; then
+  step "Arch news since your last update"
+  since=$(stat -c %Y "$STAMP" 2>/dev/null || echo 0)
+  news=$(curl -fsS --max-time 10 https://archlinux.org/feeds/news/ 2>/dev/null | python3 -c '
+import sys, email.utils, xml.etree.ElementTree as ET
+since = int(sys.argv[1])
+for it in ET.fromstring(sys.stdin.read()).iter("item"):
+    t = email.utils.parsedate_to_datetime(it.findtext("pubDate")).timestamp()
+    if t > since: print("  •", it.findtext("pubDate")[5:16], "—", it.findtext("title"), "\n   ", it.findtext("link"))
+' "$since" 2>/dev/null)
+  if [[ -n $news ]]; then
+    echo "$news"
+    warn "Read these before updating: they announce manual steps when an update needs them."
+    ((YES)) && { warn "--yes given, but news needs a human. Run sysup without --yes."; finish 1; }
+    ask "I have read the news, continue?" || finish 1
+  else
+    echo "none"
+  fi
+fi
+
+pre=''
+# Arch (snap-pac) and Debian (apt hook) snapshot every transaction already; Void needs us.
+if have_snapper && [[ $DISTRO == void ]]; then
+  pre=$(snapper --no-dbus -c root create -t pre -p -c number -d "sysup") && echo "Snapshot #$pre taken"
+fi
+
+step "Updating $DISTRO"
+rc=0
+case $DISTRO in
+  arch)
+    pacman -Syu || rc=$?
+    if ((rc == 0)) && [[ -n $user ]] && command -v paru >/dev/null; then
+      step "AUR"; sudo -u "$user" paru -Sua || warn "AUR update had problems"
+    fi ;;
+  debian)
+    apt-get update || rc=$?
+    ((rc == 0)) && { apt list --upgradable 2>/dev/null | tail -n +2; apt-get full-upgrade "${yflag[@]}" || rc=$?; }
+    ((rc == 0)) && apt-get autoremove --purge -y ;;
+  void)
+    xbps-install -Syu xbps && xbps-install -Su "${yflag[@]}" || rc=$? ;;
+esac
+[[ -n $pre ]] && snapper --no-dbus -c root create -t post --pre-number "$pre" -c number -d "sysup" >/dev/null
+if ((rc != 0)); then
+  warn "The package manager reported an error (code $rc). Nothing was cleaned up."
+  have_snapper && echo "   To undo: tux-snap  (or boot an older snapshot from the GRUB menu)"
+  finish "$rc"
+fi
+
+if command -v flatpak >/dev/null; then
+  step "Flatpak"
+  flatpak update -y --noninteractive
+  [[ -n $user ]] && sudo -u "$user" flatpak update --user -y --noninteractive 2>/dev/null
+  flatpak uninstall --unused -y --noninteractive >/dev/null 2>&1
+fi
+
+step "Cleanup"
+case $DISTRO in
+  arch)
+    command -v paccache >/dev/null && { paccache -rk2 -q; paccache -ruk0 -q; }
+    orphans=$(pacman -Qdtq)
+    if [[ -n $orphans ]]; then echo "Orphaned packages: $(echo $orphans)"; ask "Remove them?" && pacman -Rns --noconfirm $orphans; fi ;;
+  debian) apt-get autoclean -y >/dev/null ;;
+  void)   xbps-remove -Oo -y >/dev/null; command -v vkpurge >/dev/null && vkpurge rm all >/dev/null 2>&1 ;;
+esac
+echo "${g}ok$n"
+
+step "Config files that need your attention"
+case $DISTRO in
+  arch)   found=$(find /etc -name '*.pacnew' -o -name '*.pacsave' 2>/dev/null); hint='merge with: sudo DIFFPROG="nvim -d" pacdiff' ;;
+  debian) found=$(find /etc -name '*.dpkg-dist' -o -name '*.dpkg-new' 2>/dev/null); hint='compare and merge by hand, then delete the new file' ;;
+  void)   found=$(find /etc -name '*.new-*' 2>/dev/null); hint='compare and merge by hand, then delete the .new file' ;;
+esac
+if [[ -n $found ]]; then echo "$found"; echo "  → $hint"; else echo "none"; fi
+
+[[ $DISTRO == void && -f /etc/grub.d/41_snapshots-btrfs ]] && grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1
+
+step "Status"
+need_reboot=0
+case $DISTRO in
+  arch)   [[ -d /usr/lib/modules/$(uname -r) ]] || need_reboot=1 ;;
+  debian) [[ -f /var/run/reboot-required ]] && need_reboot=1 ;;
+  void)   newest=$(ls /usr/lib/modules | sort -V | tail -n1); [[ $newest != "$(uname -r)" ]] && need_reboot=1 ;;
+esac
+((need_reboot)) && warn "New kernel installed: reboot soon." || echo "No reboot needed."
+if command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]; then
+  failed=$(systemctl --failed --no-legend --plain | awk '{print $1}')
+  [[ -n $failed ]] && warn "Failed services: $failed  (journalctl -u <name> -b)"
+fi
+touch "$STAMP"
+printf '\n%sSystem is up to date.%s\n' "$g$b" "$n"
+finish 0

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# tux-audio output|input — pick the default sound device and move running streams to it
+# (from debi3n rofi-audio-output-switch.sh / rofi-audio-input-switch.sh, merged).
+kind=${1:-output}
+if [[ $kind == input ]]; then list=sources; get='get-default-source'; set='set-default-source'; streams='source-outputs'; move='move-source-output'
+else list=sinks; get='get-default-sink'; set='set-default-sink'; streams='sink-inputs'; move='move-sink-input'; fi
+cur=$(pactl "$get")
+mapfile -t rows < <(pactl -f json list "$list" 2>/dev/null | jq -r '.[] | select(.name | endswith(".monitor") | not) | "\(.name)\t\(.description)"')
+((${#rows[@]})) || { notify-send "Audio" "No $kind devices found"; exit 1; }
+declare -A byLabel; menu=''
+for r in "${rows[@]}"; do
+  n=${r%%$'\t'*} d=${r#*$'\t'}
+  l="  $d"; [[ $n == "$cur" ]] && l="● $d"
+  byLabel[$l]=$n; menu+="$l"$'\n'
+done
+pick=$(printf '%s' "$menu" | tux-menu "audio $kind") || exit 0
+dev=${byLabel[$pick]:-}; [[ -z $dev ]] && exit 0
+pactl "$set" "$dev"
+for s in $(pactl list short "$streams" | cut -f1); do pactl "$move" "$s" "$dev" 2>/dev/null; done
+notify-send -a audio "Audio $kind" "${pick:2}"
