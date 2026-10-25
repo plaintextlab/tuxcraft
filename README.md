@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.
 |---|---|---|
 | Arch | official `archlinux-*.iso` | Wi-Fi: `iwctl` |
 | Debian | a **live** ISO (`debian-live-13-*-standard.iso`) — the netinst image has no shell to run scripts | installs the same release as the ISO |
-| Void | `void-live-x86_64-*-base.iso` (glibc recommended; NVIDIA needs glibc) | Wi-Fi: `nmtui` or `wpa_supplicant` |
+| Void | `void-live-x86_64-*-base.iso` (glibc recommended; NVIDIA needs glibc) | Wi-Fi: `nmtui` or `wpa_supplicant`. The ISO has no curl: first run `xbps-install -Syu xbps && xbps-install -y curl` |
 
 Already have a minimal install (e.g. Debian from the normal installer)? Run the same
 command there: tuxcraft detects that it is not on a live ISO and only sets up the desktop
@@ -34,7 +34,10 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
 3. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
 4. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
 5. **Font** (previews below) and size
-6. **Browser** and **optional extras** (Nemo, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru)
+6. **Browser** and **optional extras** (Nemo, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
+   *Gaming* = Steam, gamemode, MangoHud, Heroic (Flatpak), plus the limits Proton needs (`vm.max_map_count`,
+   open files); on Void also gamescope, Wine, winetricks, protontricks, vkBasalt and the 32-bit libraries.
+   With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU.
 7. Extra packages to **add**, packages to **leave out**
 
 Answers are saved to `/etc/tuxcraft/answers.conf` (without the password); reuse them for an

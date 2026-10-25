@@ -146,5 +146,18 @@ case ${DISTRO:-} in
   debian) check "unattended security upgrades configured" test -f /etc/apt/apt.conf.d/20auto-upgrades ;;
 esac
 
+if $SUDO grep -q '^TUX_BUNDLES=.*gaming' /etc/tuxcraft/answers.conf 2>/dev/null; then
+  section "Gaming"
+  for c in steam gamemoderun mangohud; do check "$c installed" command -v "$c"; done
+  check "vm.max_map_count raised" test "$(sysctl -n vm.max_map_count)" -ge 2147483642
+  if [[ $(ulimit -Hn) -ge 524288 ]]; then ok "open-file limit raised"; else wn "open-file limit still $(ulimit -Hn) (log out and in once)"; fi
+  check "user in gamemode group" bash -c 'id -nG | grep -qw gamemode'
+  check "Heroic installed (Flatpak)" flatpak info com.heroicgameslauncher.hgl
+  if [[ -r /sys/module/nvidia/version ]]; then
+    nv=$(</sys/module/nvidia/version)
+    check "Flatpak NVIDIA runtime matches driver $nv" flatpak info "org.freedesktop.Platform.GL.nvidia-${nv//./-}"
+  fi
+fi
+
 printf '\n%s%d passed, %d warnings, %d failed%s\n' "$b" "$pass" "$warn" "$fail" "$n"
 ((fail == 0))

@@ -88,6 +88,38 @@ ensure_clipboard() {
     run flatpak install -y --noninteractive flathub com.github.hluk.copyq || warn "CopyQ unavailable; clipboard history disabled"
 }
 
+# Gaming bundle: system limits Proton and newer games need, gamemode priority, Heroic, and the
+# Flatpak NVIDIA runtime so Flatpak games get the GPU.
+ensure_gaming() {
+  has_word "$TUX_BUNDLES" gaming || return 0
+  step "Gaming setup"
+  mkdir -p /etc/sysctl.d /etc/security/limits.d
+  # The 65530 default makes many newer games crash; this is the SteamOS value.
+  printf '# tuxcraft: games/Proton need many memory mappings (SteamOS value)\nvm.max_map_count = 2147483642\n' \
+    >/etc/sysctl.d/80-tuxcraft-gaming.conf
+  # Proton/Wine esync opens one file descriptor per sync object.
+  printf '# tuxcraft: Proton/Wine esync\n*  soft  nofile  524288\n*  hard  nofile  524288\n' \
+    >/etc/security/limits.d/20-tuxcraft-gaming.conf
+  # gamemode's limits.d entry (renice) only applies to members of its group.
+  getent group gamemode >/dev/null && usermod -aG gamemode "$TUX_USER"
+
+  command -v flatpak >/dev/null || pkg_install flatpak
+  command -v flatpak >/dev/null || { warn "flatpak missing: Heroic not installed"; return 0; }
+  run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+  run flatpak install -y --noninteractive flathub com.heroicgameslauncher.hgl || warn "Heroic could not be installed"
+  if [[ ${TUX_NVIDIA:-no} == yes ]]; then
+    local nv ext kver
+    kver=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -n1)
+    nv=$(modinfo -k "$kver" -F version nvidia 2>/dev/null || true)
+    for ext in GL GL32; do
+      [[ -n $nv ]] || break
+      run flatpak install -y --noninteractive flathub "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" ||
+        warn "Flatpak NVIDIA $ext runtime $nv not on Flathub yet (sysup installs it later)"
+    done
+  fi
+  info "Gaming: Steam launch option  gamemoderun mangohud %command%"
+}
+
 extras_stage() {
   step "Filling gaps with upstream releases where needed"
   ensure_debian_shims
@@ -99,6 +131,7 @@ extras_stage() {
   ensure_papirus_folders
   has_word "$TUX_BUNDLES" aur && ensure_paru
   has_word "$TUX_EXCLUDE" copyq || ensure_clipboard
+  ensure_gaming
   if has_word "$TUX_BUNDLES" flatpak && command -v flatpak >/dev/null; then
     run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
     # Let flatpak apps see the GTK theme and our generated colors.

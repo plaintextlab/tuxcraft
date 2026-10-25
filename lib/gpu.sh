@@ -55,6 +55,7 @@ gpu_stage() {
       ;;
   esac
   pkg_install "${p[@]}"
+  mkdir -p /etc/modprobe.d
   cat >/etc/modprobe.d/nvidia-tuxcraft.conf <<'EOF'
 # Kernel modesetting is required for Wayland and for a tear-free X11 PRIME setup.
 options nvidia_drm modeset=1 fbdev=1

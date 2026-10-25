@@ -11,6 +11,12 @@ umask 022   # an inherited 077 would leave / and /home unreadable to the new use
 
 TUX_REPO_TARBALL=${TUX_REPO_TARBALL:-https://github.com/plaintextlab/tuxcraft/archive/refs/heads/main.tar.gz}
 
+# --- the Void live ISO ships without curl; xbps itself must be current to install it ---
+if ! command -v curl >/dev/null && command -v xbps-install >/dev/null && [[ $EUID -eq 0 ]]; then
+  echo ":: Installing curl..."
+  { xbps-install -Syu xbps && xbps-install -y curl; } >/dev/null || { echo "Could not install curl (network?)" >&2; exit 1; }
+fi
+
 # --- self-bootstrap when piped through curl -------------------------------------------
 TUX_SRC=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)
 if [[ ! -f $TUX_SRC/lib/ui.sh ]]; then
@@ -78,7 +84,8 @@ save_answers() {  # never stores the password
 guess_timezone() {
   local tz
   tz=$(curl -fsS --max-time 4 https://ipapi.co/timezone 2>/dev/null || true)
-  [[ $tz =~ ^[A-Za-z_]+/[A-Za-z_/+-]+$ ]] || tz=$(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##')
+  # The live ISO may have no /etc/localtime symlink; readlink failing must not trip the ERR trap.
+  [[ $tz =~ ^[A-Za-z_]+/[A-Za-z_/+-]+$ ]] || tz=$({ readlink /etc/localtime || true; } 2>/dev/null | sed 's#.*/zoneinfo/##')
   echo "${tz:-UTC}"
 }
 
@@ -127,7 +134,7 @@ wizard() {
       [[ -n ${TUX_YES:-} ]] && die "TUX_PASSWORD must be set for unattended installs"
       ask_secret TUX_PASSWORD "Password for $TUX_USER (also used for sudo)"
     fi
-    ask TUX_TIMEZONE "Timezone" "$(guess_timezone)"
+    [[ -n ${TUX_TIMEZONE:-} ]] || ask TUX_TIMEZONE "Timezone" "$(guess_timezone)"
     ask TUX_LOCALE "Locale" en_US.UTF-8
     ask TUX_KEYMAP "Keyboard layout (xkb: us, de, gb, fr, ...)" us
   else
