@@ -7,5 +7,5 @@ elif command -v copyq >/dev/null; then
 elif command -v flatpak >/dev/null && flatpak info com.github.hluk.copyq >/dev/null 2>&1; then
   flatpak run com.github.hluk.copyq toggle
 else
-  notify-send "No clipboard manager" "Install CopyQ (tux-pkg install copyq, or flatpak install flathub com.github.hluk.copyq)"
+  notify-send "No clipboard manager" "Install CopyQ (tux-pkg install copyq — CopyQ on Void — or flatpak install flathub com.github.hluk.copyq)"
 fi

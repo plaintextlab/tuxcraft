@@ -96,6 +96,17 @@ if command -v flatpak >/dev/null; then
   flatpak update -y --noninteractive
   [[ -n $user ]] && sudo -u "$user" flatpak update --user -y --noninteractive 2>/dev/null
   flatpak uninstall --unused -y --noninteractive >/dev/null 2>&1
+  # Flatpak apps (Heroic, Steam, games) need the GL runtime that matches the NVIDIA driver.
+  # Use the module of the newest kernel: after a driver update it is the one that boots next.
+  # (After --unused, which judges by the driver loaded now and would drop the new runtime.)
+  nv=$(modinfo -k "$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -n1)" -F version nvidia 2>/dev/null)
+  if [[ -n $nv ]] && flatpak list --app --columns=application | grep -q .; then
+    for ext in GL GL32; do
+      ref=org.freedesktop.Platform.$ext.nvidia-${nv//./-}
+      flatpak info "$ref" >/dev/null 2>&1 ||
+        flatpak install -y --noninteractive flathub "$ref" >/dev/null 2>&1 || warn "Flatpak $ref is not on Flathub yet"
+    done
+  fi
 fi
 
 step "Cleanup"
