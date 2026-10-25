@@ -44,3 +44,11 @@
 @define-color thumbnail_fg_color {{fg}};
 @define-color shade_color rgba(0, 0, 0, 0.25);
 @define-color scrollbar_outline_color rgba(0, 0, 0, 0.5);
+
+/* Icon views (Thunar, file choosers) fill the selection with the solid accent, but adw-gtk3
+   keeps the normal light text there: unreadable on a light accent. Use the accent's own fg. */
+iconview:selected, iconview:selected:focus, iconview text:selected,
+.view:selected:not(treeview), .view text:selected {
+  background-color: @accent_bg_color;
+  color: @accent_fg_color;
+}
