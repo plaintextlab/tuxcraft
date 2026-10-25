@@ -102,6 +102,9 @@ ensure_gaming() {
     >/etc/security/limits.d/20-tuxcraft-gaming.conf
   # gamemode's limits.d entry (renice) only applies to members of its group.
   getent group gamemode >/dev/null && usermod -aG gamemode "$TUX_USER"
+  # Lutris and the Steam runtime look 32-bit libraries up in the ld.so cache; after the
+  # -32bit packages it was found stale (libdrm.so.2 missing), so rebuild it.
+  run ldconfig || true
 
   command -v flatpak >/dev/null || pkg_install flatpak
   command -v flatpak >/dev/null || { warn "flatpak missing: Heroic not installed"; return 0; }
