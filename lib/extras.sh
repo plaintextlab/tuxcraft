@@ -79,7 +79,7 @@ ensure_paru() {
   rm -rf "$t"
 }
 
-# X11 clipboard history: Void does not package CopyQ, Flathub does.
+# X11 clipboard history: fallback to Flathub when the distro package (Void: CopyQ) is missing.
 ensure_clipboard() {
   [[ $TUX_SESSION == i3 ]] || return 0
   command -v copyq >/dev/null && return 0

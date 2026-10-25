@@ -59,7 +59,7 @@ x11	numlockx	numlockx	numlockx
 x11	xsettingsd	xsettingsd	xsettingsd
 x11	autorandr arandr	autorandr arandr	autorandr arandr
 x11	maim slop xclip xdotool	maim slop xclip xdotool	maim slop xclip xdotool
-x11	copyq	copyq	copyq
+x11	copyq	copyq	CopyQ
 #
 # ---- wayland: sway session
 wayland	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle

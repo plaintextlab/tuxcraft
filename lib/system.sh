@@ -78,6 +78,12 @@ sys_user() {
   fi
   if [[ -n ${TUX_PASSWORD:-} ]]; then
     echo "$TUX_USER:$TUX_PASSWORD" | chpasswd
+    # Void's PAM-enabled chpasswd exits 0 without writing anything; check and fall back to a hash.
+    if [[ $(getent shadow "$TUX_USER" | cut -d: -f2) != \$* ]]; then
+      command -v openssl >/dev/null || pkg_install openssl
+      echo "$TUX_USER:$(openssl passwd -6 -stdin <<<"$TUX_PASSWORD")" | chpasswd -e
+    fi
+    [[ $(getent shadow "$TUX_USER" | cut -d: -f2) == \$* ]] || die "Could not set the password for $TUX_USER"
   fi
   # Root stays locked: administration goes through sudo, which is logged and safer.
   passwd -l root >/dev/null 2>&1 || true
@@ -137,6 +143,7 @@ EOF
     void) pkg_install zramen; svc_enable zramen ;;
   esac
   # Prefer RAM over compressed swap only when needed; good default for zram.
+  mkdir -p /etc/sysctl.d   # absent on a fresh Void base system
   echo 'vm.swappiness = 100' >/etc/sysctl.d/99-tuxcraft-zram.conf
 }
 
@@ -198,7 +205,9 @@ sys_services() {
     void)
       pkg_install_groups core   # dbus/elogind/chrony/cronie are in core for void
       svc_disable dhcpcd wpa_supplicant
-      svc_enable dbus elogind NetworkManager chronyd cronie socklog-unix nanoklogd
+      # elogind is left to D-Bus activation: greetd's PAM session activates it before the runit
+      # service gets going, and the service then restarts every second ("already running").
+      svc_enable dbus NetworkManager chronyd cronie socklog-unix nanoklogd
       ;;
   esac
 }

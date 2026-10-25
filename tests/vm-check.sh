@@ -99,7 +99,7 @@ else
   check "lightdm enabled" enabled lightdm
 fi
 check "console palette written" test -f /etc/tuxcraft/vtrgb
-[[ $INIT == runit ]] && { check "dbus enabled" enabled dbus; check "elogind enabled" enabled elogind; }
+[[ $INIT == runit ]] && { check "dbus enabled" enabled dbus; check "elogind running (D-Bus activated)" pgrep -x elogind-daemon; }
 
 section "Desktop ($SESSION)"
 if [[ $SESSION == sway ]]; then apps=(sway waybar fuzzel swaylock swayidle swaybg grim slurp wl-copy cliphist)

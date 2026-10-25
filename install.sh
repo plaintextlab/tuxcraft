@@ -7,6 +7,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | sudo bash
 #   sudo ./install.sh [--config answers.conf] [--yes] [--desktop]
 set -Eeuo pipefail
+umask 022   # an inherited 077 would leave / and /home unreadable to the new user
 
 TUX_REPO_TARBALL=${TUX_REPO_TARBALL:-https://github.com/plaintextlab/tuxcraft/archive/refs/heads/main.tar.gz}
 
@@ -203,14 +204,16 @@ wizard() {
 
 # Runs on the final system: inside the chroot for fresh installs, directly otherwise.
 target_stage() {
-  TUX_HOME=$(getent passwd "$TUX_USER" | cut -d: -f6)
-  export TUX_USER TUX_HOME
+  export TUX_USER
   if [[ $TUX_MODE == install ]]; then
     system_stage
   else
     pkg_refresh
     sys_pkgmanager
   fi
+  # Only now: on a fresh install the user is created by system_stage.
+  TUX_HOME=$(getent passwd "$TUX_USER" | cut -d: -f6)
+  export TUX_HOME
   gpu_stage
   desktop_stage
   snapshots_stage
