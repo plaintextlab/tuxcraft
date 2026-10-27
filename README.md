@@ -170,7 +170,7 @@ Windows with a real GPU, for games that need it. Two modes, picked automatically
 | | single (one GPU, desktop PC) | hybrid (iGPU + dGPU, laptop) |
 |---|---|---|
 | Starting Windows | closes the Linux desktop, hands over GPU, keyboard, mouse, USB audio | Linux keeps running on the iGPU; only the dGPU leaves |
-| Windows' screen | the GPU's monitor | the dGPU's HDMI port, and a **Looking Glass** window on the Linux desktop (keyboard, mouse, sound; Right Ctrl releases, Right Ctrl+F fullscreen) |
+| Windows' screen | the GPU's monitor | the dGPU's HDMI port, and a **Looking Glass** window on the Linux desktop (keyboard incl. Win-key shortcuts, mouse, sound; clicking in captures, Right Ctrl releases, Right Ctrl+F fullscreen) |
 | Shutting Windows down | back to the login screen | the dGPU returns to its Linux driver (CUDA, `nvidia-smi` work again) |
 
 ```sh

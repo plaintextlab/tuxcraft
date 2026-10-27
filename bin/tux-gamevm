@@ -228,7 +228,7 @@ setup_looking_glass() {  # setup_looking_glass USER
   # Laptops often have no Scroll Lock (Looking Glass's default escape key): use Right Ctrl.
   mkdir -p "$home/.config/looking-glass"
   [[ -f $home/.config/looking-glass/client.ini ]] || cat >"$home/.config/looking-glass/client.ini" <<'EOF'
-; tux-gamevm: Looking Glass client. Right Ctrl = escape key (Right Ctrl+Q quits, Right Ctrl+F fullscreen)
+; tux-gamevm: Looking Glass client. Right Ctrl = escape key: releases keyboard+mouse (Right Ctrl+Q quits, Right Ctrl+F fullscreen)
 [app]
 shmFile=/dev/shm/looking-glass
 
@@ -240,6 +240,10 @@ quickSplash=yes
 
 [input]
 escapeKey=KEY_RIGHTCTRL
+; Focus = capture mode: the keyboard is grabbed, so Win+E, Alt+Tab, ... reach Windows instead of
+; the Linux window manager's shortcuts. Right Ctrl releases keyboard and mouse.
+captureOnFocus=yes
+grabKeyboard=yes
 rawMouse=yes
 
 [spice]
