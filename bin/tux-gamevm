@@ -30,6 +30,8 @@
 #   tux-gamevm install                     the same Windows in a desktop window (setup, repairs; no GPU)
 #   tux-gamevm start | stop | kill | status | eject-iso
 #   tux-gamevm view                        hybrid: open the Looking Glass window again
+#   tux-gamevm gpu [status|linux|vm]       hybrid: dGPU for Linux games (prime-run) or for the VM;
+#                                          takes effect at the next login
 #   tux-gamevm guest-setup                 inside the running Windows: Looking Glass host + virtual
 #                                          display (hybrid), through the guest agent
 #   tux-gamevm hook ...                    called by libvirt (/etc/libvirt/hooks/qemu)
@@ -162,6 +164,29 @@ EOF
       >/etc/wireplumber/wireplumber.conf.d/50-tux-gamevm-dgpu-audio.conf
     say "PipeWire leaves the dGPU's HDMI audio alone (applies after the next login)"
   fi
+
+  # Keep the dGPU's display node off the desktop seat. The X config alone is not enough: every
+  # time the VM gives the dGPU back, X picks up the new DRM device and holds it, and closing it at
+  # logout crashed nvidia_modeset (nvKmsIoctl oops, OMEN 16, driver 615.78), leaving a black screen.
+  # On another seat Xorg ignores it. Only in VM mode: 'gpu linux' moves this file aside.
+  # Same for its HDMI audio: PipeWire's ALSA monitor keeps every card's control device open even
+  # when WirePlumber disables the card, and the kernel then waits forever when libvirt unbinds it.
+  # Root-only device nodes keep the desktop's audio stack away from it.
+  mkdir -p /etc/udev/rules.d
+  {
+    echo '# tux-gamevm (hybrid, VM mode): the dGPU is not part of the desktop session.'
+    printf 'SUBSYSTEM=="drm", KERNELS=="%s", ENV{ID_SEAT}="seat-tux-gamevm", TAG-="uaccess"\n' "$dgpu"
+    for a in $(lspci -D -s "${dgpu%.*}" | awk '/Audio/ {print $1}'); do
+      printf 'SUBSYSTEM=="sound", KERNELS=="%s", ENV{ID_SEAT}="seat-tux-gamevm", TAG-="uaccess", GROUP="root", MODE="0600"\n' "$a"
+    done
+  } >/etc/udev/rules.d/61-tux-gamevm-dgpu-seat.rules
+  udevadm control --reload; udevadm trigger --subsystem-match=drm --subsystem-match=sound --action=change
+
+  # The system menu switches GPU modes (tux-gamevm gpu linux|vm) without a password prompt.
+  printf '%%wheel ALL=(root) NOPASSWD: /usr/local/bin/tux-gamevm gpu linux, /usr/local/bin/tux-gamevm gpu vm\n' \
+    >/etc/sudoers.d/30-tux-gamevm-gpu
+  chmod 440 /etc/sudoers.d/30-tux-gamevm-gpu
+  [[ -f $GPU_MODE_FILE ]] || echo vm >"$GPU_MODE_FILE"
 
   # QEMU runs as the desktop user: Looking Glass shares memory with it, and its sound reaches
   # the user's PipeWire through the Looking Glass (SPICE) window.
@@ -844,6 +869,10 @@ cmd_start() {
   local shared; shared=$("${VIRSH[@]}" dumpxml --inactive "$NAME" | grep -c "name='ua-tux" || true)
   local gui=0; [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v notify-send >/dev/null && gui=1
   if [[ ${MODE:-single} == hybrid ]]; then
+    local why=''
+    if [[ $(gpu_mode_get) == linux ]]; then why="The GPU is in Linux mode. Switch with 'tux-gamevm gpu vm' (system menu), then log out and in."
+    elif x_uses_dgpu; then why="The desktop still uses the NVIDIA GPU (GPU mode was just switched): log out and in first."; fi
+    if [[ -n $why ]]; then ((gui)) && notify-send -u critical "Gaming VM" "$why"; die "$why"; fi
     ((gui)) && notify-send "Gaming VM" "Starting Windows on the NVIDIA GPU. Linux keeps running.
 Right Ctrl = release keyboard/mouse, Right Ctrl+F = fullscreen." || true
     "${VIRSH[@]}" start "$NAME" || { ((gui)) && notify-send -u critical "Gaming VM" "Windows did not start: see $LOG"; exit 1; }
@@ -947,6 +976,45 @@ windows_installed() {
     [[ -n $(lsblk -no PARTTYPE "$(readlink -f "$DISK")" 2>/dev/null | tr -d '[:space:]') ]]
   fi
 }
+# ----------------------------------------------------------------------- hybrid GPU mode
+# vm     (default) X uses the iGPU only: the dGPU can go to Windows at any time, no logout.
+# linux  X adds the dGPU again: Linux games get it with prime-run; the VM cannot start.
+# X picks its GPUs when it starts, so a switch takes effect at the next login.
+GPU_MODE_FILE=/etc/tuxcraft/gamevm-gpu-mode GPU_OFF_DIR=/etc/tuxcraft/gamevm-off
+HYBRID_FILES="/etc/X11/xorg.conf.d/10-tux-gamevm-hybrid.conf /etc/wireplumber/wireplumber.conf.d/50-tux-gamevm-dgpu-audio.conf
+              /etc/udev/rules.d/61-tux-gamevm-dgpu-seat.rules"
+gpu_mode_get() { cat "$GPU_MODE_FILE" 2>/dev/null || echo vm; }
+x_uses_dgpu() { fuser -v /dev/nvidia* 2>&1 | grep -qwE 'Xorg|X|sway|Xwayland'; }
+
+cmd_gpu() {
+  load_conf
+  [[ ${MODE:-single} == hybrid ]] || die "GPU modes are for hybrid (laptop) setups"
+  local want=${1:-status} f
+  case $want in
+    status)
+      echo "GPU mode: $(gpu_mode_get) ($( [[ $(gpu_mode_get) == linux ]] && echo 'Linux games on the dGPU, no VM' || echo 'gaming VM, X on the iGPU'))"
+      if x_uses_dgpu; then echo "X now:    uses the dGPU"; else echo "X now:    iGPU only"; fi
+      return 0 ;;
+    linux|vm) ;;
+    *) die "usage: tux-gamevm gpu [status|linux|vm]" ;;
+  esac
+  need_root gpu "$want"
+  [[ $want == linux ]] && is_running "$NAME" && die "Windows is running: shut it down first"
+  mkdir -p "$GPU_OFF_DIR"
+  for f in $HYBRID_FILES; do
+    if [[ $want == linux && -f $f ]]; then mv "$f" "$GPU_OFF_DIR/"
+    elif [[ $want == vm && -f $GPU_OFF_DIR/$(basename "$f") ]]; then mkdir -p "$(dirname "$f")"; mv "$GPU_OFF_DIR/$(basename "$f")" "$f"; fi
+  done
+  echo "$want" >"$GPU_MODE_FILE"
+  udevadm control --reload; udevadm trigger --subsystem-match=drm --subsystem-match=sound --action=change   # the seat rule
+  if [[ $want == linux ]]; then
+    say "GPU mode: Linux. After logging out and in, start games on the dGPU with: prime-run GAME"
+    say "(Steam: launch option 'prime-run %command%'). The gaming VM is off until 'tux-gamevm gpu vm'."
+  else
+    say "GPU mode: gaming VM. After logging out and in, X uses the iGPU only and Windows can take the dGPU."
+  fi
+}
+
 cmd_stop()   { load_conf; "${VIRSH[@]}" shutdown "$NAME"; }    # asks Windows to shut down
 cmd_kill()   { load_conf; "${VIRSH[@]}" destroy "$NAME"; }     # pull the plug (Windows hung)
 cmd_status() {
@@ -1076,13 +1144,25 @@ hybrid_prepare() {
   release_shared || return 1
   # X (or sway) holding the dGPU means the hybrid X config is not active: refuse, do not kill it.
   if fuser -v /dev/nvidia* 2>&1 | grep -qwE 'Xorg|X|sway|Xwayland'; then
-    echo "the desktop (X) uses the NVIDIA GPU: log out and in once after 'tux-gamevm setup' (X config), then start again" | tee -a "$NOTICE"
+    echo "the desktop (X) uses the NVIDIA GPU: switch with 'tux-gamevm gpu vm' if needed, log out and in, then start again" | tee -a "$NOTICE"
     return 1
   fi
   for s in $HYBRID_SVCS; do
     [[ $(init_system) == systemd ]] && systemctl is-active -q "$s" 2>/dev/null && { systemctl stop "$s"; stopped+=" $s"; }
   done
   echo "${stopped# }" >/run/tux-gamevm.services
+  # libvirt unbinds the dGPU's HDMI audio next; with its sound card still open the kernel waits
+  # forever (libvirt hangs). Refuse now with a reason instead.
+  local c n held=''
+  for c in /sys/bus/pci/devices/"${GPU%%.*}".*/sound/card*; do
+    [[ -d $c ]] || continue
+    n=${c##*card}
+    held+=$(fuser -v /dev/snd/controlC"$n" /dev/snd/pcmC"$n"D* 2>&1 | awk 'NR > 1 && NF {print $NF}' | sort -u | tr '\n' ' ')
+  done
+  if [[ -n ${held// } ]]; then
+    echo "the dGPU's HDMI sound card is open (${held% }): log out and in once after 'tux-gamevm setup' (device permissions), then start again" | tee -a "$NOTICE"
+    return 1
+  fi
   # Apps using the dGPU (CUDA, a browser's video decoder, ...) lose it now.
   p=$(fuser /dev/nvidia* 2>/dev/null | tr -s ' ' '\n' | sort -u | tr '\n' ' ')
   [[ -n ${p// } ]] && { echo "$(date '+%F %T') prepare: stopping processes using the dGPU: $p"; fuser -k /dev/nvidia* >/dev/null 2>&1 || true; sleep 1; }
@@ -1165,6 +1245,7 @@ case ${1:-} in
   start) cmd_start ;;
   view) cmd_view ;;
   guest-setup) cmd_guest_setup ;;
+  gpu) shift; cmd_gpu "$@" ;;
   install) cmd_install ;;
   stop) cmd_stop ;;
   kill) cmd_kill ;;

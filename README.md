@@ -180,11 +180,16 @@ sudo tux-gamevm create --image /mnt/data/vm/win.img --size 500 --ram 22 --cores 
 tux-gamevm install                       # unattended Windows install in a desktop window (no GPU)
 tux-gamevm start                         # with the GPU (hybrid: opens the Looking Glass window)
 tux-gamevm guest-setup                   # hybrid, once, while Windows runs: Looking Glass host + virtual monitor
+tux-gamevm gpu linux | vm                # hybrid: dGPU for Linux games (prime-run) or for the VM; also in Super+Escape
 ```
 
+Hybrid **GPU modes** (switch at the next login; X picks its GPUs when it starts): in *vm* mode the desktop never
+touches the dGPU, so Windows can take it at any time; in *linux* mode X adds it again and Linux games use it with
+`prime-run GAME` (Steam: launch option `prime-run %command%`), while the VM stays off.
+
 `--disk DEV` puts Windows on a whole disk instead of an image. Hybrid notes, learnt on an HP OMEN 16 (RTX 3070 Ti Laptop):
-X must not open the dGPU (`setup` writes an X config: no PRIME offload on Linux while it is in place), PipeWire must
-leave its HDMI audio alone (a WirePlumber rule), the VM firmware must not run the dGPU's ROM (`rombar=off`, else
+X must not open the dGPU (an X config, and a udev rule that puts its display node on another seat; in vm mode), PipeWire must
+leave its HDMI audio alone (it keeps the control device open even when disabled: root-only device nodes), the VM firmware must not run the dGPU's ROM (`rombar=off`, else
 warm reboots hang), NVIDIA's laptop driver wants a battery (fake ACPI battery, no error 43), and with nothing on HDMI
 Windows needs a virtual monitor for Looking Glass to capture (`guest-setup`: Parsec VDD 0.41 on Windows 10, VDD on
 Windows 11, set to the Linux screen's mode, e.g. 1080p @ 165 Hz). LTSC media need `--win-key`
