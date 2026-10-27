@@ -128,12 +128,14 @@ EOF
   export_app
 }
 
-desktop_ids() { inbox sh -c "dpkg -L claude-desktop | sed -n 's|^/usr/share/applications/\(.*\)\.desktop\$|\1|p'" 2>/dev/null; }
+# Full paths: distrobox-export --app NAME only matches NAME against Exec=/Name= lines, and the
+# package's id (com.anthropic.Claude) appears in neither.
+desktop_files() { inbox sh -c "dpkg -L claude-desktop | grep '^/usr/share/applications/.*\.desktop\$'" 2>/dev/null; }
 
 export_app() {
   step "Adding Claude to the host menu"
   local id f found=0
-  for id in $(desktop_ids); do
+  for id in $(desktop_files); do
     inbox distrobox-export --app "$id" >/dev/null && found=1
   done
   ((found)) || { warn "No .desktop file found in the package; use tux-claude-desktop launch"; return; }
@@ -151,7 +153,11 @@ export_app() {
 unexport() {
   box_exists || return 0
   local id
-  for id in $(desktop_ids); do inbox distrobox-export --app "$id" --delete >/dev/null 2>&1 || true; done
+  for id in $(desktop_files); do inbox distrobox-export --app "$id" --delete >/dev/null 2>&1 || true; done
+  # Otherwise claude:// keeps pointing at an entry that no longer exists.
+  local mimeapps=${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list
+  [[ -f $mimeapps ]] && sed -i '/^x-scheme-handler\/claude=/d' "$mimeapps"
+  return 0
 }
 
 do_launch() {
@@ -194,8 +200,13 @@ do_remove() {
     ask "Delete the whole container '$NAME'?" && distrobox rm --force "$NAME"
   else
     inbox_root <<'EOF'
-apt-get remove -y claude-desktop
-rm -f /usr/local/bin/xdg-open /etc/apt/sources.list.d/claude-desktop.list
+export DEBIAN_FRONTEND=noninteractive
+apt-get purge -y claude-desktop
+# The Cowork recommends (QEMU, OVMF, virtiofsd, ...) came in with it; other apps keep theirs.
+apt-get autoremove --purge -y
+rm -f /usr/local/bin/xdg-open /etc/apt/sources.list.d/claude-desktop.list \
+  /usr/share/keyrings/claude-desktop-archive-keyring.asc
+apt-get update
 EOF
   fi
   rm -f "$CONF" "$MARK"

@@ -1,0 +1,3 @@
+# Everything here runs on Linux: keep LF even in a Windows checkout (core.autocrlf),
+# or a copied script dies with "/usr/bin/env: bash\r: No such file".
+* text=auto eol=lf
