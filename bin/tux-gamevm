@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# tux-gamevm — a Windows gaming VM with single-GPU passthrough (libvirt/QEMU/KVM).
-# Starting the VM closes the Linux desktop and hands the GPU, keyboard, mouse and USB audio
-# to Windows; shutting Windows down gives them back and returns to the login screen.
+# tux-gamevm — a Windows gaming VM with GPU passthrough (libvirt/QEMU/KVM), in two modes:
+#   single  one GPU (desktop PC): starting the VM closes the Linux desktop and hands the GPU,
+#           keyboard, mouse and USB audio to Windows; shutting Windows down gives them back.
+#   hybrid  a second GPU drives the screen (laptop: iGPU + NVIDIA/AMD dGPU): Linux keeps running
+#           on the iGPU, only the dGPU goes to Windows and comes back when it shuts down.
+#           Windows shows on the dGPU's own ports (HDMI) and in a Looking Glass window.
+#   The mode is picked automatically (the GPU passed is not the one the system booted on).
 #
 #   tux-gamevm setup                       host, once: packages, IOMMU, libvirt, hook, groups
 #   tux-gamevm create --disk DEV [options] define the VM around a whole disk (Windows lives on it)
+#   tux-gamevm create --image FILE --size GiB [options]   ... or around a disk image file
 #       --iso FILE        Windows installer ISO (first install only)
+#       --unattend FILE   autounattend.xml for an unattended install (attached as a second CD)
+#       --virtio-win FILE virtio-win ISO (guest agent, drivers), attached as a CD
+#       --win-user NAME --win-password PW [--win-key KEY]   write the unattend file yourself:
+#                         local admin that logs in automatically, no setup questions
 #       --name NAME       VM name (default win-gaming)
 #       --ram GiB         memory (default: all but 15% of the host, which keeps at least 4)
 #       --cores N         CPU cores for Windows (default: all but 2), pinned to the last N cores
@@ -20,9 +29,12 @@
 #       --wipe            erase DEV first (asks you to type its name; --yes skips that)
 #   tux-gamevm install                     the same Windows in a desktop window (setup, repairs; no GPU)
 #   tux-gamevm start | stop | kill | status | eject-iso
+#   tux-gamevm view                        hybrid: open the Looking Glass window again
+#   tux-gamevm guest-setup                 inside the running Windows: Looking Glass host + virtual
+#                                          display (hybrid), through the guest agent
 #   tux-gamevm hook ...                    called by libvirt (/etc/libvirt/hooks/qemu)
 #
-# The disk is used whole and raw, so the Windows install survives a host reinstall:
+# The disk (or image) is used raw, so the Windows install survives a host reinstall:
 # run setup + create again (without --wipe) and the same Windows boots.
 set -euo pipefail
 
@@ -53,7 +65,7 @@ cmd_setup() {
   say "Installing virtualisation packages ($d)"
   case $d in
     void)   xbps-install -Sy qemu-system-amd64 libvirt edk2-ovmf dnsmasq nftables psmisc dmidecode virt-viewer ;;
-    arch)   pacman -S --needed --noconfirm qemu-base libvirt edk2-ovmf dnsmasq nftables psmisc dmidecode virt-viewer ;;
+    arch)   pacman -S --needed --noconfirm qemu-desktop libvirt edk2-ovmf dnsmasq nftables psmisc dmidecode virt-viewer ;;
     debian) apt-get install -y qemu-system-x86 libvirt-daemon-system ovmf dnsmasq-base nftables psmisc dmidecode virt-viewer ;;
   esac
 
@@ -95,20 +107,166 @@ cmd_setup() {
     id "$q" >/dev/null 2>&1 && { usermod -aG audio "$q"; say "QEMU user $q may use the sound card"; break; }
   done
 
+  local f; f=$(gpu_functions | head -n1)
+  [[ $(gpu_mode "$f") == hybrid ]] && setup_hybrid "$u" "$f"
+
   if [[ -z $(ls /sys/kernel/iommu_groups 2>/dev/null) ]]; then
     say "IOMMU is not active yet: reboot. If it is still off afterwards, enable VT-d (Intel) / IOMMU (AMD) in the firmware."
   else
-    say "IOMMU active. Next: tux-gamevm create --disk /dev/sdX --iso windows.iso (the whole disk for Windows)"
+    say "IOMMU active. Next: tux-gamevm create --disk /dev/sdX (or --image FILE --size GiB) --iso windows.iso"
   fi
 }
 
+# Hybrid host (laptop): the iGPU keeps the desktop, the dGPU must be free to leave at any time.
+setup_hybrid() {  # setup_hybrid USER DGPU
+  local u=$1 dgpu=$2 boot b
+  say "Hybrid GPUs: $(lspci -s "$dgpu" | cut -d: -f3-) goes to Windows, the boot GPU keeps Linux"
+  case $(distro) in
+    arch)   pacman -S --needed --noconfirm acpica libisoburn >/dev/null ;;
+    void)   xbps-install -Sy acpica-utils libisoburn >/dev/null ;;
+    debian) apt-get install -y acpica-tools xorriso >/dev/null ;;
+  esac
+
+  # X must not open the dGPU (it would hold it, and the handover would need a logout):
+  # use only the boot GPU and do not add others as PRIME GPU screens.
+  for b in /sys/bus/pci/devices/*/boot_vga; do [[ $(<"$b") == 1 ]] && boot=$(basename "$(dirname "$b")"); done
+  if [[ -n $boot ]]; then
+    mkdir -p /etc/X11/xorg.conf.d
+    cat >/etc/X11/xorg.conf.d/10-tux-gamevm-hybrid.conf <<EOF
+# tux-gamevm (hybrid): X runs on the boot GPU only, so the dGPU can go to the gaming VM and come
+# back without logging out. Remove this file to give X the dGPU again (PRIME offload).
+Section "ServerFlags"
+    Option "AutoAddGPU" "off"
+EndSection
+
+Section "Device"
+    Identifier "boot-gpu"
+    Driver     "modesetting"
+    BusID      "PCI:$((16#${boot:5:2})):$((16#${boot:8:2})):${boot:11:1}"
+EndSection
+EOF
+    say "X now uses only the boot GPU ($boot): log out and in once"
+  fi
+
+  # The dGPU's HDMI audio: Linux does not drive the dGPU's ports, and PipeWire keeping the card
+  # open makes the kernel wait forever when libvirt unbinds it (the VM never starts).
+  local a rules=''
+  for a in $(lspci -D -s "${dgpu%.*}" | awk '/Audio/ {print $1}'); do
+    rules+="  { matches = [ { device.name = \"alsa_card.pci-$(tr ':' '_' <<<"$a")\" } ]
+    actions = { update-props = { device.disabled = true } } }
+"
+  done
+  if [[ -n $rules ]]; then
+    mkdir -p /etc/wireplumber/wireplumber.conf.d
+    printf '# tux-gamevm (hybrid): the dGPU HDMI audio belongs to the gaming VM.\nmonitor.alsa.rules = [\n%s]\n' "$rules" \
+      >/etc/wireplumber/wireplumber.conf.d/50-tux-gamevm-dgpu-audio.conf
+    say "PipeWire leaves the dGPU's HDMI audio alone (applies after the next login)"
+  fi
+
+  # QEMU runs as the desktop user: Looking Glass shares memory with it, and its sound reaches
+  # the user's PipeWire through the Looking Glass (SPICE) window.
+  if [[ -n $u ]]; then
+    local q=/etc/libvirt/qemu.conf
+    sed -i '/^# tux-gamevm user begin/,/^# tux-gamevm user end/d' "$q"
+    printf '# tux-gamevm user begin\nuser = "%s"\ngroup = "kvm"\n# tux-gamevm user end\n' "$u" >>"$q"
+    if [[ $(init_system) == systemd ]]; then systemctl restart libvirtd; else sv restart libvirtd >/dev/null; fi
+  fi
+
+  # NVIDIA laptop GPUs refuse to start in a VM without a battery (error 43): give it one.
+  if compgen -G '/sys/class/power_supply/BAT*' >/dev/null; then
+    local d=/var/lib/libvirt/acpi t; mkdir -p "$d"; t=$(mktemp -d)
+    cat >"$t/fake-battery.asl" <<'EOF'
+DefinitionBlock ("", "SSDT", 1, "TUXCFT", "FAKEBAT", 0x00000001)
+{
+    External (\_SB.PCI0, DeviceObj)
+    Scope (\_SB.PCI0)
+    {
+        Device (BAT0)
+        {
+            Name (_HID, EisaId ("PNP0C0A"))
+            Name (_UID, One)
+            Method (_STA, 0, NotSerialized) { Return (0x1F) }
+            Method (_BIF, 0, NotSerialized)
+            {
+                Return (Package (0x0D) { One, 0x1770, 0x1770, One, 0x39D0, 0x0258, 0x012C,
+                                         0x3C, 0x3C, "VM", "1", "LION", "tuxcraft" })
+            }
+            Method (_BST, 0, NotSerialized) { Return (Package (0x04) { Zero, Zero, 0x1770, 0x39D0 }) }
+        }
+    }
+}
+EOF
+    if (cd "$t" && iasl -p fake-battery fake-battery.asl >/dev/null 2>&1); then
+      install -m644 "$t/fake-battery.aml" "$d/fake-battery.aml"; say "Fake battery ACPI table: $d/fake-battery.aml"
+    else say "iasl failed: no fake battery table (NVIDIA may show error 43 in Windows)"; fi
+    rm -rf "$t"
+  fi
+
+  [[ -n $u ]] && setup_looking_glass "$u"
+}
+
+# Looking Glass: shows the VM's screen in a window, with keyboard, mouse, sound and clipboard.
+# The Windows side (host app) must be the same version; it is fetched into the VM later.
+LG_VERSION=B7
+setup_looking_glass() {  # setup_looking_glass USER
+  local u=$1 home; home=$(getent passwd "$u" | cut -d: -f6)
+  if ! command -v looking-glass-client >/dev/null; then
+    if [[ $(distro) == arch ]]; then
+      say "Building the Looking Glass client ($LG_VERSION) from the AUR"
+      local t; t=$(mktemp -d); chown "$u:" "$t"
+      runuser -u "$u" -- git clone -q https://aur.archlinux.org/looking-glass.git "$t/lg" || die "AUR clone failed"
+      # makepkg may not install dependencies itself without a sudo prompt: do it here.
+      # shellcheck disable=SC2046
+      pacman -S --needed --noconfirm --asdeps $(sed -n 's/^\t\(make\)\?depends = \([^<>=]*\).*/\2/p' "$t/lg/.SRCINFO" | sort -u) >/dev/null
+      (cd "$t/lg" && runuser -u "$u" -- makepkg -f --noconfirm >/dev/null 2>&1) || die "building looking-glass failed (try: cd $t/lg && makepkg -s)"
+      pacman -U --noconfirm "$t"/lg/looking-glass-[0-9B]*.pkg.tar.zst >/dev/null || die "installing looking-glass failed"
+      rm -rf "$t"
+    else
+      say "Install the Looking Glass client $LG_VERSION yourself (https://looking-glass.io/downloads)"
+    fi
+  fi
+  # Laptops often have no Scroll Lock (Looking Glass's default escape key): use Right Ctrl.
+  mkdir -p "$home/.config/looking-glass"
+  [[ -f $home/.config/looking-glass/client.ini ]] || cat >"$home/.config/looking-glass/client.ini" <<'EOF'
+; tux-gamevm: Looking Glass client. Right Ctrl = escape key (Right Ctrl+Q quits, Right Ctrl+F fullscreen)
+[app]
+shmFile=/dev/shm/looking-glass
+
+[win]
+title=Windows (gaming VM)
+size=1600x900
+autoResize=yes
+quickSplash=yes
+
+[input]
+escapeKey=KEY_RIGHTCTRL
+rawMouse=yes
+
+[spice]
+enable=yes
+audio=yes
+EOF
+  chown -R "$u:" "$home/.config/looking-glass"
+}
+
 # --------------------------------------------------------------------------------- create
-gpu_functions() {  # all PCI functions of the first discrete GPU, e.g. 0000:01:00.0 0000:01:00.1
-  local vga slot
-  vga=$(lspci -Dnn | awk '/(VGA compatible|3D) controller/ && /NVIDIA|AMD|ATI/ {print $1; exit}')
+gpu_functions() {  # all PCI functions of the GPU to pass, e.g. 0000:01:00.0 0000:01:00.1
+  local vga='' slot d
+  # A GPU the system did not boot on (laptop dGPU next to the iGPU) first, else the first one.
+  for d in $(lspci -Dnn | awk '/(VGA compatible|3D) controller/ && /NVIDIA|AMD|ATI/ {print $1}'); do
+    [[ $(cat "/sys/bus/pci/devices/$d/boot_vga" 2>/dev/null) == 0 ]] && { vga=$d; break; }
+  done
+  [[ -n $vga ]] || vga=$(lspci -Dnn | awk '/(VGA compatible|3D) controller/ && /NVIDIA|AMD|ATI/ {print $1; exit}')
   [[ -n $vga ]] || die "no NVIDIA/AMD GPU found"
   slot=${vga%.*}
   lspci -D | awk -v s="$slot" 'index($1, s".")==1 {print $1}'
+}
+# hybrid: this GPU is not the one the system booted on, and another GPU drives the screen.
+gpu_mode() {
+  local b
+  [[ $(cat "/sys/bus/pci/devices/$1/boot_vga" 2>/dev/null) == 0 ]] || { echo single; return; }
+  for b in /sys/bus/pci/devices/*/boot_vga; do [[ $(<"$b") == 1 ]] && { echo hybrid; return; }; done
+  echo single
 }
 default_usb() {  # keyboards, mice, USB audio and Bluetooth adapters, as vendor:product
   local d i ids=()
@@ -162,8 +320,8 @@ sound_acl() {  # sound_acl plughw:CARD=ID,DEV=0
 }
 # install_rom SRC DST: copy a VBIOS dump starting at its first PCI ROM image (NVIDIA dumps can
 # carry a header before it, which QEMU rejects). Fails unless the ROM contains a UEFI image.
-install_rom() {
-  python3 - "$1" "$2" <<'PY'
+install_rom() {  # install_rom SRC DST [any]  (any: a ROM without UEFI image is fine, e.g. laptop dGPU)
+  python3 - "$1" "$2" ${3:+"$3"} <<'PY'
 import sys
 d = open(sys.argv[1], 'rb').read()
 start = off = d.find(b'\x55\xaa'); efi = False
@@ -178,13 +336,13 @@ while 0 <= off < len(d) - 0x1a:
     if d[p + 0x15] & 0x80 or size == 0:
         break
     off += size
-if start < 0 or not efi:
+if start < 0 or (not efi and sys.argv[3:] != ['any']):
     sys.exit(1)
 # Keep the whole image chain from its first image. On an RTX 5070 (Blackwell) dump, starting at
 # the VGA BIOS instead (the usual advice for older NVIDIA cards) left Windows with no display:
 # the NVIDIA-specific images (code type 0xE0) before it are needed.
 open(sys.argv[2], 'wb').write(d[start:])
-print(f":: VBIOS installed as {sys.argv[2]} ({len(d) - start} bytes, UEFI image present"
+print(f":: VBIOS installed as {sys.argv[2]} ({len(d) - start} bytes, UEFI image {'present' if efi else 'absent'}"
       + (f", {start}-byte header removed)" if start else ")"))
 PY
   local rc=$?; [[ -f $2 ]] && chmod 644 "$2"; return $rc
@@ -199,10 +357,13 @@ ovmf_code() {
 cmd_create() {
   need_root create "$@"
   local name=win-gaming disk='' iso='' ram='' cores='' usb='' romfile='' wipe=0 yes=0
-  local passdisks='' passusb='' onboard=''
+  local passdisks='' passusb='' onboard='' image='' size='' unattend='' virtio='' winuser='' winpass='' winkey=''
   while (($#)); do
     case $1 in
       --name) name=$2; shift ;; --disk) disk=$2; shift ;; --iso) iso=$2; shift ;;
+      --image) image=$2; shift ;; --size) size=$2; shift ;;
+      --unattend) unattend=$2; shift ;; --virtio-win) virtio=$2; shift ;;
+      --win-user) winuser=$2; shift ;; --win-password) winpass=$2; shift ;; --win-key) winkey=$2; shift ;;
       --ram) ram=$2; shift ;; --cores) cores=$2; shift ;; --usb) usb=$2; shift ;;
       --rom) romfile=$2; shift ;;
       --pass-disk) [[ -b $2 ]] || die "--pass-disk: $2 is not a block device"; passdisks+="${passdisks:+ }$2"; shift ;;
@@ -211,13 +372,32 @@ cmd_create() {
       --wipe) wipe=1 ;; --yes) yes=1 ;; *) die "unknown option $1" ;;
     esac; shift
   done
-  [[ -n $disk ]] || die "--disk is required (the whole disk Windows lives on, e.g. /dev/sdX or a /dev/disk/by-id path)"
-  [[ -b $disk ]] || die "$disk is not a block device"
-  local dev; dev=$(readlink -f "$disk")
-  [[ $(lsblk -dno TYPE "$dev") == disk ]] || die "$disk is a partition; give the whole disk"
-  local rootdisk; rootdisk=$(lsblk -no PKNAME "$(findmnt -no SOURCE / | sed 's/\[.*\]//')")
-  [[ $(basename "$dev") != "$rootdisk" ]] || die "$disk holds the running Linux system"
+  [[ -n $disk || -n $image ]] || die "--disk DEV (a whole disk for Windows) or --image FILE --size GiB is required"
+  [[ -n $disk && -n $image ]] && die "give --disk or --image, not both"
   [[ -z $iso || -f $iso ]] || die "ISO not found: $iso"
+  [[ -z $virtio || -f $virtio ]] || die "virtio-win ISO not found: $virtio"
+  [[ -z $unattend || -f $unattend ]] || die "unattend file not found: $unattend"
+  local dev='' disktype=block
+  if [[ -n $image ]]; then
+    disktype='file'
+    image=$(realpath -m "$image")
+    if [[ ! -f $image ]]; then
+      [[ $size =~ ^[0-9]+$ ]] || die "--size GiB is required for a new image"
+      mkdir -p "$(dirname "$image")"
+      touch "$image"
+      # btrfs: copy-on-write fragments a VM image badly and snapshots would keep every change.
+      [[ $(stat -f -c %T "$(dirname "$image")") == btrfs ]] && chattr +C "$image" 2>/dev/null
+      truncate -s "${size}G" "$image"   # sparse: takes space only as Windows writes
+      say "Created $image (${size} GiB, sparse)"
+    fi
+    disk=$image
+  else
+    [[ -b $disk ]] || die "$disk is not a block device"
+    dev=$(readlink -f "$disk")
+    [[ $(lsblk -dno TYPE "$dev") == disk ]] || die "$disk is a partition; give the whole disk"
+    local rootdisk; rootdisk=$(lsblk -no PKNAME "$(findmnt -no SOURCE / | sed 's/\[.*\]//')")
+    [[ $(basename "$dev") != "$rootdisk" ]] || die "$disk holds the running Linux system"
+  fi
 
   local total_gib host_cores; total_gib=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) / 1048576 ))
   host_cores=$(nproc)
@@ -232,10 +412,15 @@ cmd_create() {
   ram=${ram:-$(( total_gib - reserve > 4 ? total_gib - reserve : 4 ))}
   (( ram >= 2 && ram <= total_gib - 2 )) || die "--ram must be 2..$((total_gib - 2)) GiB (the host keeps at least 2)"
   cores=${cores:-$(( host_cores > 4 ? host_cores - 2 : host_cores - 1 ))}
-  usb=${usb:-$(default_usb)}
   (( cores >= 1 && cores < host_cores )) || die "--cores must be 1..$((host_cores - 1)) (the host keeps at least one)"
   mapfile -t gpu < <(gpu_functions)
+  local mode; mode=$(gpu_mode "${gpu[0]}")
+  # Hybrid: Linux keeps its keyboard and mouse; Windows gets input through Looking Glass.
+  if [[ $mode == hybrid ]]; then usb=${usb:-none}; else usb=${usb:-$(default_usb)}; fi
+  [[ $usb == none ]] && usb=''
 
+  local ptuuid=''
+  if [[ $disktype == block ]]; then
   unmount_disk "$dev"
   if ((wipe)); then
     lsblk -o NAME,SIZE,FSTYPE,LABEL,MODEL "$dev"
@@ -250,7 +435,7 @@ cmd_create() {
   # Identify the disk by its GPT GUID, never by serial: USB enclosures (e.g. RTL9210) report the
   # same fake serial for every unit, so a serial/by-id path can point at a different disk.
   # A blank disk gets an empty GPT first; Windows Setup installs into it and keeps the GUID.
-  local ptuuid; ptuuid=$(lsblk -dno PTUUID "$dev")
+  ptuuid=$(lsblk -dno PTUUID "$dev")
   if [[ -z $ptuuid ]]; then
     lsblk -no FSTYPE "$dev" | grep -q . && die "$disk has data but no partition table; use --wipe if it may be erased"
     printf 'label: gpt\n' | sfdisk -q "$dev" >/dev/null && udevadm settle
@@ -270,13 +455,21 @@ EOF
   udevadm control --reload; udevadm trigger --action=change --sysname-match="$(basename "$dev")*"; udevadm settle
   [[ $(readlink -f "$link") == "$dev" ]] || die "udev did not create $link for $disk"
   disk=$link
+  fi
 
   local code vars; code=$(ovmf_code); vars=${code/CODE/VARS}
   [[ -f $vars ]] || die "OVMF VARS template not found next to $code"
 
-  # Pin Windows to the last N cores; QEMU's own threads to the rest.
-  local first=$(( host_cores - cores )) pins='' i
+  # Pin Windows to the last N CPUs; QEMU's own threads to the rest.
+  local first=$(( host_cores - cores )) pins='' i threads=1
   for ((i = 0; i < cores; i++)); do pins+="    <vcpupin vcpu='$i' cpuset='$((first + i))'/>"$'\n'; done
+  # When those CPUs are whole SMT pairs (cpuN + cpuN+1), tell Windows: it schedules better.
+  if (( cores % 2 == 0 && first % 2 == 0 )); then
+    threads=2
+    for ((i = first; i < host_cores; i += 2)); do
+      [[ $(cat "/sys/devices/system/cpu/cpu$i/topology/thread_siblings_list" 2>/dev/null) =~ ^${i}[-,]$((i + 1))$ ]] || { threads=1; break; }
+    done
+  fi
   # GPU VBIOS: --rom, else the one an earlier create recorded.
   local romdst=''
   if [[ -n $romfile ]]; then
@@ -287,8 +480,23 @@ EOF
   elif [[ -f $CONF ]]; then
     romdst=$(sed -n 's/^ROM=//p' "$CONF"); [[ -f $romdst ]] || romdst=''
   fi
+  # Hybrid: no ROM file unless asked for. On an OMEN 16 (RTX 3070 Ti Laptop) the dumped VBIOS's
+  # UEFI driver hung the VM firmware at 100% of one core; without it Windows booted in 20 s.
+  # A copy is still saved next to the others, for --rom if a driver ever needs it.
+  if [[ -z $romdst && $mode == hybrid && ! -f /var/lib/libvirt/vbios/dgpu-saved.rom ]]; then
+    local r=/sys/bus/pci/devices/${gpu[0]}/rom
+    mkdir -p /var/lib/libvirt/vbios
+    if echo 1 >"$r" 2>/dev/null && cat "$r" >/var/lib/libvirt/vbios/dgpu-saved.rom 2>/dev/null; then
+      say "dGPU VBIOS saved as /var/lib/libvirt/vbios/dgpu-saved.rom (not used; --rom FILE to try it)"
+    fi
+    echo 0 >"$r" 2>/dev/null || true
+  fi
   # shellcheck disable=SC2016  # the single quotes are XML attribute quotes; $romdst does expand
   local hostdevs='' f rom=" <rom bar='on'${romdst:+ file='$romdst'}/>"
+  # Hybrid without a ROM file: hide the dGPU's ROM from the VM firmware. Its UEFI driver hangs
+  # OVMF on every warm reboot (the GPU is already initialised by Windows); the Windows driver
+  # works without it (tested: RTX 3070 Ti Laptop, driver OK, reboots fine).
+  [[ $mode == hybrid && -z $romdst ]] && rom=" <rom bar='off'/>"
   for f in "${gpu[@]}"; do
     hostdevs+="    <hostdev mode='subsystem' type='pci' managed='yes'><source><address domain='0x${f:0:4}' bus='0x${f:5:2}' slot='0x${f:8:2}' function='0x${f:11:1}'/></source>${rom}</hostdev>"$'\n'
     rom=''
@@ -297,27 +505,58 @@ EOF
   for id in ${usb//,/ }; do
     hostdevs+="    <hostdev mode='subsystem' type='usb' managed='yes'><source startupPolicy='optional'><vendor id='0x${id%%:*}'/><product id='0x${id##*:}'/></source></hostdev>"$'\n'
   done
-  local cdrom='' isodst
-  if [[ -n $iso ]]; then
-    # QEMU runs as an unprivileged user that cannot enter /home: keep a copy in libvirt's image dir.
-    isodst=/var/lib/libvirt/images/$(basename "$iso")
-    mkdir -p /var/lib/libvirt/images
-    [[ -f $isodst && $(stat -c %s "$isodst") == $(stat -c %s "$iso") ]] || { say "Copying the ISO to $isodst"; install -m644 "$iso" "$isodst"; }
-    cdrom="    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='$isodst'/><target dev='sdb' bus='sata'/><readonly/><boot order='1'/></disk>"
+  # QEMU runs as an unprivileged user that may not enter /home: keep copies next to the image
+  # (an image dir is outside the snapshots), else in libvirt's image dir.
+  local cdrom='' isodir=/var/lib/libvirt/images
+  [[ $disktype == file ]] && isodir=$(dirname "$disk")
+  mkdir -p "$isodir"
+  cd_xml() {  # cd_xml SRC TARGET [boot]: copy SRC into isodir, print the CD element
+    local dst; dst=$isodir/$(basename "$1")
+    [[ $1 -ef $dst ]] || [[ -f $dst && $(stat -c %s "$dst") == $(stat -c %s "$1") ]] || { say "Copying $(basename "$1") to $isodir" >&2; install -m644 "$1" "$dst"; }
+    printf "    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='%s'/><target dev='%s' bus='sata'/><readonly/>%s</disk>\n" \
+      "$dst" "$2" "${3:+<boot order='1'/>}"
+  }
+  [[ -n $iso ]] && cdrom+=$(cd_xml "$iso" sdb boot)$'\n'
+  # Unattended install: Windows Setup reads autounattend.xml from the root of any CD.
+  if [[ -n $winuser ]]; then
+    unattend=$(mktemp); write_unattend "$winuser" "$winpass" "$winkey" >"$unattend"
   fi
+  if [[ -n $unattend ]]; then
+    local ud; ud=$(mktemp -d); cp "$unattend" "$ud/autounattend.xml"
+    xorriso -as mkisofs -quiet -J -r -V UNATTEND -o "$isodir/$name-unattend.iso" "$ud" 2>/dev/null || die "could not build the unattend ISO (xorriso missing?)"
+    rm -rf "$ud"; [[ -n $winuser ]] && rm -f "$unattend"
+    chmod 600 "$isodir/$name-unattend.iso"   # holds the Windows password
+    cdrom+=$(cd_xml "$isodir/$name-unattend.iso" sdc)$'\n'
+  fi
+  [[ -n $virtio ]] && cdrom+=$(cd_xml "$virtio" sdd)$'\n'
 
   # Two VMs on the same disk: "$name" (GPU passthrough, the hook hands the GPU over) and
   # "$name-install" (a window on the Linux desktop, no passthrough) for setup and repairs.
-  # Onboard sound: keep the earlier choice unless given again.
-  [[ -z $onboard && -f $CONF ]] && onboard=$(sed -n 's/^ONBOARD_AUDIO=//p' "$CONF")
-  [[ $onboard == no ]] || onboard=$(onboard_alsa)
-  local sound=''
-  [[ -n $onboard && $onboard != no ]] && sound_acl "$onboard"
-  [[ -n $onboard && $onboard != no ]] && sound=$(printf '    %s\n' \
-    "<sound model='ich9'><codec type='duplex'/><audio id='1'/></sound>" \
-    "<audio id='1' type='alsa'><input dev='$onboard'/><output dev='$onboard'/></audio>")$'\n'
-  define_domain "$name" "Windows with single-GPU passthrough" \
+  local sound='' acpitable=''
+  if [[ $mode == hybrid ]]; then
+    # Linux keeps running: no onboard sound card to take over. Sound, keyboard and mouse go
+    # through the SPICE channel that the Looking Glass window uses; the picture through shared memory.
+    onboard=no
+    [[ -f /var/lib/libvirt/acpi/fake-battery.aml ]] && acpitable=/var/lib/libvirt/acpi/fake-battery.aml
+    sound=$(printf '    %s\n' \
+      "<graphics type='spice' autoport='yes'><listen type='address' address='127.0.0.1'/><image compression='off'/></graphics>" \
+      "<channel type='spicevmc'><target type='virtio' name='com.redhat.spice.0'/></channel>" \
+      "<input type='mouse' bus='ps2'/><input type='keyboard' bus='ps2'/>" \
+      "<sound model='ich9'><audio id='1'/></sound>" \
+      "<audio id='1' type='spice'/>" \
+      "<shmem name='looking-glass'><model type='ivshmem-plain'/><size unit='M'>128</size></shmem>")$'\n'
+  else
+    # Onboard sound: keep the earlier choice unless given again.
+    [[ -z $onboard && -f $CONF ]] && onboard=$(sed -n 's/^ONBOARD_AUDIO=//p' "$CONF")
+    [[ $onboard == no ]] || onboard=$(onboard_alsa)
+    [[ -n $onboard && $onboard != no ]] && sound_acl "$onboard"
+    [[ -n $onboard && $onboard != no ]] && sound=$(printf '    %s\n' \
+      "<sound model='ich9'><codec type='duplex'/><audio id='1'/></sound>" \
+      "<audio id='1' type='alsa'><input dev='$onboard'/><output dev='$onboard'/></audio>")$'\n'
+  fi
+  define_domain "$name" "Windows with $mode-GPU passthrough" \
     "    <video><model type='none'/></video>"$'\n'"$sound$hostdevs"
+  acpitable=''   # the window VM has no dGPU: no fake battery needed
   local windowed
   windowed=$(printf '    %s\n' \
     "<graphics type='spice' autoport='yes'><listen type='address' address='127.0.0.1'/></graphics>" \
@@ -333,7 +572,9 @@ EOF
   cat >"$CONF" <<EOF
 # tux-gamevm — written by 'tux-gamevm create'
 NAME=$name
+MODE=$mode
 DISK=$disk
+DISK_TYPE=$disktype
 DISK_ID=$ptuuid
 GPU="${gpu[*]}"
 USB=$usb
@@ -358,8 +599,28 @@ define_domain() {
   # Re-running create updates the existing VM (same UUID, keeps its NVRAM) instead of clashing.
   uuid=$("${VIRSH[@]}" domuuid "$dname" 2>/dev/null | head -n1 || true)
   xml=$(mktemp)
+  local diskxml qemuns='' qemucmd='' cpufeat=''
+  # AMD: without topoext Windows does not see the SMT threads (worse scheduling and latency).
+  grep -q -m1 AuthenticAMD /proc/cpuinfo && ((threads > 1)) && cpufeat="
+    <feature policy='require' name='topoext'/>"
+  if [[ $disktype == file ]]; then
+    diskxml="<disk type='file' device='disk'>
+      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
+      <source file='$disk'/><target dev='sda' bus='sata'/><boot order='2'/>
+    </disk>"
+  else
+    diskxml="<disk type='block' device='disk'>
+      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
+      <source dev='$disk'/><target dev='sda' bus='sata'/><boot order='2'/>
+    </disk>"
+  fi
+  if [[ -n $acpitable ]]; then
+    qemuns=" xmlns:qemu='http://libvirt.org/schemas/domain/qemu/1.0'"
+    qemucmd="
+  <qemu:commandline><qemu:arg value='-acpitable'/><qemu:arg value='file=$acpitable'/></qemu:commandline>"
+  fi
   cat >"$xml" <<XML
-<domain type='kvm'>
+<domain type='kvm'$qemuns>
   <name>$dname</name>${uuid:+
   <uuid>$uuid</uuid>}
   <description>tux-gamevm: $desc. Disk: $disk</description>
@@ -385,8 +646,8 @@ $pins    <emulatorpin cpuset='0-$((first - 1))'/>
     <vmport state='off'/>
   </features>
   <cpu mode='host-passthrough' check='none' migratable='off'>
-    <topology sockets='1' dies='1' cores='$cores' threads='1'/>
-    <cache mode='passthrough'/>
+    <topology sockets='1' dies='1' cores='$((cores / threads))' threads='$threads'/>
+    <cache mode='passthrough'/>$cpufeat
   </cpu>
   <clock offset='localtime'>
     <timer name='rtc' tickpolicy='catchup'/><timer name='pit' tickpolicy='delay'/>
@@ -395,19 +656,101 @@ $pins    <emulatorpin cpuset='0-$((first - 1))'/>
   <on_poweroff>destroy</on_poweroff><on_reboot>restart</on_reboot><on_crash>destroy</on_crash>
   <pm><suspend-to-mem enabled='no'/><suspend-to-disk enabled='no'/></pm>
   <devices>
-    <disk type='block' device='disk'>
-      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
-      <source dev='$disk'/><target dev='sda' bus='sata'/><boot order='2'/>
-    </disk>
+    $diskxml
 $cdrom
     <controller type='usb' model='qemu-xhci' ports='15'/>
     <interface type='network'><source network='default'/><model type='e1000e'/></interface>
+    <channel type='unix'><target type='virtio' name='org.qemu.guest_agent.0'/></channel>
 $devs    <memballoon model='none'/>
-  </devices>
+  </devices>$qemucmd
 </domain>
 XML
   "${VIRSH[@]}" define "$xml" >/dev/null || { cp "$xml" /tmp/tux-gamevm-failed.xml; die "virsh define $dname failed (XML kept in /tmp/tux-gamevm-failed.xml)"; }
   rm -f "$xml"
+}
+
+# autounattend.xml: Windows 10/11 x64 on the first disk (wiped), local admin account that logs
+# in automatically, no OOBE questions. At first logon it turns hibernation off (a hibernated
+# Windows corrupts shared drives) and installs the virtio guest tools if their CD is attached.
+#   KEY (optional): the edition's installation key. Media without a built-in edition choice
+#   (e.g. LTSC) need one; Microsoft's published KMS client keys install but do not activate.
+write_unattend() {  # write_unattend USER PASSWORD [KEY]
+  local u p tz='UTC'
+  u=$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' <<<"$1"); p=$(sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' <<<"$2")
+  # Windows time zone names differ from tzdata; the common ones, else UTC (fixable in Settings).
+  case $(readlink /etc/localtime 2>/dev/null | sed 's#.*/zoneinfo/##') in
+    Asia/Kolkata|Asia/Calcutta) tz='India Standard Time' ;; Europe/London) tz='GMT Standard Time' ;;
+    Europe/Berlin|Europe/Paris|Europe/Amsterdam|Europe/Madrid|Europe/Rome) tz='W. Europe Standard Time' ;;
+    America/New_York) tz='Eastern Standard Time' ;; America/Chicago) tz='Central Standard Time' ;;
+    America/Los_Angeles) tz='Pacific Standard Time' ;;
+  esac
+  local c='processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"'
+  cat <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" $c>
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" $c>
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID><WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall><OSImage>
+        <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+        <InstallFrom><MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData></InstallFrom>
+      </OSImage></ImageInstall>
+      <UserData><AcceptEula>true</AcceptEula>${3:+<ProductKey><Key>$3</Key><WillShowUI>OnError</WillShowUI></ProductKey>}</UserData>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" $c>
+      <ComputerName>GAMEVM</ComputerName><TimeZone>$tz</TimeZone>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" $c>
+      <InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" $c>
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <NetworkLocation>Home</NetworkLocation><ProtectYourPC>3</ProtectYourPC>
+      </OOBE>
+      <UserAccounts><LocalAccounts>
+        <LocalAccount wcm:action="add">
+          <Name>$u</Name><Group>Administrators</Group><DisplayName>$u</DisplayName>
+          <Password><Value>$p</Value><PlainText>true</PlainText></Password>
+        </LocalAccount>
+      </LocalAccounts></UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled><Username>$u</Username><LogonCount>9999999</LogonCount>
+        <Password><Value>$p</Value><PlainText>true</PlainText></Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add"><Order>1</Order><CommandLine>powercfg /h off</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>2</Order><CommandLine>powercfg /setactive SCHEME_MIN</CommandLine></SynchronousCommand>
+        <SynchronousCommand wcm:action="add"><Order>3</Order><CommandLine>cmd /c for %d in (D E F G H I) do if exist %d:\virtio-win-guest-tools.exe start /wait %d:\virtio-win-guest-tools.exe /install /quiet /norestart</CommandLine></SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>
+EOF
 }
 
 unmount_disk() {
@@ -423,6 +766,10 @@ is_running() { [[ $("${VIRSH[@]}" domstate "$1" 2>/dev/null) == running ]]; }
 
 # The VM disk must be present AND be the same disk (GPT GUID) that create recorded.
 disk_check() {
+  if [[ ${DISK_TYPE:-block} == file ]]; then
+    [[ -f $DISK ]] || { echo "the Windows image $DISK is missing (is its drive mounted?)"; return 1; }
+    return 0
+  fi
   [[ -b $DISK ]] || { echo "the Windows disk is not connected ($DISK missing)"; return 1; }
   local got; got=$(lsblk -dno PTUUID "$(readlink -f "$DISK")")
   [[ -n ${DISK_ID:-} && $got == "$DISK_ID" ]] || { echo "$DISK is not the Windows disk (GPT GUID ${got:-none}, expected ${DISK_ID:-unset})"; return 1; }
@@ -444,8 +791,10 @@ holds_system() {  # true if a block device (or its partitions) holds / /home /bo
 }
 
 shared_xml() {  # one XML element per line for every drive to pass at this start
-  local windev winusb d b n=0 p letters=(c d e f g h i j k l)
-  windev=$(basename "$(readlink -f "$DISK")"); winusb=$(usb_dev_of_block "$windev")
+  local windev='' winusb='' d b n=0 p letters=(e f g h i j k l m n)
+  if [[ ${DISK_TYPE:-block} == block ]]; then
+    windev=$(basename "$(readlink -f "$DISK")"); winusb=$(usb_dev_of_block "$windev")
+  fi
   if [[ ${PASS_USB_STORAGE:-yes} == yes ]]; then
     for d in /sys/bus/usb/devices/*; do
       [[ -f $d/busnum ]] && grep -qx 08 "$d"/*/bInterfaceClass 2>/dev/null || continue
@@ -484,31 +833,110 @@ tree.write(sys.argv[1])' "$x" && "${VIRSH[@]}" define "$x" >/dev/null
 cmd_start() {
   load_conf
   [[ -n $(ls /sys/kernel/iommu_groups 2>/dev/null) ]] || die "IOMMU is not active: run tux-gamevm setup and reboot"
+  is_running "$NAME" && { [[ ${MODE:-single} == hybrid ]] && cmd_view; return 0; }
   is_running "$NAME-install" && die "$NAME-install is running on the same disk: shut it down first"
   local why; why=$(disk_check) || die "$why"
   apply_shared || die "could not update the shared drives"
   local shared; shared=$("${VIRSH[@]}" dumpxml --inactive "$NAME" | grep -c "name='ua-tux" || true)
-  if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v notify-send >/dev/null; then
+  local gui=0; [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v notify-send >/dev/null && gui=1
+  if [[ ${MODE:-single} == hybrid ]]; then
+    ((gui)) && notify-send "Gaming VM" "Starting Windows on the NVIDIA GPU. Linux keeps running.
+Right Ctrl = release keyboard/mouse, Right Ctrl+F = fullscreen." || true
+    "${VIRSH[@]}" start "$NAME" || { ((gui)) && notify-send -u critical "Gaming VM" "Windows did not start: see $LOG"; exit 1; }
+    ((gui)) && cmd_view
+    return 0
+  fi
+  if ((gui)); then
     notify-send -u critical "Gaming VM" "Starting $NAME in 5 s: the desktop will close. Save your work.
 $shared drive(s) go to Windows and come back after it shuts down." || true
     sleep 5
   fi
   "${VIRSH[@]}" start "$NAME"
 }
+# hybrid: the Looking Glass window (Windows' screen, keyboard, mouse, sound).
+cmd_view() {
+  load_conf
+  [[ ${MODE:-single} == hybrid ]] || die "the Looking Glass window is for hybrid (laptop) setups"
+  is_running "$NAME" || die "$NAME is not running (tux-gamevm start)"
+  command -v looking-glass-client >/dev/null || die "looking-glass-client is not installed (tux-gamevm setup)"
+  pgrep -u "$UID" -f '^looking-glass-client' >/dev/null && return 0   # name > 15 chars: -x never matches
+  local i; for i in $(seq 40); do [[ -e /dev/shm/looking-glass ]] && break; sleep 0.25; done
+  setsid -f looking-glass-client >/dev/null 2>&1
+}
 # Install/repair mode: the same Windows in a window on the Linux desktop; no GPU handover.
 cmd_install() {
   load_conf
   is_running "$NAME" && die "$NAME is running on the same disk: shut it down first"
   local why; why=$(disk_check) || die "$why"
-  is_running "$NAME-install" || "${VIRSH[@]}" start "$NAME-install"
+  if ! is_running "$NAME-install"; then
+    "${VIRSH[@]}" start "$NAME-install"
+    # A Windows ISO boots only after "Press any key to boot from CD": press it while the VM starts
+    # (once Windows is on the disk this boots it instead, as the empty-disk check below shows).
+    if "${VIRSH[@]}" dumpxml "$NAME-install" | grep -q "<boot order='1'/>" && ! windows_installed; then
+      local i; for i in $(seq 12); do sleep 1; "${VIRSH[@]}" send-key "$NAME-install" KEY_ENTER >/dev/null 2>&1 || true; done
+      # Single-edition media (LTSC) still show the edition list once even with an answer file;
+      # Enter picks the only entry. Keep pressing while Setup loads (harmless on later screens).
+      for i in $(seq 9); do sleep 10; "${VIRSH[@]}" send-key "$NAME-install" KEY_ENTER >/dev/null 2>&1 || true; done &
+    fi
+  fi
   command -v virt-viewer >/dev/null || die "virt-viewer is not installed (tux-gamevm setup installs it)"
   setsid -f virt-viewer --connect qemu:///system --wait --reconnect "$NAME-install" >/dev/null 2>&1
+}
+# guest-setup: run data/gamevm-guest-setup.ps1 inside the running VM through the guest agent
+# (virtio guest tools, installed at first logon). Downloads and installs the Looking Glass host
+# and the Virtual Display Driver in Windows; prints what it did.
+cmd_guest_setup() {
+  load_conf
+  local dom='' d s=${TUX_SHARE:-/usr/share/tuxcraft}/data/gamevm-guest-setup.ps1
+  [[ -f $s ]] || s=$(dirname "$(readlink -f "$0")")/../data/gamevm-guest-setup.ps1
+  [[ -f $s ]] || die "gamevm-guest-setup.ps1 not found"
+  for d in "$NAME" "$NAME-install"; do is_running "$d" && { dom=$d; break; }; done
+  [[ -n $dom ]] || die "start the VM first (tux-gamevm start, or tux-gamevm install)"
+  python3 - "$dom" "$s" <<'PY'
+import base64, json, subprocess, sys, time
+dom, script = sys.argv[1], sys.argv[2]
+def agent(cmd, args=None):
+    msg = {"execute": cmd, **({"arguments": args} if args is not None else {})}
+    r = subprocess.run(["virsh", "-c", "qemu:///system", "qemu-agent-command", "--timeout", "60", dom, json.dumps(msg)],
+                       capture_output=True, text=True)
+    if r.returncode:
+        sys.exit("guest agent: " + r.stderr.strip() + " (is Windows up, with the virtio guest tools?)")
+    return json.loads(r.stdout)["return"]
+def run(path, *args):
+    pid = agent("guest-exec", {"path": path, "arg": list(args), "capture-output": True})["pid"]
+    while not (st := agent("guest-exec-status", {"pid": pid})).get("exited"):
+        time.sleep(2)
+    for k in ("out-data", "err-data"):
+        if st.get(k):
+            sys.stdout.write(base64.b64decode(st[k]).decode("utf-8", "replace"))
+    return st.get("exitcode") or 0
+for _ in range(60):
+    try:
+        agent("guest-ping"); break
+    except SystemExit:
+        time.sleep(5)
+run("cmd.exe", "/c", "mkdir C:\\tuxcraft 2>nul")
+data = open(script, "rb").read()
+h = agent("guest-file-open", {"path": "C:\\tuxcraft\\guest-setup.ps1", "mode": "wb"})
+agent("guest-file-write", {"handle": h, "buf-b64": base64.b64encode(data).decode()})
+agent("guest-file-close", {"handle": h})
+sys.exit(run("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\tuxcraft\\guest-setup.ps1"))
+PY
+}
+
+# Does the Windows disk/image hold a partition table yet? (empty sparse image = not installed)
+windows_installed() {
+  if [[ ${DISK_TYPE:-block} == file ]]; then
+    [[ -n $(head -c 1024 "$DISK" 2>/dev/null | tr -d '\0') ]]
+  else
+    [[ -n $(lsblk -no PARTTYPE "$(readlink -f "$DISK")" 2>/dev/null | tr -d '[:space:]') ]]
+  fi
 }
 cmd_stop()   { load_conf; "${VIRSH[@]}" shutdown "$NAME"; }    # asks Windows to shut down
 cmd_kill()   { load_conf; "${VIRSH[@]}" destroy "$NAME"; }     # pull the plug (Windows hung)
 cmd_status() {
   load_conf
-  echo "VM:    $NAME ($("${VIRSH[@]}" domstate "$NAME" 2>/dev/null || echo undefined))"
+  echo "VM:    $NAME ($("${VIRSH[@]}" domstate "$NAME" 2>/dev/null || echo undefined)), mode ${MODE:-single}"
   echo "Disk:  $DISK"
   echo "GPU:   $GPU  IOMMU: $([[ -n $(ls /sys/kernel/iommu_groups 2>/dev/null) ]] && echo on || echo OFF)"
   echo "USB:   $USB"
@@ -519,17 +947,21 @@ cmd_status() {
 cmd_eject_iso() {
   need_root eject-iso
   load_conf
-  local x iso='' d i
+  local x d i isos=() keep
   for d in "$NAME" "$NAME-install"; do
     "${VIRSH[@]}" domstate "$d" >/dev/null 2>&1 || continue
     x=$(mktemp)
-    i=$("${VIRSH[@]}" dumpxml --inactive "$d" | sed -n "/device='cdrom'/,/<\/disk>/s|.*<source file='\([^']*\)'.*|\1|p")
-    [[ -n $i ]] && iso=$i
+    mapfile -t -O "${#isos[@]}" isos < <("${VIRSH[@]}" dumpxml --inactive "$d" | sed -n "/device='cdrom'/,/<\/disk>/s|.*<source file='\([^']*\)'.*|\1|p")
     "${VIRSH[@]}" dumpxml --inactive "$d" | sed "/device='cdrom'/,/<\/disk>/d" >"$x"
-    "${VIRSH[@]}" define "$x" >/dev/null && say "Installer ISO removed from $d"
+    "${VIRSH[@]}" define "$x" >/dev/null && say "Installer CDs removed from $d"
     rm -f "$x"
   done
-  [[ $iso == /var/lib/libvirt/images/* ]] && rm -f "$iso" && say "Deleted the ISO copy $iso"
+  # Delete only the copies create made (libvirt's image dir, or next to a disk image); the
+  # unattend CD holds the Windows password. The original ISOs elsewhere stay.
+  keep=/var/lib/libvirt/images; [[ ${DISK_TYPE:-block} == file ]] && keep=$(dirname "$DISK")
+  for i in $(printf '%s\n' "${isos[@]}" | sort -u); do
+    [[ $i == /var/lib/libvirt/images/* || $(dirname "$i") == "$keep" ]] && rm -f "$i" && say "Deleted $i"
+  done
   return 0
 }
 
@@ -618,7 +1050,46 @@ remount_shared() {  # give internal disks back; read-only if Windows left them u
   rm -f "$SHARED"
 }
 
+# hybrid: Linux stays up on the iGPU; only the dGPU (and its HDMI audio) leaves.
+# libvirt itself moves the PCI functions to vfio-pci (managed='yes'); this frees them first.
+HYBRID_SVCS="nvidia-powerd nvidia-persistenced"
+hybrid_prepare() {
+  local p m s mods stopped=''
+  disk_check || return 1
+  rm -f "$NOTICE"
+  shared_blocks <<<"${DOMXML:-}" | sort -u >"$SHARED"
+  release_shared || return 1
+  # X (or sway) holding the dGPU means the hybrid X config is not active: refuse, do not kill it.
+  if fuser -v /dev/nvidia* 2>&1 | grep -qwE 'Xorg|X|sway|Xwayland'; then
+    echo "the desktop (X) uses the NVIDIA GPU: log out and in once after 'tux-gamevm setup' (X config), then start again" | tee -a "$NOTICE"
+    return 1
+  fi
+  for s in $HYBRID_SVCS; do
+    [[ $(init_system) == systemd ]] && systemctl is-active -q "$s" 2>/dev/null && { systemctl stop "$s"; stopped+=" $s"; }
+  done
+  echo "${stopped# }" >/run/tux-gamevm.services
+  # Apps using the dGPU (CUDA, a browser's video decoder, ...) lose it now.
+  p=$(fuser /dev/nvidia* 2>/dev/null | tr -s ' ' '\n' | sort -u | tr '\n' ' ')
+  [[ -n ${p// } ]] && { echo "$(date '+%F %T') prepare: stopping processes using the dGPU: $p"; fuser -k /dev/nvidia* >/dev/null 2>&1 || true; sleep 1; }
+  mods=$(gpu_driver_modules)
+  echo "$mods" >/run/tux-gamevm.unloaded
+  for m in $mods; do modprobe -r "$m" || { echo "cannot unload $m: still in use"; return 1; }; done
+  modprobe vfio-pci || return 1
+  echo "$(date '+%F %T') prepare: dGPU released, Linux keeps the iGPU"
+}
+hybrid_release() {
+  local s
+  echo "$(date '+%F %T') release: giving the dGPU back to Linux"
+  if grep -q nvidia /run/tux-gamevm.unloaded 2>/dev/null; then modprobe nvidia_drm || true; modprobe nvidia_uvm || true; fi
+  rm -f /run/tux-gamevm.unloaded
+  for s in $(cat /run/tux-gamevm.services 2>/dev/null); do systemctl start "$s" || true; done
+  rm -f /run/tux-gamevm.services
+  remount_shared
+  echo "$(date '+%F %T') release: dGPU back"
+}
+
 hook_prepare() {
+  [[ ${MODE:-single} == hybrid ]] && { hybrid_prepare; return; }
   local dm m p
   # Before touching the desktop: refuse to run Windows on a missing or different disk.
   disk_check || return 1
@@ -640,11 +1111,12 @@ hook_prepare() {
   echo "$mods" >/run/tux-gamevm.unloaded
   for m in $mods; do modprobe -r "$m" || { echo "cannot unload $m: still in use"; return 1; }; done
   modprobe vfio-pci || return 1
-  ( unmount_disk "$(readlink -f "$DISK")" ) || return 1
+  [[ ${DISK_TYPE:-block} == file ]] || ( unmount_disk "$(readlink -f "$DISK")" ) || return 1
   echo "$(date '+%F %T') prepare: GPU released"
 }
 
 hook_release() {
+  [[ ${MODE:-single} == hybrid ]] && { hybrid_release; return; }
   echo "$(date '+%F %T') release: giving the GPU back"
   # modprobe.d options (modeset/fbdev) apply again; nvidia_drm pulls in nvidia + nvidia_modeset.
   if grep -q nvidia /run/tux-gamevm.unloaded 2>/dev/null; then modprobe nvidia_drm || true; modprobe nvidia_uvm || true; fi
@@ -676,11 +1148,13 @@ case ${1:-} in
   setup) shift; cmd_setup "$@" ;;
   create) shift; cmd_create "$@" ;;
   start) cmd_start ;;
+  view) cmd_view ;;
+  guest-setup) cmd_guest_setup ;;
   install) cmd_install ;;
   stop) cmd_stop ;;
   kill) cmd_kill ;;
   status) cmd_status ;;
   eject-iso) cmd_eject_iso ;;
   hook) shift; cmd_hook "$@" ;;
-  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,/^set -euo/{/^set -euo/!p}' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

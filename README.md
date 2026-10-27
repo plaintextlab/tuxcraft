@@ -134,7 +134,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-backup [mountpoint]` | backup to an external drive |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
-| `tux-gamevm` | Windows gaming VM with single-GPU passthrough (`setup`, `create --disk ...`, `start`); appears in the system menu once created |
+| `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
 
@@ -162,6 +162,32 @@ published fingerprint), exports **Claude** to the app menu, and fixes what break
 Sign-in and settings stay in `~/.config/Claude` on the host. Sign-in is saved only if a keyring
 (gnome-keyring) runs in your session. **Cowork** needs KVM: be in the `kvm` group and load
 `vhost_vsock` (`doctor` prints the commands). Options: `--name` (default `tux-debian`), `--image`.
+
+## Gaming VM (`tux-gamevm`)
+
+Windows with a real GPU, for games that need it. Two modes, picked automatically:
+
+| | single (one GPU, desktop PC) | hybrid (iGPU + dGPU, laptop) |
+|---|---|---|
+| Starting Windows | closes the Linux desktop, hands over GPU, keyboard, mouse, USB audio | Linux keeps running on the iGPU; only the dGPU leaves |
+| Windows' screen | the GPU's monitor | the dGPU's HDMI port, and a **Looking Glass** window on the Linux desktop (keyboard, mouse, sound; Right Ctrl releases, Right Ctrl+F fullscreen) |
+| Shutting Windows down | back to the login screen | the dGPU returns to its Linux driver (CUDA, `nvidia-smi` work again) |
+
+```sh
+sudo tux-gamevm setup                    # libvirt, IOMMU, hook; hybrid: X on the iGPU only, Looking Glass, fake battery
+sudo tux-gamevm create --image /mnt/data/vm/win.img --size 500 --ram 22 --cores 12 \
+     --iso Win10.iso --virtio-win virtio-win.iso --win-user me --win-password ... [--win-key KEY]
+tux-gamevm install                       # unattended Windows install in a desktop window (no GPU)
+tux-gamevm start                         # with the GPU (hybrid: opens the Looking Glass window)
+tux-gamevm guest-setup                   # hybrid, once, while Windows runs: Looking Glass host + virtual monitor
+```
+
+`--disk DEV` puts Windows on a whole disk instead of an image. Hybrid notes, learnt on an HP OMEN 16 (RTX 3070 Ti Laptop):
+X must not open the dGPU (`setup` writes an X config: no PRIME offload on Linux while it is in place), PipeWire must
+leave its HDMI audio alone (a WirePlumber rule), the VM firmware must not run the dGPU's ROM (`rombar=off`, else
+warm reboots hang), NVIDIA's laptop driver wants a battery (fake ACPI battery, no error 43), and with nothing on HDMI
+Windows needs a virtual monitor for Looking Glass to capture (`guest-setup`). LTSC media need `--win-key`
+(Microsoft's published KMS client keys install, but do not activate). Windows Update installs the NVIDIA driver.
 
 ## Machine-specific fixes
 
