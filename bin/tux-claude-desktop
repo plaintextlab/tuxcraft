@@ -20,6 +20,10 @@ LOG=$STATE/claude-desktop.log
 KEY_URL=https://downloads.claude.ai/claude-desktop/key.asc
 KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 REPO='deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/claude-desktop-archive-keyring.asc] https://downloads.claude.ai/claude-desktop/apt/stable stable main'
+# Chromium picks its secret store from XDG_CURRENT_DESKTOP and does not know i3 or sway, so it
+# falls back to plain text and the app says "no system keyring". Every start must pass this:
+# one start without it switches stores and the saved sign-in can no longer be read.
+STORE=--password-store=gnome-libsecret
 
 b=$'\e[1m' g=$'\e[32m' y=$'\e[33m' r=$'\e[31m' c=$'\e[36m' n=$'\e[0m'
 step() { printf '\n%s==> %s%s\n' "$c$b" "$*" "$n"; }
@@ -131,6 +135,8 @@ EOF
 # Full paths: distrobox-export --app NAME only matches NAME against Exec=/Name= lines, and the
 # package's id (com.anthropic.Claude) appears in neither.
 desktop_files() { inbox sh -c "dpkg -L claude-desktop | grep '^/usr/share/applications/.*\.desktop\$'" 2>/dev/null; }
+# What every start passes, from the menu, a claude:// link or tux-claude-desktop launch.
+app_flags() { local f=$STORE; ((NO_SANDBOX)) && f+=" --no-sandbox"; echo "$f"; }
 
 export_app() {
   step "Adding Claude to the host menu"
@@ -139,6 +145,9 @@ export_app() {
     inbox distrobox-export --app "$id" >/dev/null && found=1
   done
   ((found)) || { warn "No .desktop file found in the package; use tux-claude-desktop launch"; return; }
+  # Not --extra-flags: that reaches only the first Exec=, and the New Chat/New Code actions
+  # start the app too when it is not running.
+  sed -i "s|^\(Exec=.* claude-desktop\) |\1 $(app_flags) |" "$HOME/.local/share/applications/$NAME"-*Claude*.desktop
   # claude:// links (the end of the browser sign-in) must reach the app in the box. Point the
   # host's handler at the exported entry; Electron's single-instance lock hands it over.
   for f in "$HOME/.local/share/applications/$NAME"-*.desktop; do
@@ -162,8 +171,9 @@ unexport() {
 
 do_launch() {
   installed || die "Not installed. Run: tux-claude-desktop install"
-  local args=("${PASS[@]}")
-  ((NO_SANDBOX)) && args=(--no-sandbox "${args[@]}")
+  local args
+  read -ra args <<<"$(app_flags)"
+  args+=("${PASS[@]}")
   : >"$LOG"
   nohup distrobox enter --name "$NAME" -- claude-desktop "${args[@]}" >>"$LOG" 2>&1 &
   local pid=$! i rc=0
@@ -177,6 +187,7 @@ do_launch() {
   if ((!NO_SANDBOX)) && grep -qiE 'sandbox|namespace' "$LOG"; then
     warn "Chromium's sandbox cannot start in this container; retrying with --no-sandbox"
     echo "NO_SANDBOX=1" >>"$CONF"; NO_SANDBOX=1
+    export_app >/dev/null   # the menu entry needs it too
     do_launch; return
   fi
   grep -q . "$LOG" && tail -n 20 "$LOG"
@@ -222,8 +233,10 @@ do_doctor() {
   box_exists && pass "container $NAME exists" || { fail "container $NAME missing: tux-claude-desktop install"; return 1; }
   installed && pass "claude-desktop $(pkgver)" || fail "claude-desktop not installed in $NAME"
   [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]] && pass "display: ${WAYLAND_DISPLAY:+wayland $WAYLAND_DISPLAY }${DISPLAY:+x11 $DISPLAY}" || fail "no DISPLAY/WAYLAND_DISPLAY (run from your desktop session)"
-  busctl --user status org.freedesktop.secrets >/dev/null 2>&1 && pass "keyring on the session bus (sign-in is saved)" \
+  busctl --user status org.freedesktop.secrets >/dev/null 2>&1 && pass "keyring on the session bus" \
     || fail "no Secret Service on the session bus: start gnome-keyring, or you sign in on every launch"
+  grep -qs -- "$STORE" "$HOME/.local/share/applications/$NAME"-com.anthropic.Claude.desktop && pass "menu entry uses the keyring ($STORE)" \
+    || fail "menu entry starts Claude without $STORE (\"no system keyring\"): tux-claude-desktop install"
   busctl --user status org.freedesktop.portal.Desktop >/dev/null 2>&1 && pass "desktop portal (links open on the host)" \
     || fail "no xdg-desktop-portal; links fall back to distrobox-host-exec"
   [[ $(xdg-mime query default x-scheme-handler/claude 2>/dev/null) == "$NAME"-* ]] && pass "claude:// handler: $(xdg-mime query default x-scheme-handler/claude)" \
