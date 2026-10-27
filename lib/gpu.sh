@@ -23,6 +23,13 @@ gpu_stage() {
       void)   p+=(mesa-vulkan-radeon mesa-vaapi) ;;
     esac
   fi
+  # Steam and 32-bit games (Proton) need the 32-bit drivers too; without them pacman asks which
+  # lib32 Vulkan driver to pick, and the iGPU has no 32-bit GL at all.
+  if [[ $DISTRO == arch ]] && has_word "$TUX_BUNDLES" gaming; then
+    p+=(lib32-mesa lib32-vulkan-icd-loader)
+    has_word "$GPU_VENDORS" amd && p+=(lib32-vulkan-radeon)
+    has_word "$GPU_VENDORS" intel && p+=(lib32-vulkan-intel)
+  fi
   if has_word "$GPU_VENDORS" vm; then
     case $DISTRO in
       arch|debian) p+=(spice-vdagent qemu-guest-agent) ;;

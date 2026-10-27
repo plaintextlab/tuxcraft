@@ -106,7 +106,7 @@ printing	avahi nss-mdns	avahi-daemon libnss-mdns	avahi nss-mdns
 bluetooth	bluez bluez-utils	bluez	bluez
 laptop	power-profiles-daemon	power-profiles-daemon	power-profiles-daemon
 laptop	acpi	acpi	acpi
-gaming	steam gamemode lib32-gamemode mangohud	steam-installer gamemode mangohud	steam gamemode MangoHud
+gaming	steam gamemode lib32-gamemode mangohud lib32-mangohud	steam-installer gamemode mangohud	steam gamemode MangoHud
 gaming	-	-	MangoHud-32bit libgamemode-32bit vulkan-loader-32bit gamescope wine winetricks protontricks vkBasalt vkBasalt-32bit libdrm-32bit sqlite-32bit psmisc Vulkan-Tools
 office	libreoffice-fresh	libreoffice	libreoffice
 office	zathura zathura-pdf-mupdf	zathura	zathura zathura-pdf-mupdf

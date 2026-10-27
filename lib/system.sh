@@ -155,9 +155,10 @@ sys_pkgmanager() {
       sed -i -e 's/^#Color/Color/' -e 's/^#VerbosePkgLists/VerbosePkgLists/' \
              -e 's/^#\?ParallelDownloads.*/ParallelDownloads = 8/' /etc/pacman.conf
       grep -q '^ILoveCandy' /etc/pacman.conf || sed -i '/^Color/a ILoveCandy' /etc/pacman.conf
-      if has_word "$TUX_BUNDLES" gaming && ! grep -q '^\[multilib\]' /etc/pacman.conf; then
-        printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>/etc/pacman.conf
-      fi
+      # multilib (32-bit libraries) always: Steam, Wine and many games need it later even when the
+      # gaming extras were not picked. Uncomment Arch's own section, or add one if it is missing.
+      sed -i '/^#\[multilib\]$/,/^#Include/ s/^#//' /etc/pacman.conf
+      grep -q '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>/etc/pacman.conf
       pkg_refresh
       pkg_install_groups hygiene
       # Keep 2 package versions in cache (enough to downgrade), purge the rest weekly.

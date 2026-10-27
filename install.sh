@@ -187,7 +187,7 @@ wizard() {
     "printing|Printing|off|CUPS + network printer discovery" \
     "dev|Developer tools|off|docker, lazydocker, node, go, rust, python" \
     "office|Office & PDF|off|LibreOffice + zathura" \
-    "gaming|Gaming|off|Steam, gamemode, MangoHud (enables multilib)" \
+    "gaming|Gaming|off|Steam, gamemode, MangoHud (+ 32-bit drivers)" \
     "aur|AUR helper (paru)|$aur|Arch only"
   # A reused answers file already lists the browser; don't add it twice.
   [[ -n ${TUX_BUNDLES_BROWSER:-} ]] && ! has_word "${TUX_BUNDLES:-}" "$TUX_BUNDLES_BROWSER" && TUX_BUNDLES+=" $TUX_BUNDLES_BROWSER"
