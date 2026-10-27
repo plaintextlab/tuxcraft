@@ -163,6 +163,14 @@ Sign-in and settings stay in `~/.config/Claude` on the host. Sign-in is saved on
 (gnome-keyring) runs in your session. **Cowork** needs KVM: be in the `kvm` group and load
 `vhost_vsock` (`doctor` prints the commands). Options: `--name` (default `tux-debian`), `--image`.
 
+## Machine-specific fixes
+
+`lib/hwfix.sh` applies fixes only on the exact machine they were tested on (matched by DMI vendor + board):
+
+| Machine | Fix |
+|---|---|
+| HP OMEN 16-n0xxx (board 8A44, Realtek ALC245) | mute-key LED (the kernel has no quirk for 8A44; it gets its sibling 8A36's, which drives the LED from Realtek coef 0x0b bit 3), and louder built-in speakers: a +6 dB look-ahead limiter on the speaker output only (`~/.config/pipewire/pipewire.conf.d/60-tuxcraft-louder-speakers.conf`) |
+
 ## Your own changes
 
 - `~/.config/i3/local.d/*.conf`, `~/.config/sway/local.d/*.conf` — your WM tweaks, never overwritten

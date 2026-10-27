@@ -61,7 +61,7 @@ if [[ $EUID -ne 0 ]]; then
   exec sudo -E bash "$0" "${ORIG_ARGS[@]}"
 fi
 
-for f in ui core pkg disk bootstrap system gpu extras fonts desktop snapshots; do
+for f in ui core pkg disk bootstrap system gpu hwfix extras fonts desktop snapshots; do
   # shellcheck source=/dev/null
   . "$TUX_SRC/lib/$f.sh"
 done
@@ -226,6 +226,7 @@ target_stage() {
   export TUX_HOME
   gpu_stage
   desktop_stage
+  hwfix_stage
   snapshots_stage
   if [[ $TUX_MODE == install ]]; then
     sys_bootloader

@@ -16,6 +16,7 @@ core	networkmanager	network-manager wpasupplicant	NetworkManager
 core	network-manager-applet	network-manager-applet	network-manager-applet
 core	pipewire pipewire-pulse pipewire-alsa wireplumber	pipewire pipewire-pulse pipewire-alsa wireplumber	pipewire wireplumber alsa-pipewire
 core	pipewire-jack	pipewire-jack	libjack-pipewire
+core	alsa-utils rtkit	alsa-utils rtkit	alsa-utils rtkit
 core	libnotify	libnotify-bin	libnotify
 core	dunst	dunst	dunst
 core	alacritty	alacritty	alacritty
