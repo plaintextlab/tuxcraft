@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sysup — the one safe way to update a tuxcraft system.
-#   1. sanity checks (battery, disk space)          5. flatpaks
+#   1. sanity checks (battery, disk space)          5. flatpaks, Claude Desktop box
 #   2. Arch: shows new Arch news and stops if any   6. cache + orphan cleanup
 #   3. snapshot before (and after) the update       7. config files that need merging
 #   4. the update itself                             8. reboot / failed-service hints
@@ -107,6 +107,14 @@ if command -v flatpak >/dev/null; then
         flatpak install -y --noninteractive flathub "$ref" >/dev/null 2>&1 || warn "Flatpak $ref is not on Flathub yet"
     done
   fi
+fi
+
+# Claude Desktop lives in a distrobox (tux-claude-desktop): the host update does not reach it,
+# and the app does not update itself on Linux.
+if [[ -n $user && -f $(getent passwd "$user" | cut -d: -f6)/.local/state/tuxcraft/claude-desktop.box ]] &&
+   command -v tux-claude-desktop >/dev/null; then
+  step "Claude Desktop (distrobox)"
+  sudo -u "$user" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" tux-claude-desktop update || warn "Claude Desktop update had problems"
 fi
 
 step "Cleanup"

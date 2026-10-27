@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# tux-claude-desktop — Claude Desktop (Anthropic's official Linux beta, a .deb) on any tuxcraft
+# distro, inside a Debian distrobox, with a menu entry, sign-in links and updates that work.
+#   tux-claude-desktop                 install if needed, then launch
+#   tux-claude-desktop install [--recreate]   (re)build the container from scratch
+#   tux-claude-desktop launch [args]   start it (background; log in ~/.local/state/tuxcraft/)
+#   tux-claude-desktop update          apt upgrade inside the container (sysup does this too)
+#   tux-claude-desktop doctor          check display, keyring, links, sandbox and Cowork (KVM)
+#   tux-claude-desktop remove [--container]   remove the app (and the whole container)
+# Options: --name NAME (default tux-debian)  --image IMAGE (default debian:13)  --yes
+# Your sign-in and settings live in ~/.config/Claude on the host, so they survive --recreate.
+set -euo pipefail
+
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft
+MARK=$STATE/claude-desktop.box   # the box name; sysup looks for it to update the app
+NAME=${TUX_CLAUDE_BOX:-$(cat "$MARK" 2>/dev/null || echo tux-debian)}
+IMAGE=${TUX_CLAUDE_IMAGE:-docker.io/library/debian:13}
+CONF=${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/claude-desktop.conf
+LOG=$STATE/claude-desktop.log
+KEY_URL=https://downloads.claude.ai/claude-desktop/key.asc
+KEY_FPR=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+REPO='deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/claude-desktop-archive-keyring.asc] https://downloads.claude.ai/claude-desktop/apt/stable stable main'
+
+b=$'\e[1m' g=$'\e[32m' y=$'\e[33m' r=$'\e[31m' c=$'\e[36m' n=$'\e[0m'
+step() { printf '\n%s==> %s%s\n' "$c$b" "$*" "$n"; }
+ok()   { printf '%s ok%s %s\n' "$g$b" "$n" "$*"; }
+warn() { printf '%s !%s %s\n' "$y$b" "$n" "$*"; }
+die()  { printf '%s x%s %s\n' "$r$b" "$n" "$*" >&2; exit 1; }
+ask()  { ((YES)) && return 0; read -r -p "$b? $1$n [y/N] " x; [[ ${x,,} == y* ]]; }
+
+# Electron refuses to run as root, and a root distrobox is a different container.
+[[ $EUID -ne 0 ]] || die "Run this as your normal user, not with sudo."
+
+cmd=${1:-auto}; [[ $cmd == -* ]] && cmd=auto || shift || true
+YES=0 RECREATE=0 PURGE=0 PASS=()
+while (($#)); do
+  case $1 in
+    --name) NAME=$2; shift ;;
+    --image) IMAGE=$2; shift ;;
+    --yes|-y) YES=1 ;;
+    --recreate) RECREATE=1 ;;
+    --container) PURGE=1 ;;
+    *) PASS+=("$1") ;;
+  esac
+  shift
+done
+mkdir -p "$STATE" "${CONF%/*}"
+NO_SANDBOX=0
+# shellcheck source=/dev/null
+[[ -f $CONF ]] && . "$CONF"
+
+box_exists() { distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}' | grep -qx "$NAME"; }
+inbox() { distrobox enter --name "$NAME" -- "$@"; }
+# Run a root script inside the box. It goes through a file in $HOME (shared with the box)
+# so no quoting survives two shells and podman exec.
+inbox_root() {
+  local f; f=$(mktemp "$STATE/box.XXXXXX.sh")
+  local rc=0; cat >"$f"; inbox sudo bash "$f" "$@" || rc=$?; rm -f "$f"; return $rc
+}
+# shellcheck disable=SC2016  # ${Version} is a dpkg-query field, not a shell variable
+pkgver() { inbox dpkg-query -W -f='${Version}' claude-desktop 2>/dev/null; }
+installed() { box_exists && inbox sh -c 'command -v claude-desktop' >/dev/null 2>&1; }
+
+host_deps() {
+  command -v distrobox >/dev/null && { command -v podman >/dev/null || command -v docker >/dev/null; } && return
+  step "Installing distrobox and podman on the host"
+  if command -v tux-pkg >/dev/null; then tux-pkg install distrobox podman
+  elif command -v pacman >/dev/null; then sudo pacman -S --needed distrobox podman
+  elif command -v xbps-install >/dev/null; then sudo xbps-install -S distrobox podman
+  elif command -v apt-get >/dev/null; then sudo apt-get install -y distrobox podman
+  else die "Install distrobox and podman, then run this again."; fi
+}
+
+do_install() {
+  host_deps
+  if box_exists; then
+    if ((RECREATE)); then
+      warn "This deletes the container '$NAME' and everything installed inside it (your home is not touched)."
+      ask "Delete and rebuild '$NAME'?" || exit 0
+      unexport
+      distrobox rm --force "$NAME"
+    else
+      ok "Container $NAME exists (use --recreate to rebuild it from scratch)"
+    fi
+  fi
+  if ! box_exists; then
+    step "Creating distrobox $NAME from $IMAGE"
+    local extra=()
+    # Without --nvidia the box has no NVIDIA userspace and Electron falls back to software GL.
+    command -v nvidia-smi >/dev/null && extra+=(--nvidia)
+    distrobox create --yes --name "$NAME" --image "$IMAGE" "${extra[@]}"
+    inbox true   # first enter runs distrobox's own setup; keep its output separate
+  fi
+
+  step "Installing Claude Desktop inside $NAME"
+  inbox_root "$KEY_URL" "$KEY_FPR" "$REPO" <<'EOF'
+set -euo pipefail
+key_url=$1 fpr=$2 repo=$3
+export DEBIAN_FRONTEND=noninteractive
+. /etc/os-release
+[[ $ID == debian || ${ID_LIKE:-} == *debian* ]] || { echo "The box must be Debian-based (is $ID)"; exit 1; }
+apt-get update
+apt-get install -y ca-certificates curl gnupg libglib2.0-bin
+key=/usr/share/keyrings/claude-desktop-archive-keyring.asc
+curl -fsSLo "$key.new" "$key_url"
+GNUPGHOME=$(mktemp -d); export GNUPGHOME
+got=$(gpg --show-keys --with-colons "$key.new" | awk -F: '$1=="fpr"{print $10; exit}')
+rm -rf "$GNUPGHOME"
+[[ $got == "$fpr" ]] || { rm -f "$key.new"; echo "Signing key fingerprint mismatch: got '$got', want $fpr"; exit 1; }
+mv "$key.new" "$key"
+echo "$repo" >/etc/apt/sources.list.d/claude-desktop.list
+apt-get update
+# Recommends bring QEMU/OVMF/virtiofsd for Cowork and a keyring client; keep them.
+apt-get install -y claude-desktop
+# The box has no browser: Electron opens links (sign-in!) with xdg-open, so hand them to the
+# host through the desktop portal on the shared session bus, or distrobox-host-exec.
+cat >/usr/local/bin/xdg-open <<'X'
+#!/bin/sh
+# tuxcraft: open links on the host (the container has no browser)
+if gdbus call --session --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop \
+     --method org.freedesktop.portal.OpenURI.OpenURI "" "$1" "{}" >/dev/null 2>&1; then exit 0; fi
+exec distrobox-host-exec xdg-open "$@"
+X
+chmod 755 /usr/local/bin/xdg-open
+EOF
+  ok "claude-desktop $(pkgver)"
+  echo "$NAME" >"$MARK"
+  export_app
+}
+
+desktop_ids() { inbox sh -c "dpkg -L claude-desktop | sed -n 's|^/usr/share/applications/\(.*\)\.desktop\$|\1|p'" 2>/dev/null; }
+
+export_app() {
+  step "Adding Claude to the host menu"
+  local id f found=0
+  for id in $(desktop_ids); do
+    inbox distrobox-export --app "$id" >/dev/null && found=1
+  done
+  ((found)) || { warn "No .desktop file found in the package; use tux-claude-desktop launch"; return; }
+  # claude:// links (the end of the browser sign-in) must reach the app in the box. Point the
+  # host's handler at the exported entry; Electron's single-instance lock hands it over.
+  for f in "$HOME/.local/share/applications/$NAME"-*.desktop; do
+    [[ -f $f ]] || continue
+    grep -q 'x-scheme-handler/claude' "$f" || continue
+    command -v xdg-mime >/dev/null && xdg-mime default "${f##*/}" x-scheme-handler/claude && ok "claude:// links open ${f##*/}"
+  done
+  update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+  ok "Menu entry exported (rofi/fuzzel: Claude)"
+}
+
+unexport() {
+  box_exists || return 0
+  local id
+  for id in $(desktop_ids); do inbox distrobox-export --app "$id" --delete >/dev/null 2>&1 || true; done
+}
+
+do_launch() {
+  installed || die "Not installed. Run: tux-claude-desktop install"
+  local args=("${PASS[@]}")
+  ((NO_SANDBOX)) && args=(--no-sandbox "${args[@]}")
+  : >"$LOG"
+  nohup distrobox enter --name "$NAME" -- claude-desktop "${args[@]}" >>"$LOG" 2>&1 &
+  local pid=$! i rc=0
+  for i in {1..15}; do sleep 1; kill -0 "$pid" 2>/dev/null || break; done
+  if kill -0 "$pid" 2>/dev/null; then ok "Claude Desktop is running (log: $LOG)"; return; fi
+  wait "$pid" || rc=$?
+  # A second launch hands its arguments to the running window and exits 0.
+  ((rc)) || { ok "Handed over to the Claude Desktop that is already running"; return; }
+  # Chromium's sandbox needs user namespaces or a working setuid helper; some container
+  # setups allow neither and the app dies at once. Fall back once and remember it.
+  if ((!NO_SANDBOX)) && grep -qiE 'sandbox|namespace' "$LOG"; then
+    warn "Chromium's sandbox cannot start in this container; retrying with --no-sandbox"
+    echo "NO_SANDBOX=1" >>"$CONF"; NO_SANDBOX=1
+    do_launch; return
+  fi
+  grep -q . "$LOG" && tail -n 20 "$LOG"
+  die "Claude Desktop exited at start-up (full log: $LOG). Try: tux-claude-desktop doctor"
+}
+
+do_update() {
+  installed || die "Not installed. Run: tux-claude-desktop install"
+  inbox_root <<'EOF'
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --only-upgrade claude-desktop
+EOF
+  export_app >/dev/null
+}
+
+do_remove() {
+  box_exists || { ok "Nothing to remove"; return; }
+  unexport
+  if ((PURGE)); then
+    ask "Delete the whole container '$NAME'?" && distrobox rm --force "$NAME"
+  else
+    inbox_root <<'EOF'
+apt-get remove -y claude-desktop
+rm -f /usr/local/bin/xdg-open /etc/apt/sources.list.d/claude-desktop.list
+EOF
+  fi
+  rm -f "$CONF" "$MARK"
+  ok "Removed (settings kept in ~/.config/Claude)"
+}
+
+# shellcheck disable=SC2015  # pass/fail always succeed, so A && pass || fail is safe
+do_doctor() {
+  local p=0 f=0
+  pass() { ok "$*"; p=$((p+1)); }
+  fail() { warn "$*"; f=$((f+1)); }
+  command -v distrobox >/dev/null && pass "distrobox $(distrobox version 2>/dev/null | awk '{print $NF}')" || fail "distrobox is not installed"
+  box_exists && pass "container $NAME exists" || { fail "container $NAME missing: tux-claude-desktop install"; return 1; }
+  installed && pass "claude-desktop $(pkgver)" || fail "claude-desktop not installed in $NAME"
+  [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]] && pass "display: ${WAYLAND_DISPLAY:+wayland $WAYLAND_DISPLAY }${DISPLAY:+x11 $DISPLAY}" || fail "no DISPLAY/WAYLAND_DISPLAY (run from your desktop session)"
+  busctl --user status org.freedesktop.secrets >/dev/null 2>&1 && pass "keyring on the session bus (sign-in is saved)" \
+    || fail "no Secret Service on the session bus: start gnome-keyring, or you sign in on every launch"
+  busctl --user status org.freedesktop.portal.Desktop >/dev/null 2>&1 && pass "desktop portal (links open on the host)" \
+    || fail "no xdg-desktop-portal; links fall back to distrobox-host-exec"
+  [[ $(xdg-mime query default x-scheme-handler/claude 2>/dev/null) == "$NAME"-* ]] && pass "claude:// handler: $(xdg-mime query default x-scheme-handler/claude)" \
+    || fail "claude:// links are not routed to the box: tux-claude-desktop install (re-exports)"
+  ((NO_SANDBOX)) && warn "running with --no-sandbox (set in $CONF; delete the line to retry the sandbox)"
+  # Cowork runs a QEMU/KVM VM from inside the box.
+  inbox sh -c 'test -r /dev/kvm && test -w /dev/kvm' 2>/dev/null && pass "/dev/kvm usable in the box (Cowork)" \
+    || fail "/dev/kvm not usable in the box: enable virtualization in firmware and run 'sudo usermod -aG kvm $USER', then log in again"
+  [[ -e /dev/vhost-vsock ]] && pass "/dev/vhost-vsock present" \
+    || fail "/dev/vhost-vsock missing (Cowork): echo vhost_vsock | sudo tee /etc/modules-load.d/vhost_vsock.conf && sudo modprobe vhost_vsock"
+  printf '\n%d ok, %d to look at\n' "$p" "$f"
+}
+
+case $cmd in
+  auto)    installed || do_install; do_launch ;;
+  install) do_install; printf '\nStart it from the menu or with: tux-claude-desktop launch\n' ;;
+  launch)  do_launch ;;
+  update)  do_update ;;
+  doctor)  do_doctor ;;
+  remove)  do_remove ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

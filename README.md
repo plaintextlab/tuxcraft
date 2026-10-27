@@ -135,6 +135,32 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-pkg install/remove/search` | the same package words on every distro (`ii`, `rr`, `ss` aliases) |
 | `tux-control` | the system menu from a terminal |
+| `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
+
+## Claude Desktop
+
+Anthropic's Linux app (beta) is only packaged for Debian/Ubuntu, so tuxcraft runs it in a
+Debian 13 [distrobox](https://distrobox.it) — the same way on Arch, Debian and Void:
+
+```sh
+tux-claude-desktop                    # installs distrobox+podman if needed, builds the box, launches
+tux-claude-desktop install --recreate # throw the box away and rebuild it from scratch
+tux-claude-desktop doctor             # display, keyring, link handling, sandbox, Cowork/KVM
+```
+
+It installs `claude-desktop` from Anthropic's apt repository (signing key checked against its
+published fingerprint), exports **Claude** to the app menu, and fixes what breaks in a container:
+
+- **Sign-in:** the box has no browser, so links open on the host through the desktop portal,
+  and `claude://` links coming back from the browser are routed to the app in the box.
+- **NVIDIA:** the box is created with `--nvidia`, otherwise the app renders without the GPU.
+- **Sandbox:** if Chromium's sandbox cannot start in the container, it retries once with
+  `--no-sandbox` and remembers that in `~/.config/tuxcraft/claude-desktop.conf`.
+- **Updates:** the app does not update itself on Linux; `sysup` upgrades it inside the box.
+
+Sign-in and settings stay in `~/.config/Claude` on the host. Sign-in is saved only if a keyring
+(gnome-keyring) runs in your session. **Cowork** needs KVM: be in the `kvm` group and load
+`vhost_vsock` (`doctor` prints the commands). Options: `--name` (default `tux-debian`), `--image`.
 
 ## Your own changes
 
