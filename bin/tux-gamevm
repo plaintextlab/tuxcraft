@@ -892,9 +892,19 @@ cmd_guest_setup() {
   [[ -f $s ]] || die "gamevm-guest-setup.ps1 not found"
   for d in "$NAME" "$NAME-install"; do is_running "$d" && { dom=$d; break; }; done
   [[ -n $dom ]] || die "start the VM first (tux-gamevm start, or tux-gamevm install)"
-  python3 - "$dom" "$s" <<'PY'
+  # Windows' virtual monitor gets the mode of the Linux screen the Looking Glass window is on
+  # (e.g. 1920 1080 165 on a 165 Hz laptop panel); 1080p60 without a desktop to ask.
+  local mode='1920 1080 60' m
+  if [[ -n ${DISPLAY:-} ]] && command -v xrandr >/dev/null; then
+    m=$(xrandr --current | awk '/ connected primary/ {p = 1; next} p && /\*/ {split($1, r, "x");
+          for (i = 2; i <= NF; i++) if ($i ~ /\*/) { gsub(/[*+]/, "", $i); printf "%d %d %d", r[1], r[2], $i + 0.5; exit } }')
+    [[ $m =~ ^[0-9]+\ [0-9]+\ [0-9]+$ ]] && mode=$m
+  fi
+  local w h f; read -r w h f <<<"$mode"; say "Windows screen: ${w}x${h} @ ${f} Hz"
+  # shellcheck disable=SC2086  # mode is three numbers
+  python3 - "$dom" "$s" $mode <<'PY'
 import base64, json, subprocess, sys, time
-dom, script = sys.argv[1], sys.argv[2]
+dom, script, width, height, hz = sys.argv[1:6]
 def agent(cmd, args=None):
     msg = {"execute": cmd, **({"arguments": args} if args is not None else {})}
     r = subprocess.run(["virsh", "-c", "qemu:///system", "qemu-agent-command", "--timeout", "60", dom, json.dumps(msg)],
@@ -920,7 +930,8 @@ data = open(script, "rb").read()
 h = agent("guest-file-open", {"path": "C:\\tuxcraft\\guest-setup.ps1", "mode": "wb"})
 agent("guest-file-write", {"handle": h, "buf-b64": base64.b64encode(data).decode()})
 agent("guest-file-close", {"handle": h})
-sys.exit(run("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\tuxcraft\\guest-setup.ps1"))
+sys.exit(run("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\tuxcraft\\guest-setup.ps1",
+             "-Width", width, "-Height", height, "-Hz", hz))
 PY
 }
 

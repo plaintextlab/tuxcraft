@@ -186,7 +186,8 @@ tux-gamevm guest-setup                   # hybrid, once, while Windows runs: Loo
 X must not open the dGPU (`setup` writes an X config: no PRIME offload on Linux while it is in place), PipeWire must
 leave its HDMI audio alone (a WirePlumber rule), the VM firmware must not run the dGPU's ROM (`rombar=off`, else
 warm reboots hang), NVIDIA's laptop driver wants a battery (fake ACPI battery, no error 43), and with nothing on HDMI
-Windows needs a virtual monitor for Looking Glass to capture (`guest-setup`). LTSC media need `--win-key`
+Windows needs a virtual monitor for Looking Glass to capture (`guest-setup`: Parsec VDD 0.41 on Windows 10, VDD on
+Windows 11, set to the Linux screen's mode, e.g. 1080p @ 165 Hz). LTSC media need `--win-key`
 (Microsoft's published KMS client keys install, but do not activate). Windows Update installs the NVIDIA driver.
 
 ## Machine-specific fixes
