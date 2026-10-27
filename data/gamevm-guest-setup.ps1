@@ -69,12 +69,29 @@ if ($build -ge 22000) {
   Set-ItemProperty $app -Name FallbackDisplay -Value '1'
   # v0.45.1 crashes (NullReferenceException in Display.GetDisplayPaths) while no monitor device
   # exists, e.g. after every boot: it reads HKLM\...\Services\monitor\Enum unchecked. Create the
-  # empty key first; elevated for that. Task Scheduler restarts it if it ever exits.
+  # empty key first; elevated for that.
+  # A watchdog, too: an NVIDIA driver install or update resets the display adapters, the Parsec
+  # display vanishes and the app does not notice (Looking Glass then shows nothing). If the display
+  # is missing for 30 s, restart the Parsec adapter and the app.
   Set-Content "$d\parsec-start.ps1" @'
 $k = 'HKLM:\SYSTEM\CurrentControlSet\Services\monitor\Enum'
-if (-not (Test-Path $k)) { New-Item -Force $k | Out-Null; New-ItemProperty -Force $k -Name Count -PropertyType DWord -Value 0 | Out-Null }
-& 'C:\tuxcraft\parsec\ParsecVDisplay.exe' -silent | Out-Null
-exit 1
+$app = 'C:\tuxcraft\parsec\ParsecVDisplay.exe'
+function Has-Display { [bool](Get-PnpDevice -PresentOnly -Class Monitor -ErrorAction SilentlyContinue | Where-Object InstanceId -match 'PSCCDD0') }
+function Start-App {
+  if (-not (Test-Path $k)) { New-Item -Force $k | Out-Null; New-ItemProperty -Force $k -Name Count -PropertyType DWord -Value 0 | Out-Null }
+  if (-not (Get-Process ParsecVDisplay -ErrorAction SilentlyContinue)) { Start-Process $app -ArgumentList '-silent' }
+}
+Start-App
+while ($true) {
+  Start-Sleep 20
+  if (-not (Get-Process ParsecVDisplay -ErrorAction SilentlyContinue)) { Start-App; continue }
+  if (Has-Display) { continue }
+  Start-Sleep 10; if (Has-Display) { continue }
+  Stop-Process -Name ParsecVDisplay -Force -ErrorAction SilentlyContinue
+  $id = (Get-PnpDevice -PresentOnly -Class Display | Where-Object FriendlyName -match 'Parsec').InstanceId
+  if ($id) { Disable-PnpDevice -InstanceId $id -Confirm:$false; Start-Sleep 3; Enable-PnpDevice -InstanceId $id -Confirm:$false; Start-Sleep 3 }
+  Start-App
+}
 '@
   $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File $d\parsec-start.ps1"
   $trg = New-ScheduledTaskTrigger -AtLogOn -User $user; $trg.Delay = 'PT5S'
