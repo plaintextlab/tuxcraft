@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tux-claude-desktop — Claude Desktop (Anthropic's official Linux beta, a .deb) on any tuxcraft
 # distro, inside a Debian distrobox, with a menu entry, sign-in links and updates that work.
-#   tux-claude-desktop                 install if needed, then launch
+#   tux-claude-desktop [--recreate]    install if needed (or rebuild), then launch
 #   tux-claude-desktop install [--recreate]   (re)build the container from scratch
 #   tux-claude-desktop launch [args]   start it (background; log in ~/.local/state/tuxcraft/)
 #   tux-claude-desktop update          apt upgrade inside the container (sysup does this too)
@@ -227,7 +227,7 @@ do_doctor() {
 }
 
 case $cmd in
-  auto)    installed || do_install; do_launch ;;
+  auto)    if ((RECREATE)) || ! installed; then do_install; fi; do_launch ;;
   install) do_install; printf '\nStart it from the menu or with: tux-claude-desktop launch\n' ;;
   launch)  do_launch ;;
   update)  do_update ;;
