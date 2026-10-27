@@ -38,17 +38,18 @@ snapshots_stage() {
   local common=(ALLOW_GROUPS=wheel SYNC_ACL=yes NUMBER_CLEANUP=yes NUMBER_MIN_AGE=1800
                 TIMELINE_CREATE=yes TIMELINE_CLEANUP=yes TIMELINE_MIN_AGE=1800)
   [[ -f /etc/snapper/configs/root ]] && run snapper --no-dbus -c root set-config "${common[@]}" \
-      NUMBER_LIMIT=12 NUMBER_LIMIT_IMPORTANT=6 \
-      TIMELINE_LIMIT_HOURLY=5 TIMELINE_LIMIT_DAILY=7 TIMELINE_LIMIT_WEEKLY=2 \
-      TIMELINE_LIMIT_MONTHLY=1 TIMELINE_LIMIT_YEARLY=0
+      NUMBER_LIMIT=20 NUMBER_LIMIT_IMPORTANT=10 \
+      TIMELINE_LIMIT_HOURLY=8 TIMELINE_LIMIT_DAILY=7 TIMELINE_LIMIT_WEEKLY=4 \
+      TIMELINE_LIMIT_MONTHLY=3 TIMELINE_LIMIT_YEARLY=0
   [[ -f /etc/snapper/configs/home ]] && run snapper --no-dbus -c home set-config "${common[@]}" \
       NUMBER_LIMIT=5 NUMBER_LIMIT_IMPORTANT=5 \
       TIMELINE_LIMIT_HOURLY=12 TIMELINE_LIMIT_DAILY=7 TIMELINE_LIMIT_WEEKLY=4 \
-      TIMELINE_LIMIT_MONTHLY=2 TIMELINE_LIMIT_YEARLY=0
+      TIMELINE_LIMIT_MONTHLY=3 TIMELINE_LIMIT_YEARLY=0
 
   # Scheduling
   if [[ $INIT == systemd ]]; then
-    svc_enable snapper-timeline.timer snapper-cleanup.timer
+    # snapper-boot: one snapshot of / per boot, so there is always a state from before today's changes.
+    svc_enable snapper-timeline.timer snapper-cleanup.timer snapper-boot.timer
   else
     write_file /etc/cron.hourly/tuxcraft-snapper 755 <<'EOF'
 #!/bin/sh

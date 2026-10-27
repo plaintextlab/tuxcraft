@@ -33,6 +33,7 @@ Usage: sudo ./install.sh [options]
   --config FILE   read answers from FILE (any question answered there is skipped)
   --yes           accept defaults for anything not in the answers file
   --desktop       set up the desktop on this running system even if it looks like a live ISO
+  --no-reboot     do not reboot when the install is finished (unattended runs)
   -h, --help      this help
 
 Answer keys (see README): TUX_DISK TUX_HOSTNAME TUX_USER TUX_PASSWORD TUX_TIMEZONE TUX_LOCALE
@@ -41,13 +42,14 @@ TUX_EXTRA TUX_EXCLUDE
 EOF
 }
 
-STAGE=wizard FORCE_DESKTOP=0 CONFIG=''
+STAGE=wizard FORCE_DESKTOP=0 CONFIG='' NO_REBOOT=0
 ORIG_ARGS=("$@")
 while (($#)); do
   case $1 in
     --config) CONFIG=$2; shift ;;
     --yes|-y) export TUX_YES=1 ;;
     --desktop) FORCE_DESKTOP=1 ;;
+    --no-reboot) NO_REBOOT=1 ;;
     --stage) STAGE=$2; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -187,7 +189,8 @@ wizard() {
     "office|Office & PDF|off|LibreOffice + zathura" \
     "gaming|Gaming|off|Steam, gamemode, MangoHud (enables multilib)" \
     "aur|AUR helper (paru)|$aur|Arch only"
-  [[ -n ${TUX_BUNDLES_BROWSER:-} ]] && TUX_BUNDLES+=" $TUX_BUNDLES_BROWSER"
+  # A reused answers file already lists the browser; don't add it twice.
+  [[ -n ${TUX_BUNDLES_BROWSER:-} ]] && ! has_word "${TUX_BUNDLES:-}" "$TUX_BUNDLES_BROWSER" && TUX_BUNDLES+=" $TUX_BUNDLES_BROWSER"
 
   if [[ -z ${TUX_YES:-} ]]; then
     [[ -v TUX_EXTRA ]] || read -r -e -p "${C_BOLD}? Extra packages to install${C_RESET} ${C_DIM}(space separated, Enter for none)${C_RESET} " TUX_EXTRA </dev/tty
@@ -273,7 +276,7 @@ main() {
     • Full log: /var/log/tuxcraft.log
 EOF
   if [[ $TUX_MODE == install ]]; then
-    confirm "Reboot now?" y && reboot
+    ((NO_REBOOT)) || { confirm "Reboot now?" y && reboot; }
   else
     info "Log out and back in (or reboot) to start the new session."
   fi

@@ -106,9 +106,50 @@ live_prereqs() {
   ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Arch: iwctl, others: nmtui) and re-run."
 }
 
+# Wi-Fi joined on the live ISO (iwctl on Arch, NetworkManager elsewhere) works on first boot too.
+carry_over_wifi() {
+  local dst=$TARGET/etc/NetworkManager/system-connections f ssid psk n=0
+  mkdir -p "$dst"
+  if compgen -G '/etc/NetworkManager/system-connections/*.nmconnection' >/dev/null; then
+    cp -a /etc/NetworkManager/system-connections/*.nmconnection "$dst"/ && n=1
+  fi
+  for f in /var/lib/iwd/*.psk; do
+    [[ -f $f ]] || continue
+    ssid=$(basename "$f" .psk)
+    [[ $ssid == =* ]] && continue   # hex-encoded SSID, too unusual to translate safely
+    psk=$(sed -n 's/^Passphrase=//p' "$f")
+    [[ -n $psk ]] || continue
+    cat >"$dst/$ssid.nmconnection" <<EOF
+[connection]
+id=$ssid
+uuid=$(cat /proc/sys/kernel/random/uuid)
+type=wifi
+
+[wifi]
+mode=infrastructure
+ssid=$ssid
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$psk
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+    n=1
+  done
+  chmod 600 "$dst"/*.nmconnection 2>/dev/null || true
+  ((n)) && info "Wi-Fi from the live system copied to the new one"
+  return 0
+}
+
 bootstrap_base() {
   live_prereqs
   "bootstrap_$DISTRO"
   write_fstab
+  carry_over_wifi
   chroot_setup
 }

@@ -6,9 +6,10 @@
 # ---- core: everything a working desktop session needs, regardless of X11/Wayland
 core	base-devel	build-essential	base-devel
 core	git curl wget rsync	git curl wget rsync ca-certificates	git curl wget rsync
-core	unzip p7zip zip	unzip p7zip-full zip	unzip p7zip zip
+core	unzip 7zip zip	unzip p7zip-full zip	unzip p7zip zip
 core	man-db man-pages	man-db manpages	man-db man-pages
 core	pciutils usbutils lsof	pciutils usbutils lsof	pciutils usbutils lsof
+core	inetutils	hostname	inetutils-hostname
 core	sudo	sudo	sudo
 core	bash-completion	bash-completion	bash-completion
 core	networkmanager	network-manager wpasupplicant	NetworkManager

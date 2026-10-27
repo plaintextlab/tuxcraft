@@ -54,6 +54,10 @@ confirm_wipe() {
 }
 
 disk_prepare() {
+  # A stable /dev/disk/by-id name is safest in an answers file (nvme0/nvme1 can swap between
+  # boots), but partition names are derived from the kernel name.
+  TUX_DISK=$(readlink -f "$TUX_DISK")
+  [[ -b $TUX_DISK ]] || die "$TUX_DISK is not a block device"
   step "Partitioning $TUX_DISK ($BOOT_MODE)"
   swapoff -a 2>/dev/null || true
   umount -R "$TARGET" 2>/dev/null || true
