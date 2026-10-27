@@ -1,0 +1,686 @@
+#!/usr/bin/env bash
+# tux-gamevm — a Windows gaming VM with single-GPU passthrough (libvirt/QEMU/KVM).
+# Starting the VM closes the Linux desktop and hands the GPU, keyboard, mouse and USB audio
+# to Windows; shutting Windows down gives them back and returns to the login screen.
+#
+#   tux-gamevm setup                       host, once: packages, IOMMU, libvirt, hook, groups
+#   tux-gamevm create --disk DEV [options] define the VM around a whole disk (Windows lives on it)
+#       --iso FILE        Windows installer ISO (first install only)
+#       --name NAME       VM name (default win-gaming)
+#       --ram GiB         memory (default: all but 15% of the host, which keeps at least 4)
+#       --cores N         CPU cores for Windows (default: all but 2), pinned to the last N cores
+#       --usb ID,...      USB devices vendor:product to pass (default: keyboards, mice, USB audio)
+#       --rom FILE        GPU VBIOS for the passthrough VM (boot screens; needed when the host
+#                         boots on that GPU: its ROM is then only a legacy shadow without UEFI)
+#       --pass-disk PATH  also give Windows this internal disk while it runs (repeatable; use a
+#                         /dev/disk/by-id path). USB storage plugged in at start is passed
+#                         automatically; --no-usb-storage turns that off
+#       --no-onboard-audio  do not give Windows the motherboard sound (by default it gets an
+#                         emulated sound card that plays on it)
+#       --wipe            erase DEV first (asks you to type its name; --yes skips that)
+#   tux-gamevm install                     the same Windows in a desktop window (setup, repairs; no GPU)
+#   tux-gamevm start | stop | kill | status | eject-iso
+#   tux-gamevm hook ...                    called by libvirt (/etc/libvirt/hooks/qemu)
+#
+# The disk is used whole and raw, so the Windows install survives a host reinstall:
+# run setup + create again (without --wipe) and the same Windows boots.
+set -euo pipefail
+
+CONF=/etc/tuxcraft/gamevm.conf
+LOG=/var/log/tux-gamevm.log
+HOOK=/etc/libvirt/hooks/qemu
+VIRSH=(virsh -c qemu:///system)
+
+say()  { printf ':: %s\n' "$*"; }
+die()  { printf 'tux-gamevm: %s\n' "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"; }
+init_system() { if [[ -d /run/systemd/system ]]; then echo systemd; else echo runit; fi; }
+distro() {
+  if command -v xbps-install >/dev/null; then echo void
+  elif command -v pacman >/dev/null; then echo arch
+  else echo debian; fi
+}
+load_conf() {
+  [[ -f $CONF ]] || die "no VM yet: run 'tux-gamevm create' first"
+  # shellcheck source=/dev/null
+  . "$CONF"
+}
+
+# ---------------------------------------------------------------------------------- setup
+cmd_setup() {
+  need_root setup "$@"
+  local d; d=$(distro)
+  say "Installing virtualisation packages ($d)"
+  case $d in
+    void)   xbps-install -Sy qemu-system-amd64 libvirt edk2-ovmf dnsmasq nftables psmisc dmidecode virt-viewer ;;
+    arch)   pacman -S --needed --noconfirm qemu-base libvirt edk2-ovmf dnsmasq nftables psmisc dmidecode virt-viewer ;;
+    debian) apt-get install -y qemu-system-x86 libvirt-daemon-system ovmf dnsmasq-base nftables psmisc dmidecode virt-viewer ;;
+  esac
+
+  say "Enabling the IOMMU on the kernel command line"
+  local params='iommu=pt' g=/etc/default/grub
+  grep -q -m1 GenuineIntel /proc/cpuinfo && params='intel_iommu=on iommu=pt'
+  if [[ -f $g ]]; then
+    local cur p; cur=$(sed -n 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/\1/p' "$g")
+    for p in $params; do [[ " $cur " == *" $p "* ]] || cur+=" $p"; done
+    sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"${cur# }\"|" "$g"
+    grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || die "grub-mkconfig failed"
+  else
+    say "No /etc/default/grub: add '$params' to your kernel command line yourself"
+  fi
+
+  say "Enabling libvirt"
+  if [[ $(init_system) == systemd ]]; then
+    systemctl enable --now libvirtd.service virtlogd.service >/dev/null 2>&1 || true
+  else
+    local s; for s in virtlogd virtlockd libvirtd; do
+      [[ -d /etc/sv/$s ]] && ln -sfn "/etc/sv/$s" "/var/service/$s"
+    done
+    for s in $(seq 20); do "${VIRSH[@]}" version >/dev/null 2>&1 && break; sleep 0.5; done
+  fi
+  "${VIRSH[@]}" net-info default >/dev/null 2>&1 && {
+    "${VIRSH[@]}" net-autostart default >/dev/null 2>&1 || true
+    "${VIRSH[@]}" net-start default >/dev/null 2>&1 || true
+  }
+
+  say "Installing the libvirt hook (GPU handover)"
+  mkdir -p "$(dirname "$HOOK")"
+  printf '#!/bin/sh\n# tux-gamevm: hand the GPU between Linux and the gaming VM.\nexec /usr/local/bin/tux-gamevm hook "$@"\n' >"$HOOK"
+  chmod 755 "$HOOK"
+
+  local u=${SUDO_USER:-}
+  [[ -n $u ]] && { usermod -aG libvirt "$u"; getent group kvm >/dev/null && usermod -aG kvm "$u"; say "Added $u to libvirt/kvm (log in again)"; }
+  # QEMU's own user plays the VM's sound on the onboard card (ALSA): it needs the audio group.
+  local q; for q in libvirt-qemu qemu libvirt; do
+    id "$q" >/dev/null 2>&1 && { usermod -aG audio "$q"; say "QEMU user $q may use the sound card"; break; }
+  done
+
+  if [[ -z $(ls /sys/kernel/iommu_groups 2>/dev/null) ]]; then
+    say "IOMMU is not active yet: reboot. If it is still off afterwards, enable VT-d (Intel) / IOMMU (AMD) in the firmware."
+  else
+    say "IOMMU active. Next: tux-gamevm create --disk /dev/sdX --iso windows.iso (the whole disk for Windows)"
+  fi
+}
+
+# --------------------------------------------------------------------------------- create
+gpu_functions() {  # all PCI functions of the first discrete GPU, e.g. 0000:01:00.0 0000:01:00.1
+  local vga slot
+  vga=$(lspci -Dnn | awk '/(VGA compatible|3D) controller/ && /NVIDIA|AMD|ATI/ {print $1; exit}')
+  [[ -n $vga ]] || die "no NVIDIA/AMD GPU found"
+  slot=${vga%.*}
+  lspci -D | awk -v s="$slot" 'index($1, s".")==1 {print $1}'
+}
+default_usb() {  # keyboards, mice, USB audio and Bluetooth adapters, as vendor:product
+  local d i ids=()
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f $d/idVendor ]] || continue
+    for i in "$d"/*:*/; do
+      [[ -f $i/bInterfaceClass ]] || continue
+      # class 01 = audio; 03 (HID) protocol 01/02 = keyboard/mouse; e0/01/01 = Bluetooth adapter
+      if [[ $(<"$i/bInterfaceClass") == 01 ]] ||
+         [[ $(<"$i/bInterfaceClass") == 03 && $(<"$i/bInterfaceProtocol") =~ ^0[12]$ ]] ||
+         [[ $(<"$i/bInterfaceClass") == e0 && $(<"$i/bInterfaceSubClass") == 01 && $(<"$i/bInterfaceProtocol") == 01 ]]; then
+        ids+=("$(<"$d/idVendor"):$(<"$d/idProduct")"); break
+      fi
+    done
+  done
+  ((${#ids[@]})) && printf '%s\n' "${ids[@]}" | sort -u | paste -sd,
+}
+# The motherboard's sound card (not the GPU's HDMI audio, not USB) as an ALSA device name.
+# It usually shares an IOMMU group with the chipset (LPC, SMBus, ...), so it cannot be passed
+# through; Windows gets an emulated Intel HDA card that plays into it directly instead (the
+# host's PipeWire is stopped while Windows runs, so the card is free).
+onboard_alsa() {
+  local c dev gpuslot; gpuslot=$(gpu_functions | head -n1); gpuslot=${gpuslot%.*}
+  for c in /proc/asound/card[0-9]*; do
+    dev=$(readlink -f "/sys/class/sound/$(basename "$c")/device" 2>/dev/null) || continue
+    [[ $dev == */usb* || $(basename "$dev") == "$gpuslot".* ]] && continue
+    [[ -f $c/id ]] && { echo "plughw:CARD=$(<"$c/id"),DEV=0"; return; }
+  done
+}
+# libvirt runs QEMU with a private /dev and a device cgroup holding only what the VM is known to
+# use; it does not add the sound card for an ALSA audio backend ("No such device" in the QEMU
+# log). Devices in cgroup_device_acl are allowed AND put into that /dev, so list the card there.
+sound_acl() {  # sound_acl plughw:CARD=ID,DEV=0
+  local id=${1#*CARD=}; id=${id%%,*}
+  local card; card=$(readlink "/proc/asound/$id") || { say "sound card $id not found"; return 1; }
+  local n=${card#card} nodes=() q=/etc/libvirt/qemu.conf f
+  for f in /dev/snd/controlC"$n" /dev/snd/pcmC"$n"D* /dev/snd/timer; do [[ -e $f ]] && nodes+=("\"$f\""); done
+  local acl='"/dev/null", "/dev/full", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/ptmx", "/dev/userfaultfd"'
+  acl+=$(printf ', %s' "${nodes[@]}")
+  local block; block=$(printf '# tux-gamevm begin: the onboard sound card (%s) for the VM sound backend\ncgroup_device_acl = [ %s ]\n# tux-gamevm end' "$id" "$acl")
+  local cur; cur=$(sed -n '/^# tux-gamevm begin/,/^# tux-gamevm end/p' "$q")
+  [[ $cur == "$block" ]] && return 0
+  sed -i '/^# tux-gamevm begin/,/^# tux-gamevm end/d' "$q"
+  printf '%s\n' "$block" >>"$q"
+  say "Allowed QEMU to use the sound card $id (libvirt qemu.conf)"
+  if "${VIRSH[@]}" list --name | grep -q .; then
+    say "A VM is running: restart libvirt after it stops for the sound change to apply"
+  elif [[ $(init_system) == systemd ]]; then systemctl restart libvirtd
+  else sv restart libvirtd >/dev/null; sleep 2
+  fi
+}
+# install_rom SRC DST: copy a VBIOS dump starting at its first PCI ROM image (NVIDIA dumps can
+# carry a header before it, which QEMU rejects). Fails unless the ROM contains a UEFI image.
+install_rom() {
+  python3 - "$1" "$2" <<'PY'
+import sys
+d = open(sys.argv[1], 'rb').read()
+start = off = d.find(b'\x55\xaa'); efi = False
+while 0 <= off < len(d) - 0x1a:
+    p = off + int.from_bytes(d[off + 0x18:off + 0x1a], 'little')
+    if d[p:p + 4] != b'PCIR':
+        if off == start:
+            start = off = d.find(b'\x55\xaa', off + 2); continue
+        break
+    size = int.from_bytes(d[p + 0x10:p + 0x12], 'little') * 512
+    efi |= d[p + 0x14] == 3
+    if d[p + 0x15] & 0x80 or size == 0:
+        break
+    off += size
+if start < 0 or not efi:
+    sys.exit(1)
+# Keep the whole image chain from its first image. On an RTX 5070 (Blackwell) dump, starting at
+# the VGA BIOS instead (the usual advice for older NVIDIA cards) left Windows with no display:
+# the NVIDIA-specific images (code type 0xE0) before it are needed.
+open(sys.argv[2], 'wb').write(d[start:])
+print(f":: VBIOS installed as {sys.argv[2]} ({len(d) - start} bytes, UEFI image present"
+      + (f", {start}-byte header removed)" if start else ")"))
+PY
+  local rc=$?; [[ -f $2 ]] && chmod 644 "$2"; return $rc
+}
+ovmf_code() {
+  local f; for f in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF_CODE.fd \
+    /usr/share/edk2-ovmf/x64/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd; do
+    [[ -f $f ]] && { echo "$f"; return 0; }; done
+  die "OVMF firmware not found (run tux-gamevm setup)"
+}
+
+cmd_create() {
+  need_root create "$@"
+  local name=win-gaming disk='' iso='' ram='' cores='' usb='' romfile='' wipe=0 yes=0
+  local passdisks='' passusb='' onboard=''
+  while (($#)); do
+    case $1 in
+      --name) name=$2; shift ;; --disk) disk=$2; shift ;; --iso) iso=$2; shift ;;
+      --ram) ram=$2; shift ;; --cores) cores=$2; shift ;; --usb) usb=$2; shift ;;
+      --rom) romfile=$2; shift ;;
+      --pass-disk) [[ -b $2 ]] || die "--pass-disk: $2 is not a block device"; passdisks+="${passdisks:+ }$2"; shift ;;
+      --no-usb-storage) passusb=no ;;
+      --no-onboard-audio) onboard=no ;;
+      --wipe) wipe=1 ;; --yes) yes=1 ;; *) die "unknown option $1" ;;
+    esac; shift
+  done
+  [[ -n $disk ]] || die "--disk is required (the whole disk Windows lives on, e.g. /dev/sdX or a /dev/disk/by-id path)"
+  [[ -b $disk ]] || die "$disk is not a block device"
+  local dev; dev=$(readlink -f "$disk")
+  [[ $(lsblk -dno TYPE "$dev") == disk ]] || die "$disk is a partition; give the whole disk"
+  local rootdisk; rootdisk=$(lsblk -no PKNAME "$(findmnt -no SOURCE / | sed 's/\[.*\]//')")
+  [[ $(basename "$dev") != "$rootdisk" ]] || die "$disk holds the running Linux system"
+  [[ -z $iso || -f $iso ]] || die "ISO not found: $iso"
+
+  local total_gib host_cores; total_gib=$(( $(awk '/MemTotal/{print $2}' /proc/meminfo) / 1048576 ))
+  host_cores=$(nproc)
+  # Keep earlier RAM/core choices unless given again.
+  if [[ -f $CONF ]]; then
+    [[ -n $ram ]] || ram=$(sed -n 's/^RAM=//p' "$CONF")
+    [[ -n $cores ]] || cores=$(sed -n 's/^CORES=//p' "$CONF")
+  fi
+  # While Windows runs the host has no desktop: services + kernel + QEMU overhead are ~2-3 GiB.
+  # Passthrough pins all guest RAM (no swapping it back), so keep a real margin: 15%, >= 4 GiB.
+  local reserve=$(( (total_gib * 15 + 99) / 100 )); (( reserve < 4 )) && reserve=4
+  ram=${ram:-$(( total_gib - reserve > 4 ? total_gib - reserve : 4 ))}
+  (( ram >= 2 && ram <= total_gib - 2 )) || die "--ram must be 2..$((total_gib - 2)) GiB (the host keeps at least 2)"
+  cores=${cores:-$(( host_cores > 4 ? host_cores - 2 : host_cores - 1 ))}
+  usb=${usb:-$(default_usb)}
+  (( cores >= 1 && cores < host_cores )) || die "--cores must be 1..$((host_cores - 1)) (the host keeps at least one)"
+  mapfile -t gpu < <(gpu_functions)
+
+  unmount_disk "$dev"
+  if ((wipe)); then
+    lsblk -o NAME,SIZE,FSTYPE,LABEL,MODEL "$dev"
+    if ((!yes)); then
+      local a; read -r -p "ERASE everything on $(basename "$dev")? Type its name to confirm: " a
+      [[ $a == "$(basename "$dev")" ]] || die "aborted, nothing changed"
+    fi
+    wipefs -a "$dev" >/dev/null; sgdisk --zap-all "$dev" >/dev/null 2>&1 || true
+    say "Erased $disk"
+  fi
+
+  # Identify the disk by its GPT GUID, never by serial: USB enclosures (e.g. RTL9210) report the
+  # same fake serial for every unit, so a serial/by-id path can point at a different disk.
+  # A blank disk gets an empty GPT first; Windows Setup installs into it and keeps the GUID.
+  local ptuuid; ptuuid=$(lsblk -dno PTUUID "$dev")
+  if [[ -z $ptuuid ]]; then
+    lsblk -no FSTYPE "$dev" | grep -q . && die "$disk has data but no partition table; use --wipe if it may be erased"
+    printf 'label: gpt\n' | sfdisk -q "$dev" >/dev/null && udevadm settle
+    ptuuid=$(lsblk -dno PTUUID "$dev")
+  fi
+  [[ $ptuuid =~ ^[0-9a-fA-F-]{36}$ ]] || die "could not read a GPT GUID from $disk"
+  local link=/dev/tux-gamevm-$name
+  mkdir -p /etc/udev/rules.d
+  cat >"/etc/udev/rules.d/61-tux-gamevm-$name.rules" <<EOF
+# tux-gamevm: the disk with GPT GUID $ptuuid belongs to the '$name' VM.
+# udisks/udiskie must never mount it (both systems using it at once corrupts it), and the VM
+# reaches it through $link, which exists only for this exact disk.
+ENV{ID_PART_TABLE_UUID}=="$ptuuid", ENV{UDISKS_IGNORE}="1"
+ENV{DEVTYPE}=="disk", ENV{ID_PART_TABLE_UUID}=="$ptuuid", SYMLINK+="tux-gamevm-$name"
+EOF
+  rm -f /etc/udev/rules.d/61-tux-gamevm-disk.rules   # old serial-based rule
+  udevadm control --reload; udevadm trigger --action=change --sysname-match="$(basename "$dev")*"; udevadm settle
+  [[ $(readlink -f "$link") == "$dev" ]] || die "udev did not create $link for $disk"
+  disk=$link
+
+  local code vars; code=$(ovmf_code); vars=${code/CODE/VARS}
+  [[ -f $vars ]] || die "OVMF VARS template not found next to $code"
+
+  # Pin Windows to the last N cores; QEMU's own threads to the rest.
+  local first=$(( host_cores - cores )) pins='' i
+  for ((i = 0; i < cores; i++)); do pins+="    <vcpupin vcpu='$i' cpuset='$((first + i))'/>"$'\n'; done
+  # GPU VBIOS: --rom, else the one an earlier create recorded.
+  local romdst=''
+  if [[ -n $romfile ]]; then
+    [[ -f $romfile ]] || die "ROM not found: $romfile"
+    romdst=/var/lib/libvirt/vbios/$(basename "${romfile%.*}").rom
+    mkdir -p /var/lib/libvirt/vbios
+    install_rom "$romfile" "$romdst" || die "$romfile has no UEFI (GOP) image: it would not show the boot screens"
+  elif [[ -f $CONF ]]; then
+    romdst=$(sed -n 's/^ROM=//p' "$CONF"); [[ -f $romdst ]] || romdst=''
+  fi
+  # shellcheck disable=SC2016  # the single quotes are XML attribute quotes; $romdst does expand
+  local hostdevs='' f rom=" <rom bar='on'${romdst:+ file='$romdst'}/>"
+  for f in "${gpu[@]}"; do
+    hostdevs+="    <hostdev mode='subsystem' type='pci' managed='yes'><source><address domain='0x${f:0:4}' bus='0x${f:5:2}' slot='0x${f:8:2}' function='0x${f:11:1}'/></source>${rom}</hostdev>"$'\n'
+    rom=''
+  done
+  local id
+  for id in ${usb//,/ }; do
+    hostdevs+="    <hostdev mode='subsystem' type='usb' managed='yes'><source startupPolicy='optional'><vendor id='0x${id%%:*}'/><product id='0x${id##*:}'/></source></hostdev>"$'\n'
+  done
+  local cdrom='' isodst
+  if [[ -n $iso ]]; then
+    # QEMU runs as an unprivileged user that cannot enter /home: keep a copy in libvirt's image dir.
+    isodst=/var/lib/libvirt/images/$(basename "$iso")
+    mkdir -p /var/lib/libvirt/images
+    [[ -f $isodst && $(stat -c %s "$isodst") == $(stat -c %s "$iso") ]] || { say "Copying the ISO to $isodst"; install -m644 "$iso" "$isodst"; }
+    cdrom="    <disk type='file' device='cdrom'><driver name='qemu' type='raw'/><source file='$isodst'/><target dev='sdb' bus='sata'/><readonly/><boot order='1'/></disk>"
+  fi
+
+  # Two VMs on the same disk: "$name" (GPU passthrough, the hook hands the GPU over) and
+  # "$name-install" (a window on the Linux desktop, no passthrough) for setup and repairs.
+  # Onboard sound: keep the earlier choice unless given again.
+  [[ -z $onboard && -f $CONF ]] && onboard=$(sed -n 's/^ONBOARD_AUDIO=//p' "$CONF")
+  [[ $onboard == no ]] || onboard=$(onboard_alsa)
+  local sound=''
+  [[ -n $onboard && $onboard != no ]] && sound_acl "$onboard"
+  [[ -n $onboard && $onboard != no ]] && sound=$(printf '    %s\n' \
+    "<sound model='ich9'><codec type='duplex'/><audio id='1'/></sound>" \
+    "<audio id='1' type='alsa'><input dev='$onboard'/><output dev='$onboard'/></audio>")$'\n'
+  define_domain "$name" "Windows with single-GPU passthrough" \
+    "    <video><model type='none'/></video>"$'\n'"$sound$hostdevs"
+  local windowed
+  windowed=$(printf '    %s\n' \
+    "<graphics type='spice' autoport='yes'><listen type='address' address='127.0.0.1'/></graphics>" \
+    "<video><model type='qxl' vram='65536' heads='1' primary='yes'/></video>" \
+    "<input type='tablet' bus='usb'/>")
+  define_domain "$name-install" "install/repair mode: a window on the Linux desktop, no passthrough" "$windowed"$'\n'
+  # Shared drives: keep earlier choices unless given again.
+  if [[ -f $CONF ]]; then
+    [[ -n $passdisks ]] || passdisks=$(sed -n 's/^PASS_DISKS="\(.*\)"$/\1/p' "$CONF")
+    [[ -n $passusb ]] || passusb=$(sed -n 's/^PASS_USB_STORAGE=//p' "$CONF")
+  fi
+  mkdir -p "$(dirname "$CONF")"
+  cat >"$CONF" <<EOF
+# tux-gamevm — written by 'tux-gamevm create'
+NAME=$name
+DISK=$disk
+DISK_ID=$ptuuid
+GPU="${gpu[*]}"
+USB=$usb
+RAM=$ram
+CORES=$cores
+ROM=$romdst
+PASS_USB_STORAGE=${passusb:-yes}
+PASS_DISKS="$passdisks"
+ONBOARD_AUDIO=${onboard:-no}
+EOF
+  say "Defined '$name': ${cores} cores (host cores ${first}-$((host_cores - 1))), ${ram} GiB, GPU ${gpu[*]}, USB $usb"
+  say "Defined '$name-install' (tux-gamevm install): same disk in a desktop window, for setup and repairs"
+  say "Disk $disk (SATA), network e1000e: Windows needs no extra drivers."
+  [[ -z $(ls /sys/kernel/iommu_groups 2>/dev/null) ]] && say "IOMMU not active yet: reboot before 'tux-gamevm start'."
+  return 0
+}
+
+# define_domain NAME DESCRIPTION DEVICES — uses create's variables (dynamic scope).
+define_domain() {
+  local dname=$1 desc=$2 devs=$3 uuid xml
+  local nvram=/var/lib/libvirt/qemu/nvram/${dname}_VARS.fd
+  # Re-running create updates the existing VM (same UUID, keeps its NVRAM) instead of clashing.
+  uuid=$("${VIRSH[@]}" domuuid "$dname" 2>/dev/null | head -n1 || true)
+  xml=$(mktemp)
+  cat >"$xml" <<XML
+<domain type='kvm'>
+  <name>$dname</name>${uuid:+
+  <uuid>$uuid</uuid>}
+  <description>tux-gamevm: $desc. Disk: $disk</description>
+  <memory unit='GiB'>$ram</memory>
+  <vcpu placement='static'>$cores</vcpu>
+  <cputune>
+$pins    <emulatorpin cpuset='0-$((first - 1))'/>
+  </cputune>
+  <os>
+    <type arch='x86_64' machine='q35'>hvm</type>
+    <loader readonly='yes' type='pflash'>$code</loader>
+    <nvram template='$vars'>$nvram</nvram>
+  </os>
+  <features>
+    <acpi/><apic/>
+    <hyperv mode='custom'>
+      <relaxed state='on'/><vapic state='on'/><spinlocks state='on' retries='8191'/>
+      <vpindex state='on'/><synic state='on'/><stimer state='on'/><reset state='on'/>
+      <frequencies state='on'/><tlbflush state='on'/><ipi state='on'/>
+      <vendor_id state='on' value='tuxcraft'/>
+    </hyperv>
+    <kvm><hidden state='on'/></kvm>
+    <vmport state='off'/>
+  </features>
+  <cpu mode='host-passthrough' check='none' migratable='off'>
+    <topology sockets='1' dies='1' cores='$cores' threads='1'/>
+    <cache mode='passthrough'/>
+  </cpu>
+  <clock offset='localtime'>
+    <timer name='rtc' tickpolicy='catchup'/><timer name='pit' tickpolicy='delay'/>
+    <timer name='hpet' present='no'/><timer name='hypervclock' present='yes'/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff><on_reboot>restart</on_reboot><on_crash>destroy</on_crash>
+  <pm><suspend-to-mem enabled='no'/><suspend-to-disk enabled='no'/></pm>
+  <devices>
+    <disk type='block' device='disk'>
+      <driver name='qemu' type='raw' cache='none' io='native' discard='unmap'/>
+      <source dev='$disk'/><target dev='sda' bus='sata'/><boot order='2'/>
+    </disk>
+$cdrom
+    <controller type='usb' model='qemu-xhci' ports='15'/>
+    <interface type='network'><source network='default'/><model type='e1000e'/></interface>
+$devs    <memballoon model='none'/>
+  </devices>
+</domain>
+XML
+  "${VIRSH[@]}" define "$xml" >/dev/null || { cp "$xml" /tmp/tux-gamevm-failed.xml; die "virsh define $dname failed (XML kept in /tmp/tux-gamevm-failed.xml)"; }
+  rm -f "$xml"
+}
+
+unmount_disk() {
+  local p
+  for p in $(lsblk -lnpo NAME "$1" | tail -n +2); do
+    findmnt -rn -S "$p" >/dev/null 2>&1 && { umount "$p" || die "cannot unmount $p (in use?)"; }
+  done
+  return 0
+}
+
+# ------------------------------------------------------------------------------- run/stop
+is_running() { [[ $("${VIRSH[@]}" domstate "$1" 2>/dev/null) == running ]]; }
+
+# The VM disk must be present AND be the same disk (GPT GUID) that create recorded.
+disk_check() {
+  [[ -b $DISK ]] || { echo "the Windows disk is not connected ($DISK missing)"; return 1; }
+  local got; got=$(lsblk -dno PTUUID "$(readlink -f "$DISK")")
+  [[ -n ${DISK_ID:-} && $got == "$DISK_ID" ]] || { echo "$DISK is not the Windows disk (GPT GUID ${got:-none}, expected ${DISK_ID:-unset})"; return 1; }
+}
+
+# ------------------------------------------------------------------------- shared drives
+# While Windows runs it also gets the USB storage plugged in at start (external disks, card
+# readers, optical drives) and the internal disks in PASS_DISKS. Safety: a drive is only handed
+# over after the host unmounted it (else the start is aborted), the host cannot mount it while
+# Windows has it, and internal disks are remounted afterwards (read-only if that fails).
+usb_dev_of_block() {  # sdX -> its USB device (e.g. 2-8 or 1-13.2), or nothing
+  readlink -f "/sys/block/$1" | sed -n 's|.*/\([0-9]\+-[0-9.]\+\)/[0-9]\+-[0-9.]\+:[0-9.]\+/.*|\1|p'
+}
+blocks_of_usb() {  # USB device dir -> its block devices (sdX, srN)
+  local b; for b in "$1"/*/host*/target*/*/block/*; do [[ -e $b ]] && basename "$b"; done
+}
+holds_system() {  # true if a block device (or its partitions) holds / /home /boot /var
+  lsblk -lno MOUNTPOINTS "/dev/$1" 2>/dev/null | grep -qxE '/|/home|/boot(/efi)?|/var|/usr'
+}
+
+shared_xml() {  # one XML element per line for every drive to pass at this start
+  local windev winusb d b n=0 p letters=(c d e f g h i j k l)
+  windev=$(basename "$(readlink -f "$DISK")"); winusb=$(usb_dev_of_block "$windev")
+  if [[ ${PASS_USB_STORAGE:-yes} == yes ]]; then
+    for d in /sys/bus/usb/devices/*; do
+      [[ -f $d/busnum ]] && grep -qx 08 "$d"/*/bInterfaceClass 2>/dev/null || continue
+      [[ $(basename "$d") == "$winusb" ]] && continue             # the Windows disk itself
+      for b in $(blocks_of_usb "$d"); do holds_system "$b" && continue 2; done
+      printf "<hostdev mode='subsystem' type='usb' managed='yes'><source><address bus='%d' device='%d'/></source><alias name='ua-tuxstor-%s'/></hostdev>\n" \
+        "$(<"$d/busnum")" "$(<"$d/devnum")" "$(basename "$d" | tr . _)"
+    done
+  fi
+  for p in ${PASS_DISKS:-}; do
+    [[ -b $p && $(readlink -f "$p") != "$(readlink -f "$DISK")" ]] || continue
+    holds_system "$(basename "$(readlink -f "$p")")" && continue
+    printf "<disk type='block' device='disk'><driver name='qemu' type='raw' cache='none' io='native'/><source dev='%s'/><target dev='sd%s' bus='sata'/><alias name='ua-tuxdisk-%d'/></disk>\n" \
+      "$p" "${letters[n]}" "$n"
+    n=$((n + 1))
+  done
+}
+
+apply_shared() {  # replace the shared drives in the VM definition with what is connected now
+  local x; x=$(mktemp)
+  "${VIRSH[@]}" dumpxml --inactive "$NAME" >"$x" || { rm -f "$x"; return 1; }
+  shared_xml | python3 -c '
+import sys, xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1]); devs = tree.getroot().find("devices")
+for e in list(devs):
+    a = e.find("alias")
+    if a is not None and a.get("name", "").startswith(("ua-tuxstor-", "ua-tuxdisk-")):
+        devs.remove(e)
+for line in sys.stdin:
+    if line.strip():
+        devs.append(ET.fromstring(line))
+tree.write(sys.argv[1])' "$x" && "${VIRSH[@]}" define "$x" >/dev/null
+  local rc=$?; rm -f "$x"; return $rc
+}
+
+cmd_start() {
+  load_conf
+  [[ -n $(ls /sys/kernel/iommu_groups 2>/dev/null) ]] || die "IOMMU is not active: run tux-gamevm setup and reboot"
+  is_running "$NAME-install" && die "$NAME-install is running on the same disk: shut it down first"
+  local why; why=$(disk_check) || die "$why"
+  apply_shared || die "could not update the shared drives"
+  local shared; shared=$("${VIRSH[@]}" dumpxml --inactive "$NAME" | grep -c "name='ua-tux" || true)
+  if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v notify-send >/dev/null; then
+    notify-send -u critical "Gaming VM" "Starting $NAME in 5 s: the desktop will close. Save your work.
+$shared drive(s) go to Windows and come back after it shuts down." || true
+    sleep 5
+  fi
+  "${VIRSH[@]}" start "$NAME"
+}
+# Install/repair mode: the same Windows in a window on the Linux desktop; no GPU handover.
+cmd_install() {
+  load_conf
+  is_running "$NAME" && die "$NAME is running on the same disk: shut it down first"
+  local why; why=$(disk_check) || die "$why"
+  is_running "$NAME-install" || "${VIRSH[@]}" start "$NAME-install"
+  command -v virt-viewer >/dev/null || die "virt-viewer is not installed (tux-gamevm setup installs it)"
+  setsid -f virt-viewer --connect qemu:///system --wait --reconnect "$NAME-install" >/dev/null 2>&1
+}
+cmd_stop()   { load_conf; "${VIRSH[@]}" shutdown "$NAME"; }    # asks Windows to shut down
+cmd_kill()   { load_conf; "${VIRSH[@]}" destroy "$NAME"; }     # pull the plug (Windows hung)
+cmd_status() {
+  load_conf
+  echo "VM:    $NAME ($("${VIRSH[@]}" domstate "$NAME" 2>/dev/null || echo undefined))"
+  echo "Disk:  $DISK"
+  echo "GPU:   $GPU  IOMMU: $([[ -n $(ls /sys/kernel/iommu_groups 2>/dev/null) ]] && echo on || echo OFF)"
+  echo "USB:   $USB"
+  echo "Share: USB storage plugged in at start: ${PASS_USB_STORAGE:-yes}; internal disks: ${PASS_DISKS:-none}"
+  [[ -s $NOTICE ]] && echo "Note:  $(<"$NOTICE")"
+  echo "Log:   $LOG"
+}
+cmd_eject_iso() {
+  need_root eject-iso
+  load_conf
+  local x iso='' d i
+  for d in "$NAME" "$NAME-install"; do
+    "${VIRSH[@]}" domstate "$d" >/dev/null 2>&1 || continue
+    x=$(mktemp)
+    i=$("${VIRSH[@]}" dumpxml --inactive "$d" | sed -n "/device='cdrom'/,/<\/disk>/s|.*<source file='\([^']*\)'.*|\1|p")
+    [[ -n $i ]] && iso=$i
+    "${VIRSH[@]}" dumpxml --inactive "$d" | sed "/device='cdrom'/,/<\/disk>/d" >"$x"
+    "${VIRSH[@]}" define "$x" >/dev/null && say "Installer ISO removed from $d"
+    rm -f "$x"
+  done
+  [[ $iso == /var/lib/libvirt/images/* ]] && rm -f "$iso" && say "Deleted the ISO copy $iso"
+  return 0
+}
+
+# ----------------------------------------------------------------------------------- hook
+dm_service() {  # the login manager to stop/start
+  local s; for s in greetd lightdm sddm gdm ly; do
+    if [[ $(init_system) == systemd ]]; then systemctl is-enabled "$s" >/dev/null 2>&1 && { echo "$s"; return; }
+    elif [[ -e /var/service/$s ]]; then echo "$s"; return; fi
+  done
+}
+svc() {  # svc stop|start NAME
+  if [[ $(init_system) == systemd ]]; then systemctl "$1" "$2"; else sv "$1" "$2" >/dev/null; fi
+}
+gpu_driver_modules() {
+  if lsmod | grep -q '^nvidia'; then echo "nvidia_drm nvidia_uvm nvidia_modeset nvidia"; fi
+}
+
+SHARED=/run/tux-gamevm.shared NOTICE=/run/tux-gamevm.notice
+IGNORE_RULE=/run/udev/rules.d/62-tux-gamevm-shared.rules
+
+shared_blocks() {  # domain XML on stdin -> shared block devices: sdX / srN (USB) or int:sdX
+  python3 -c '
+import sys, xml.etree.ElementTree as ET
+for e in ET.fromstring(sys.stdin.read()).find("devices"):
+    a = e.find("alias"); n = a.get("name", "") if a is not None else ""
+    if n.startswith("ua-tuxstor-"):
+        ad = e.find("source/address"); print("usb", int(ad.get("bus"), 0), int(ad.get("device"), 0))
+    elif n.startswith("ua-tuxdisk-"):
+        print("disk", e.find("source").get("dev"))' | while read -r kind a b; do
+    case $kind in
+      usb) local d; for d in /sys/bus/usb/devices/*; do
+             [[ -f $d/busnum && $(<"$d/busnum") == "$a" && $(<"$d/devnum") == "$b" ]] && blocks_of_usb "$d"
+           done ;;
+      disk) echo "int:$(basename "$(readlink -f "$a")")" ;;
+    esac
+  done
+}
+
+release_shared() {  # unmount every shared drive; refuse (return 1) rather than force
+  local e dev p ignore=''
+  for e in $(<"$SHARED"); do
+    dev=${e#int:}
+    [[ $e == int:* ]] && ignore+="KERNEL==\"$dev*\", ENV{UDISKS_IGNORE}=\"1\""$'\n'
+    for p in $(lsblk -lnpo NAME "/dev/$dev" 2>/dev/null); do
+      findmnt -rn -S "$p" >/dev/null 2>&1 || continue
+      sync
+      if ! umount "$p" 2>/dev/null; then
+        sleep 2
+        umount "$p" 2>/dev/null || {
+          echo "cannot unmount $p ($(findmnt -rno TARGET -S "$p")): in use by:"; fuser -vm "$p" 2>&1
+          echo "not starting Windows, so nothing is shared while mounted"; return 1; }
+      fi
+      echo "unmounted $p for Windows"
+    done
+  done
+  # While Windows has an internal disk, the host must not mount it (e.g. a click in Thunar).
+  if [[ -n $ignore ]]; then
+    mkdir -p /run/udev/rules.d
+    printf '# tux-gamevm: these disks belong to Windows until it shuts down.\n%s' "$ignore" >"$IGNORE_RULE"
+    udevadm control --reload
+    for e in $(grep '^int:' "$SHARED"); do udevadm trigger --action=change --sysname-match="${e#int:}*"; done
+    udevadm settle
+  fi
+}
+
+remount_shared() {  # give internal disks back; read-only if Windows left them unclean
+  [[ -f $SHARED ]] || return 0
+  local e dev p uuid t
+  rm -f "$IGNORE_RULE"; udevadm control --reload
+  for e in $(grep '^int:' "$SHARED"); do
+    dev=${e#int:}
+    udevadm trigger --action=change --sysname-match="$dev*"; udevadm settle
+    for p in $(lsblk -lnpo NAME "/dev/$dev" | tail -n +2); do
+      uuid=$(blkid -s UUID -o value "$p" 2>/dev/null) || continue
+      t=$(findmnt --fstab -no TARGET -S "UUID=$uuid" 2>/dev/null) || continue
+      [[ -n $t ]] && ! findmnt -rn "$t" >/dev/null || continue
+      if mount "$t" 2>/dev/null; then echo "remounted $t"
+      elif mount -o ro "$t" 2>/dev/null; then
+        echo "$t is mounted READ-ONLY: Windows left it unclean (Fast Startup/hibernation or a crash). Your files are safe; boot Windows and shut it down fully (powercfg /h off), then remount." | tee -a "$NOTICE"
+      else
+        echo "could not mount $t at all; it was not changed by Linux" | tee -a "$NOTICE"
+      fi
+    done
+  done
+  [[ -f $NOTICE ]] && chmod 644 "$NOTICE"
+  rm -f "$SHARED"
+}
+
+hook_prepare() {
+  local dm m p
+  # Before touching the desktop: refuse to run Windows on a missing or different disk.
+  disk_check || return 1
+  rm -f "$NOTICE"
+  shared_blocks <<<"${DOMXML:-}" | sort -u >"$SHARED"
+  echo "$(date '+%F %T') prepare: sharing $(tr '\n' ' ' <"$SHARED")"
+  dm=$(dm_service)
+  echo "$(date '+%F %T') prepare: stopping ${dm:-no display manager}"
+  [[ -n $dm ]] && svc stop "$dm"
+  for p in $(seq 40); do pgrep -x 'Xorg|X|sway' >/dev/null || break; sleep 0.25; done
+  # Audio servers hold the GPU's HDMI/DP audio and the USB audio devices.
+  pkill -x 'pipewire|pipewire-pulse|wireplumber|pulseaudio' 2>/dev/null || true
+  sleep 1
+  release_shared || return 1
+  fuser -k /dev/nvidia* >/dev/null 2>&1 || true
+  for p in /sys/class/vtconsole/vtcon*/bind; do echo 0 >"$p" 2>/dev/null || true; done
+  echo efi-framebuffer.0 >/sys/bus/platform/drivers/efi-framebuffer/unbind 2>/dev/null || true
+  local mods; mods=$(gpu_driver_modules)
+  echo "$mods" >/run/tux-gamevm.unloaded
+  for m in $mods; do modprobe -r "$m" || { echo "cannot unload $m: still in use"; return 1; }; done
+  modprobe vfio-pci || return 1
+  ( unmount_disk "$(readlink -f "$DISK")" ) || return 1
+  echo "$(date '+%F %T') prepare: GPU released"
+}
+
+hook_release() {
+  echo "$(date '+%F %T') release: giving the GPU back"
+  # modprobe.d options (modeset/fbdev) apply again; nvidia_drm pulls in nvidia + nvidia_modeset.
+  if grep -q nvidia /run/tux-gamevm.unloaded 2>/dev/null; then modprobe nvidia_drm || true; modprobe nvidia_uvm || true; fi
+  rm -f /run/tux-gamevm.unloaded
+  local p; for p in /sys/class/vtconsole/vtcon*/bind; do echo 1 >"$p" 2>/dev/null || true; done
+  # X switches its VT's keyboard to "off" (raw input) and, killed with the session, never switches
+  # it back: the login screen then gets no key presses at all. Reset every VT that no X is using.
+  if ! pgrep -x 'Xorg|X' >/dev/null && command -v kbd_mode >/dev/null; then
+    for p in /dev/tty[1-9] /dev/tty1[0-2]; do [[ -c $p ]] && kbd_mode -f -u -C "$p" 2>/dev/null; done
+  fi
+  remount_shared
+  local dm; dm=$(dm_service); [[ -n $dm ]] && svc start "$dm"
+  echo "$(date '+%F %T') release: ${dm:-desktop} back"
+}
+
+cmd_hook() {  # libvirt: hook <vm> <operation> <sub-operation> ...
+  [[ -f $CONF ]] || exit 0
+  # shellcheck source=/dev/null
+  . "$CONF"
+  [[ ${1:-} == "$NAME" ]] || exit 0
+  case ${2:-}/${3:-} in
+    # If the handover fails, bring the desktop back instead of leaving a black screen.
+    prepare/begin) DOMXML=$(cat); hook_prepare >>"$LOG" 2>&1 || { hook_release >>"$LOG" 2>&1; exit 1; } ;;
+    release/end)   hook_release >>"$LOG" 2>&1 ;;
+  esac
+}
+
+case ${1:-} in
+  setup) shift; cmd_setup "$@" ;;
+  create) shift; cmd_create "$@" ;;
+  start) cmd_start ;;
+  install) cmd_install ;;
+  stop) cmd_stop ;;
+  kill) cmd_kill ;;
+  status) cmd_status ;;
+  eject-iso) cmd_eject_iso ;;
+  hook) shift; cmd_hook "$@" ;;
+  *) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

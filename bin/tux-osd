@@ -1,8 +1,61 @@
 #!/usr/bin/env bash
-# tux-osd volume up|down|mute | mic mute | brightness up|down — change + show a bar
-# notification that replaces itself (from debi3n script-volume-slider.sh).
-bar() { local n=$(( $1 / 5 )); printf '%*s' "$n" '' | tr ' ' '█'; printf '%*s' $((20 - n)) '' | tr ' ' '░'; }
+# tux-osd volume up|down|mute | mic mute | brightness up|down | contrast up|down | watch
+# Change + show a bar notification that replaces itself (from debi3n script-volume-slider.sh).
+# brightness/contrast: laptop backlight via brightnessctl, external monitors via DDC/CI (ddcutil).
+# watch: show the volume popup for changes made anywhere (bar scroll, mixers); run by tux-autostart.
+RUN=${XDG_RUNTIME_DIR:-/tmp}
+
+# The bar itself is dunst's progress bar, drawn from the int:value hint; no text bar in the body.
 note() { notify-send -a osd -u low -t 1200 -h string:x-dunst-stack-tag:osd -h "int:value:$3" "$1" "$2"; }
+
+show_volume() {
+  local v
+  v=$(pactl get-sink-volume @DEFAULT_SINK@ | grep -o '[0-9]*%' | head -n1 | tr -d %)
+  if pactl get-sink-mute @DEFAULT_SINK@ | grep -q yes; then note "󰝟  Muted" "" 0
+  else note "󰕾  Volume $v%" "" "$(( v > 100 ? 100 : v ))"; fi
+}
+
+# --- DDC/CI (external monitors) -----------------------------------------------------------
+ddc_bus() {  # first DDC-capable display's I2C bus, cached for the session
+  local f="$RUN/tux-ddc-bus" b
+  [[ -s $f ]] && { cat "$f"; return 0; }
+  b=$(ddcutil detect --terse 2>/dev/null | sed -n 's|.*/dev/i2c-\([0-9]*\).*|\1|p' | head -n1)
+  [[ -n $b ]] && echo "$b" | tee "$f"
+}
+ddc_step() {  # ddc_step <vcp code> up|down -> prints the new value in percent
+  local bus cur max new step=5
+  [[ $2 == down ]] && step=-5
+  bus=$(ddc_bus) || return 1; [[ -n $bus ]] || return 1
+  # Key repeat fires faster than DDC answers: serialise instead of piling up commands.
+  exec 9>"$RUN/tux-ddc.lock"; flock -w 3 9 || return 1
+  # Monitors keep reporting the old value for seconds after a change, so stepping from a fresh
+  # read loses key presses. Step from the value we set last; read the monitor only when that is
+  # older than a minute (picks up changes made with the monitor's own buttons).
+  local cache="$RUN/tux-ddc-$1"
+  if [[ -n $(find "$cache" -mmin -1 2>/dev/null) ]]; then read -r cur max <"$cache"
+  else read -r _ _ _ cur max < <(ddcutil --bus "$bus" --brief getvcp "$1" 2>/dev/null); fi
+  [[ $cur =~ ^[0-9]+$ && $max =~ ^[0-9]+$ && $max -gt 0 ]] || return 1
+  new=$(( cur + step * max / 100 ))
+  (( new < 0 )) && new=0; (( new > max )) && new=$max
+  ddcutil --bus "$bus" --noverify setvcp "$1" "$new" >/dev/null 2>&1 || return 1
+  echo "$new $max" >"$cache"
+  echo $(( new * 100 / max ))
+}
+
+monitor() {  # monitor brightness|contrast up|down
+  local p icon=󰃟 title=Brightness code=10
+  [[ $1 == contrast ]] && { icon=󰆕 title=Contrast code=12; }
+  if [[ $1 == brightness ]] && compgen -G '/sys/class/backlight/*' >/dev/null; then
+    case $2 in up) brightnessctl -q set 5%+ ;; down) brightnessctl -q set 5%- ;; esac
+    p=$(( $(brightnessctl get) * 100 / $(brightnessctl max) ))
+  elif command -v ddcutil >/dev/null; then
+    p=$(ddc_step "$code" "$2") || { note "$icon  $title" "Monitor did not answer over DDC/CI (enable DDC/CI in its menu?)" 0; return 1; }
+  else
+    note "$icon  $title" "Install ddcutil to control an external monitor" 0; return 1
+  fi
+  note "$icon  $title $p%" "" "$p"
+}
+
 case $1 in
   volume)
     case $2 in
@@ -11,14 +64,18 @@ case $1 in
       mute) pactl set-sink-mute @DEFAULT_SINK@ toggle ;;
     esac
     v=$(pactl get-sink-volume @DEFAULT_SINK@ | grep -o '[0-9]*%' | head -n1 | tr -d %)
-    (( v > 150 )) && { pactl set-sink-volume @DEFAULT_SINK@ 150%; v=150; }
-    if pactl get-sink-mute @DEFAULT_SINK@ | grep -q yes; then note "󰝟  Muted" "$(bar 0)" 0
-    else note "󰕾  Volume $v%" "$(bar $(( v > 100 ? 100 : v )))" "$v"; fi ;;
+    (( v > 150 )) && pactl set-sink-volume @DEFAULT_SINK@ 150%
+    show_volume ;;
   mic)
     pactl set-source-mute @DEFAULT_SOURCE@ toggle
     pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes && note "󰍭  Microphone muted" "" 0 || note "󰍬  Microphone on" "" 100 ;;
-  brightness)
-    case $2 in up) brightnessctl -q set 5%+ ;; down) brightnessctl -q set 5%- ;; esac
-    b=$(( $(brightnessctl get) * 100 / $(brightnessctl max) ))
-    note "󰃟  Brightness $b%" "$(bar "$b")" "$b" ;;
+  brightness|contrast) monitor "$1" "$2" ;;
+  watch)
+    state() { echo "$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]*%' | head -n1) $(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null)"; }
+    last=$(state)
+    pactl subscribe 2>/dev/null | while read -r line; do
+      [[ $line == *"on sink #"* || $line == *"on server"* ]] || continue
+      cur=$(state); [[ $cur == "$last" ]] && continue
+      last=$cur; show_volume
+    done ;;
 esac

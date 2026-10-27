@@ -1,0 +1,5 @@
+# Software that is only in its vendor's own repository. "ii NAME" offers it, installed into a box.
+# Add your own in ~/.config/tuxcraft/vendor-repos.tsv (same format, tab-separated):
+# package	box (debian|fedora)	commands run as root inside the box to add the vendor repo
+brave-origin	debian	curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg && curl -fsSLo /etc/apt/sources.list.d/brave-browser-release.sources https://brave-browser-apt-release.s3.brave.com/brave-browser.sources
+brave-browser	debian	curl -fsSLo /usr/share/keyrings/brave-browser-archive-keyring.gpg https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg && curl -fsSLo /etc/apt/sources.list.d/brave-browser-release.sources https://brave-browser-apt-release.s3.brave.com/brave-browser.sources

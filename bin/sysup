@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sysup — the one safe way to update a tuxcraft system.
-#   1. sanity checks (battery, disk space)          5. flatpaks, Claude Desktop box
+#   1. sanity checks (battery, disk space)          5. flatpaks, Claude Desktop, boxes
 #   2. Arch: shows new Arch news and stops if any   6. cache + orphan cleanup
 #   3. snapshot before (and after) the update       7. config files that need merging
 #   4. the update itself                             8. reboot / failed-service hints
@@ -115,6 +115,13 @@ if [[ -n $user && -f $(getent passwd "$user" | cut -d: -f6)/.local/state/tuxcraf
    command -v tux-claude-desktop >/dev/null; then
   step "Claude Desktop (distrobox)"
   sudo -u "$user" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" tux-claude-desktop update || warn "Claude Desktop update had problems"
+fi
+
+# Apps installed into boxes by "ii" (tux-pkg): update each box (and the AUR in the Arch box).
+if [[ -n $user ]] && command -v distrobox >/dev/null &&
+   sudo -u "$user" podman ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^tux-'; then
+  step "Boxes (apps from other distros)"
+  sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" tux-pkg upgrade-boxes || warn "box update had problems"
 fi
 
 step "Cleanup"

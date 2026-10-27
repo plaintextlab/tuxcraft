@@ -89,7 +89,7 @@ edit the colours, `tux-theme set <name>`.
 | Layer | What happens |
 |---|---|
 | btrfs layout | `@`, `@home`, `@snapshots`, `@var_log`, `@var_cache`, `@var_tmp`; zstd compression |
-| Automatic snapshots | hourly timeline of `/` and `/home` (snapper), pruned automatically |
+| Automatic snapshots | snapper timeline of `/` and `/home`: hourly, daily, weekly, monthly (8/7/4/3 for `/`), plus one per boot; pruned automatically |
 | Package snapshots | before/after every pacman (snap-pac) / apt (hook) / `sysup` (Void) transaction |
 | Boot a snapshot | GRUB → *tuxcraft snapshots* (grub-btrfs) |
 | Roll back | `tux-snap rollback <n>` → reboot. `/home` is never touched |
@@ -133,7 +133,8 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-snap` | list / create / diff / restore a file / rollback / clean |
 | `tux-backup [mountpoint]` | backup to an external drive |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
-| `tux-pkg install/remove/search` | the same package words on every distro (`ii`, `rr`, `ss` aliases) |
+| `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
+| `tux-gamevm` | Windows gaming VM with single-GPU passthrough (`setup`, `create --disk ...`, `start`); appears in the system menu once created |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
 

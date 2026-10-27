@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# tux-nowplaying [width] — polybar "now playing": icon, prev/play-pause/next buttons and a
+# scrolling "Artist – Title" (default 24 characters wide). Run by polybar with tail = true.
+#
+# Source: MPRIS media players only (browsers playing YouTube/Netflix/music sites, Spotify, mpv,
+# VLC, ...). Games do not register as MPRIS players, so their sound is never shown.
+# A playing player wins over paused ones; nothing open = the module disappears.
+export LC_ALL=${LC_ALL:-C.UTF-8}   # scroll by characters, not bytes
+W=${1:-24}
+GAP='   •   '
+IGNORE='^(kdeconnect|playerctld)'   # MPRIS names that are not media playback
+
+# pick: the first Playing player, else the first Paused one. Prints name|status|text
+pick() {
+  local best='' name status artist title line
+  # playerInstance is the full name (e.g. firefox.instance_1_96) that playerctl -p accepts.
+  while IFS='|' read -r name status artist title; do
+    [[ -z $name || $name =~ $IGNORE || -z $title ]] && continue
+    line=${artist:+$artist – }$title
+    if [[ $status == Playing ]]; then printf '%s|%s|%s\n' "$name" "$status" "$line"; return; fi
+    [[ $status == Paused && -z $best ]] && best="$name|$status|$line"
+  done < <(playerctl -a metadata --format '{{playerInstance}}|{{status}}|{{artist}}|{{title}}' 2>/dev/null)
+  [[ -n $best ]] && printf '%s\n' "$best"
+}
+
+btn() { printf '%%{A1:playerctl -p %s %s:}%s%%{A}' "$1" "$2" "$3"; }
+
+last='' i=0
+while :; do
+  IFS='|' read -r player status text < <(pick)
+  if [[ -z ${player:-} ]]; then
+    [[ $last != none ]] && echo '' && last=none
+    i=0; sleep 1; continue
+  fi
+  text=${text//%/%%}                     # '%' starts a polybar format tag
+  [[ "$player|$text" != "$last" ]] && i=0 && last="$player|$text"
+  if (( ${#text} > W )); then
+    loop="$text$GAP"; shown="$loop$loop"; shown=${shown:i % ${#loop}:W}; ((i++))
+  else
+    shown=$text
+  fi
+  if [[ $status == Playing ]]; then pp=󰏤; else pp=󰐊; fi
+  printf '󰝚 %s %s %s %s\n' "$(btn "$player" previous 󰒮)" "$(btn "$player" play-pause "$pp")" \
+    "$(btn "$player" next 󰒭)" "$shown"
+  sleep 0.4
+done

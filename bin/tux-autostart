@@ -25,6 +25,10 @@ fi
 once tux-polkit
 eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)" || true
 once dunst
+# tux-gamevm: say so if a drive shared with Windows came back read-only.
+[[ -s /run/tux-gamevm.notice ]] && { sleep 3; notify-send -u critical "Gaming VM" "$(cat /run/tux-gamevm.notice)"; } &
+# Volume popup for changes made anywhere (bar scroll, mixers), not only the volume keys.
+pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
 once nm-applet --indicator
 command -v udiskie >/dev/null && once udiskie --smart-tray --notify
 tux-theme-gsettings 2>/dev/null || true

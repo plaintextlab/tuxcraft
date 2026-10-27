@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# tux-btbattery [--plain] — connected Bluetooth devices for the bar: one icon + battery each.
+# Battery comes from BlueZ (headphones/speakers report it; classic headsets need BlueZ
+# "Experimental = true" so PipeWire can pass it on) or, for DualSense/DS4 controllers, from the
+# kernel (/sys/class/power_supply/*-<address>). Nothing connected = no output (module hidden).
+plain=0; [[ ${1:-} == --plain ]] && plain=1
+red='#e67e80'
+# shellcheck source=/dev/null
+[[ -f ~/.config/tuxcraft/colors.sh ]] && . ~/.config/tuxcraft/colors.sh
+
+icon_for() {  # BlueZ "Icon" property -> Nerd Font glyph
+  case $1 in
+    audio-headset) echo 󰋎 ;; audio-headphones) echo 󰋋 ;; audio-card|audio-speakers) echo 󰓃 ;;
+    input-gaming) echo 󰊴 ;; input-mouse) echo 󰍽 ;; input-keyboard) echo 󰌌 ;;
+    input-tablet) echo 󰓶 ;; phone) echo 󰏲 ;; computer) echo 󰟀 ;; *) echo 󰂯 ;;
+  esac
+}
+
+out=()
+while read -r _ mac _; do
+  [[ $mac =~ ^([0-9A-F]{2}:){5}[0-9A-F]{2}$ ]] || continue
+  info=$(bluetoothctl info "$mac" 2>/dev/null)
+  icon=$(icon_for "$(sed -n 's/^\s*Icon: //p' <<<"$info")")
+  bat=$(sed -n 's/^\s*Battery Percentage: .*(\([0-9]\+\)).*/\1/p' <<<"$info") charging=''
+  # Controllers (hid-playstation, ...) report through the kernel instead of BlueZ.
+  ps=''; for p in /sys/class/power_supply/*-"${mac,,}"; do [[ -e $p ]] && { ps=$p; break; }; done
+  if [[ -n $ps ]]; then
+    [[ -z $bat ]] && bat=$(<"$ps/capacity")
+    [[ $(<"$ps/status") == Charging ]] && charging=⚡
+  fi
+  if [[ -z $bat ]]; then out+=("$icon")
+  elif ((plain || bat > 20)); then out+=("$icon $charging$bat%")
+  else out+=("%{F${red}}$icon $charging$bat%%{F-}")
+  fi
+done < <(bluetoothctl devices Connected 2>/dev/null)
+
+s=''; for o in "${out[@]}"; do s+=${s:+   }$o; done
+echo "$s"

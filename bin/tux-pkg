@@ -1,25 +1,316 @@
 #!/usr/bin/env bash
-# tux-pkg install|remove|search|info|list-files <pkg...> — same words on Arch, Debian and Void.
-# Installs go through the normal package manager, so snapshots/hooks still apply.
-cmd=${1:-}; shift || true
+# tux-pkg — one package command on every distro (aliases: ii install, rr remove, ss search).
+#   tux-pkg install NAME|FILE   find NAME everywhere, pick a source, install it
+#   tux-pkg remove NAME         remove it again from wherever it came from
+#   tux-pkg search WORDS        search the host repo and Flathub
+#   tux-pkg list                what tux-pkg installed outside the host repo
+#   tux-pkg info NAME | list-files NAME   (host packages)
+#
+# Sources, best first: the host repo, Flathub, a vendor's own repo (data/vendor-repos.tsv),
+# Arch, Debian and Fedora repos, the AUR. Non-host packages go into distrobox containers
+# ("boxes": tux-debian, tux-fedora, tux-arch). Boxes are ordinary processes on the same kernel
+# with the GPU shared in, so apps run at native speed, but nothing lands in the host's /usr or
+# /etc. Their launchers/commands are exported to the host and removed again by "remove";
+# sysup updates boxes and Flatpaks. Apps share your home directory (and its settings).
+# Local files: .deb -> Debian box, .rpm -> Fedora box, .pkg.tar.zst -> Arch box.
+set -uo pipefail
+SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+DB="$HOME/.local/share/tuxcraft/packages.tsv"   # name  source  box  ref  exports
+b=$'\e[1m' g=$'\e[32m' d=$'\e[2m' y=$'\e[33m' n=$'\e[0m'
+say()  { printf '%s::%s %s\n' "$b" "$n" "$*"; }
+warn() { printf '%s!%s %s\n' "$y$b" "$n" "$*" >&2; }
+die()  { printf 'tux-pkg: %s\n' "$*" >&2; exit 1; }
+
+# shellcheck source=/dev/null
 . /etc/tuxcraft/session.conf 2>/dev/null
-d=${DISTRO:-$(command -v pacman >/dev/null && echo arch || { command -v xbps-install >/dev/null && echo void || echo debian; })}
+HOST=${DISTRO:-$(command -v pacman >/dev/null && echo arch || { command -v xbps-install >/dev/null && echo void || echo debian; })}
 aur=pacman; command -v paru >/dev/null && aur=paru
-case $d:$cmd in
-  arch:install)   if [[ $aur == paru ]]; then paru -S --needed "$@"; else sudo pacman -S --needed "$@"; fi ;;
-  arch:remove)    sudo pacman -Rns "$@" ;;
-  arch:search)    $aur -Ss "$@" ;;
-  arch:info)      pacman -Si "$@" 2>/dev/null || $aur -Si "$@" ;;
-  arch:list-files) pacman -Ql "$@" ;;
-  debian:install) sudo apt install "$@" ;;
-  debian:remove)  sudo apt remove --purge "$@" && sudo apt autoremove --purge ;;
-  debian:search)  apt search "$@" ;;
-  debian:info)    apt show "$@" ;;
-  debian:list-files) dpkg -L "$@" ;;
-  void:install)   sudo xbps-install -S "$@" ;;
-  void:remove)    sudo xbps-remove -R "$@" ;;
-  void:search)    xbps-query -Rs "$@" ;;
-  void:info)      xbps-query -R "$@" ;;
-  void:list-files) xbps-query -f "$@" ;;
-  *) sed -n '2,3p' "$0" | sed 's/^# //'; exit 1 ;;
+
+declare -A BOX_IMAGE=([debian]=docker.io/library/debian:stable
+                      [fedora]=registry.fedoraproject.org/fedora:latest
+                      [arch]=docker.io/library/archlinux:latest)
+# shellcheck disable=SC2034  # read indirectly by label()
+LABEL_native="${HOST^} repo" LABEL_flatpak=Flathub LABEL_arch="Arch repo (box)"
+LABEL_debian="Debian repo (box)" LABEL_fedora="Fedora repo (box)" LABEL_aur="AUR (Arch box)"
+
+# ------------------------------------------------------------------------------- host repo
+native_version() {
+  case $HOST in
+    void)   xbps-query -R -p pkgver "$1" 2>/dev/null | sed "s/^$1-//" ;;
+    arch)   { pacman -Si "$1" 2>/dev/null || $aur -Si "$1" 2>/dev/null; } | sed -n 's/^Version *: //p' | head -n1 ;;
+    debian) apt-cache policy "$1" 2>/dev/null | sed -n 's/^ *Candidate: //p' | grep -v '(none)' ;;
+  esac
+}
+native() {  # native install|remove|search|info|list-files ARGS
+  local c=$1; shift
+  case $HOST:$c in
+    void:install) sudo xbps-install -S "$@" ;;  void:remove) sudo xbps-remove -R "$@" ;;
+    void:search)  xbps-query -Rs "$@" ;;         void:info) xbps-query -R "$@" ;;
+    void:list-files) xbps-query -f "$@" ;;
+    arch:install) if [[ $aur == paru ]]; then paru -S --needed "$@"; else sudo pacman -S --needed "$@"; fi ;;
+    arch:remove)  sudo pacman -Rns "$@" ;;       arch:search) $aur -Ss "$@" ;;
+    arch:info)    pacman -Si "$@" 2>/dev/null || $aur -Si "$@" ;;  arch:list-files) pacman -Ql "$@" ;;
+    debian:install) sudo apt install "$@" ;;     debian:remove) sudo apt remove --purge "$@" && sudo apt autoremove --purge ;;
+    debian:search)  apt search "$@" ;;           debian:info) apt show "$@" ;;
+    debian:list-files) dpkg -L "$@" ;;
+  esac
+}
+
+# ------------------------------------------------------------------------- remote lookups
+fetch() { curl -fsS --max-time 8 "$@" 2>/dev/null; }
+json() { python3 -c "import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+$1"; }
+ver_arch()   { fetch "https://archlinux.org/packages/search/json/?name=$1" | json 'r = d.get("results") or []
+print(r[0]["pkgver"] + "-" + r[0]["pkgrel"] if r else "")'; }
+# madison JSON: [ { package: { suite: { version: {...} } } } ]
+ver_debian() { fetch "https://api.ftp-master.debian.org/madison?package=$1&f=json&s=stable" | json 'v = [ver for m in d for suites in m.values() for vers in suites.values() for ver in vers]
+print(v[-1] if v else "")'; }
+ver_fedora() { fetch "https://mdapi.fedoraproject.org/rawhide/pkg/$1" | json 'print(d.get("version", "") + ("-" + d["release"].split(".")[0] if d.get("release") else ""))'; }
+aur_names()  { fetch "https://aur.archlinux.org/rpc/v5/info?arg%5B%5D=$1&arg%5B%5D=$1-bin&arg%5B%5D=$1-git" | json 'for r in d.get("results", []): print(r["Name"], r["Version"])'; }
+flatpak_hits() {  # Flathub apps whose name or ID matches NAME: "id version"
+  command -v flatpak >/dev/null || return 0
+  flatpak search --columns=application,name,version "$1" 2>/dev/null | awk -F'\t' -v q="${1,,}" '
+    { id = tolower($1); nm = tolower($2); n = split(id, p, ".")
+      if (nm == q || p[n] == q || id == q) print $1, $3 }' | head -n 3
+}
+vendor_rows() {  # NAME -> "family<TAB>setup" rows from the vendor list(s)
+  local f; for f in "$HOME/.config/tuxcraft/vendor-repos.tsv" "$SHARE/data/vendor-repos.tsv"; do
+    [[ -f $f ]] && awk -F'\t' -v q="$1" '!/^#/ && $1 == q { print $2 "\t" $3 }' "$f"
+  done | head -n 2
+}
+
+# --------------------------------------------------------------------------------- boxes
+ensure_box_tools() {
+  command -v distrobox >/dev/null && command -v podman >/dev/null && return 0
+  say "One-time setup for boxes (podman + distrobox); needs sudo"
+  case $HOST in
+    void)   sudo xbps-install -Sy podman ;; arch) sudo pacman -S --needed --noconfirm podman distrobox ;;
+    debian) sudo apt-get install -y podman distrobox ;;
+  esac
+  if ! command -v distrobox >/dev/null; then   # not packaged on Void: pinned upstream release
+    local v=1.8.2.5 t; t=$(mktemp -d)
+    curl -fsSL "https://github.com/89luca89/distrobox/archive/refs/tags/$v.tar.gz" | tar -xz -C "$t" --strip-components=1 &&
+      sudo "$t/install" --prefix /usr/local >/dev/null; rm -rf "$t"
+  fi
+  # No systemd user session on Void: podman must manage cgroups itself and log to a file.
+  if [[ ! -d /run/systemd/system && ! -f /etc/containers/containers.conf.d/tuxcraft.conf ]]; then
+    sudo mkdir -p /etc/containers/containers.conf.d
+    printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n' |
+      sudo tee /etc/containers/containers.conf.d/tuxcraft.conf >/dev/null
+  fi
+  grep -q "^$USER:" /etc/subuid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$USER"
+  command -v distrobox >/dev/null && command -v podman >/dev/null || die "podman/distrobox setup failed"
+}
+
+ensure_box() {  # ensure_box FAMILY: create tux-FAMILY on first use, themed and with the GPU
+  local fam=$1 name=tux-$1 vols=() p nv=()
+  ensure_box_tools
+  if ! podman container exists "$name" 2>/dev/null; then
+    say "Creating the $fam box (first time only; downloads the base image)"
+    # Host theme, icons and fonts, read-only, so GTK apps in the box look like the rest. Mounted
+    # under /usr/local/share (on GTK's search path, never written by packages): mounting over
+    # /usr/share/... made the box's own packages (e.g. adwaita-icon-theme) fail to install.
+    for p in /usr/share/themes/adw-gtk3 /usr/share/themes/adw-gtk3-dark /usr/share/icons/Papirus \
+             /usr/share/icons/Papirus-Dark /usr/share/icons/Papirus-Light; do
+      [[ -d $p ]] && vols+=(--volume "$p:/usr/local/share/${p#/usr/share/}:ro")
+    done
+    [[ -d /usr/share/fonts ]] && vols+=(--volume /usr/share/fonts:/usr/local/share/fonts/host:ro)
+    [[ -d /usr/local/share/fonts ]] && vols+=(--volume /usr/local/share/fonts:/usr/local/share/fonts/host-local:ro)
+    # The host's system D-Bus (network/power state for browsers etc.); not shared by default on Void.
+    [[ -S /run/dbus/system_bus_socket ]] && vols+=(--volume /run/dbus/system_bus_socket:/run/dbus/system_bus_socket)
+    [[ -e /dev/nvidia0 ]] && nv=(--nvidia)
+    distrobox create --yes --name "$name" --image "${BOX_IMAGE[$fam]}" "${nv[@]}" "${vols[@]}" ||
+      die "could not create the $fam box"
+    # First start sets the box up; if that fails, remove it so the next try starts clean.
+    distrobox enter "$name" -- true || {
+      distrobox rm -f "$name" >/dev/null 2>&1
+      die "setting up the $fam box failed (details: podman logs; it was removed, run ii again)"; }
+  fi
+  distrobox enter "$name" -- true || die "the $fam box does not start (try: podman logs $name)"
+}
+box() { local fam=$1; shift; distrobox enter "tux-$fam" -- "$@"; }
+
+box_pkg() {  # box_pkg FAMILY install|remove|files PKG...
+  local fam=$1 c=$2; shift 2
+  case $fam:$c in
+    debian:install) box debian sudo sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"' sh "$@" ;;
+    debian:remove)  box debian sudo apt-get purge -y "$@" && box debian sudo apt-get autoremove -y ;;
+    debian:files)   box debian dpkg -L "$@" ;;
+    fedora:install) box fedora sudo dnf install -y "$@" ;;
+    fedora:remove)  box fedora sudo dnf remove -y "$@" ;;
+    fedora:files)   box fedora rpm -ql "$@" ;;
+    arch:install)   box arch sudo pacman -Syu --needed --noconfirm "$@" ;;
+    arch:remove)    box arch sudo pacman -Rns --noconfirm "$@" ;;
+    arch:files)     box arch pacman -Qlq "$@" ;;
+    aur:install)    ensure_aur_helper && box arch yay -S --needed --noconfirm "$@" ;;
+    aur:remove)     box arch yay -Rns --noconfirm "$@" ;;
+    aur:files)      box arch pacman -Qlq "$@" ;;
+  esac
+}
+ensure_aur_helper() {
+  box arch sh -c 'command -v yay >/dev/null' && return 0
+  say "Setting up yay (AUR helper) in the Arch box"
+  box arch sh -c 'sudo pacman -Syu --needed --noconfirm base-devel git && d=$(mktemp -d) &&
+    git clone -q https://aur.archlinux.org/yay-bin.git "$d" && cd "$d" && makepkg -si --noconfirm'
+}
+
+export_pkg() {  # export_pkg FAMILY PKG -> prints what was exported (comma list)
+  local fam=$1 pkg=$2 files f out=() boxname=tux-$1
+  [[ $fam == aur ]] && boxname=tux-arch
+  files=$(box_pkg "$fam" files "$pkg" 2>/dev/null)
+  for f in $(grep -E '^/usr/share/applications/[^/]+\.desktop$' <<<"$files"); do
+    distrobox enter "$boxname" -- distrobox-export --app "$f" >/dev/null 2>&1 && out+=("app:$f")
+  done
+  if ((${#out[@]} == 0)); then   # command-line tool: put its commands in ~/.local/bin
+    mkdir -p "$HOME/.local/bin"
+    for f in $(grep -E '^/usr/bin/[^/]+$' <<<"$files"); do
+      distrobox enter "$boxname" -- distrobox-export --bin "$f" --export-path "$HOME/.local/bin" >/dev/null 2>&1 && out+=("bin:$f")
+    done
+  fi
+  local IFS=,; echo "${out[*]}"
+}
+unexport_pkg() {  # unexport_pkg BOXNAME EXPORTS
+  local e; local IFS=,
+  for e in $2; do
+    case $e in
+      app:*) distrobox enter "$1" -- distrobox-export --app "${e#app:}" --delete >/dev/null 2>&1 ;;
+      bin:*) distrobox enter "$1" -- distrobox-export --bin "${e#bin:}" --export-path "$HOME/.local/bin" --delete >/dev/null 2>&1 ;;
+    esac
+  done
+}
+
+record()   { mkdir -p "${DB%/*}"; forget "$1"; printf '%s\t%s\t%s\t%s\t%s\n' "$@" >>"$DB"; }
+forget()   { [[ -f $DB ]] && sed -i "/^$(printf '%s' "$1" | sed 's/[.[\*^$/]/\\&/g')\t/d" "$DB"; }
+recorded() { [[ -f $DB ]] && awk -F'\t' -v q="$1" '$1 == q' "$DB" | tail -n1; }
+
+# ------------------------------------------------------------------------------- install
+# Candidates are "source<TAB>ref<TAB>version<TAB>extra", best first.
+candidates() {
+  local q=$1 v id ver line fam setup
+  v=$(native_version "$q"); [[ -n $v ]] && printf 'native\t%s\t%s\t\n' "$q" "$v"
+  while read -r id ver; do [[ -n $id ]] && printf 'flatpak\t%s\t%s\t\n' "$id" "${ver:--}"; done < <(flatpak_hits "$q")
+  while IFS=$'\t' read -r fam setup; do [[ -n $fam ]] && printf 'vendor-%s\t%s\tvendor repo\t%s\n' "$fam" "$q" "$setup"; done < <(vendor_rows "$q")
+  [[ $HOST != arch ]] && { v=$(ver_arch "$q"); [[ -n $v ]] && printf 'arch\t%s\t%s\t\n' "$q" "$v"; }
+  [[ $HOST != debian ]] && { v=$(ver_debian "$q"); [[ -n $v ]] && printf 'debian\t%s\t%s\t\n' "$q" "$v"; }
+  v=$(ver_fedora "$q"); [[ -n $v ]] && printf 'fedora\t%s\t%s\t\n' "$q" "$v"
+  [[ $HOST != arch ]] && while read -r line ver; do [[ -n $line ]] && printf 'aur\t%s\t%s\t\n' "$line" "$ver"; done < <(aur_names "$q")
+}
+label() {
+  case $1 in
+    vendor-*) echo "Vendor repo, ${1#vendor-} box" ;;
+    *) local l="LABEL_$1"; echo "${!l:-$1}" ;;
+  esac
+}
+
+do_install() {  # do_install SOURCE REF EXTRA NAME
+  local src=$1 ref=$2 extra=$3 name=$4 ex fam
+  case $src in
+    native)  native install "$ref" ;;
+    flatpak) flatpak install -y --system flathub "$ref" && record "$name" flatpak - "$ref" - ;;
+    vendor-*)
+      fam=${src#vendor-}; ensure_box "$fam" || return 1
+      say "Adding the vendor's repository inside the $fam box"
+      box "$fam" sudo sh -c "$extra" || die "vendor repo setup failed"
+      box_pkg "$fam" install "$ref" || return 1
+      ex=$(export_pkg "$fam" "$ref"); record "$name" "$fam" "tux-$fam" "$ref" "$ex" ;;
+    arch|debian|fedora)
+      ensure_box "$src" || return 1
+      box_pkg "$src" install "$ref" || return 1
+      ex=$(export_pkg "$src" "$ref"); record "$name" "$src" "tux-$src" "$ref" "$ex" ;;
+    aur)
+      ensure_box arch || return 1
+      box_pkg aur install "$ref" || return 1
+      ex=$(export_pkg aur "$ref"); record "$name" aur tux-arch "$ref" "$ex" ;;
+  esac
+}
+
+install_file() {  # .deb/.rpm/.pkg.tar.zst into the matching box
+  local f fam; f=$(readlink -f "$1")
+  case $f in
+    *.deb) fam=debian ;; *.rpm) fam=fedora ;; *.pkg.tar.zst|*.pkg.tar.xz) fam=arch ;;
+    *) die "$1: unknown package file (.deb, .rpm or .pkg.tar.zst)" ;;
+  esac
+  [[ $f == "$HOME"/* ]] || die "put the file somewhere in your home directory (boxes see only that)"
+  ensure_box "$fam" || exit 1
+  local pkg
+  case $fam in
+    debian) pkg=$(dpkg-deb -f "$f" Package 2>/dev/null || box debian dpkg-deb -f "$f" Package)
+            box debian sudo sh -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y "$1"' sh "$f" ;;
+    fedora) pkg=$(box fedora rpm -qp --qf '%{NAME}' "$f"); box fedora sudo dnf install -y "$f" ;;
+    arch)   pkg=$(box arch pacman -Qp "$f" | cut -d' ' -f1); box arch sudo pacman -U --noconfirm "$f" ;;
+  esac || exit 1
+  local ex; ex=$(export_pkg "$fam" "$pkg"); record "$pkg" "$fam" "tux-$fam" "$pkg" "$ex"
+  say "Installed $pkg from $(basename "$f") into the $fam box${ex:+ (in your app launcher)}"
+}
+
+cmd_install() {
+  (($#)) || die "usage: ii NAME (or a .deb/.rpm file)"
+  if [[ -f $1 ]]; then install_file "$1"; return; fi
+  local q=$1 rows=() i=0 c src ref ver extra
+  say "Looking for $q (host repo, Flathub, vendor repos, Arch/Debian/Fedora, AUR)..."
+  mapfile -t rows < <(candidates "$q")
+  ((${#rows[@]})) || die "$q was not found anywhere (try: ss $q)"
+  echo
+  for c in "${rows[@]}"; do
+    IFS=$'\t' read -r src ref ver extra <<<"$c"; ((i++))
+    printf '  %s%d)%s %-26s %-28s %s%s%s%s\n' "$b" "$i" "$n" "$(label "$src")" "$ref" "$d" "$ver" "$n" \
+      "$( ((i == 1)) && printf '  %s(recommended)%s' "$g$b" "$n")"
+  done
+  echo
+  local pick; read -r -p "${b}Install from [1-$i, Enter = 1, q = cancel]:${n} " pick </dev/tty
+  [[ $pick == q* ]] && exit 0
+  pick=${pick:-1}; [[ $pick =~ ^[0-9]+$ ]] && ((pick >= 1 && pick <= i)) || die "no such choice"
+  IFS=$'\t' read -r src ref ver extra <<<"${rows[pick - 1]}"
+  do_install "$src" "$ref" "$extra" "$q" && say "Installed $q from $(label "$src")"
+}
+
+cmd_remove() {
+  (($#)) || die "usage: rr NAME"
+  local q r src boxn ref ex
+  for q in "$@"; do
+    r=$(recorded "$q")
+    if [[ -z $r ]]; then native remove "$q"; continue; fi
+    IFS=$'\t' read -r _ src boxn ref ex <<<"$r"
+    case $src in
+      flatpak) flatpak uninstall -y --system "$ref" && flatpak uninstall -y --system --unused >/dev/null 2>&1 ;;
+      *) unexport_pkg "$boxn" "$ex"; box_pkg "$src" remove "$ref" ;;
+    esac && forget "$q" && say "Removed $q ($(label "$src"))"
+  done
+}
+
+cmd_search() {
+  (($#)) || die "usage: ss WORDS"
+  printf '%s== %s ==%s\n' "$b" "$(label native)" "$n"; native search "$@"
+  if command -v flatpak >/dev/null; then
+    printf '\n%s== Flathub ==%s\n' "$b" "$n"; flatpak search --columns=name,application,version "$*" 2>/dev/null | head -n 15
+  fi
+  printf '\n%s(Not listed? "ii NAME" also checks vendor repos, Arch/Debian/Fedora and the AUR.)%s\n' "$d" "$n"
+}
+
+cmd_list() {
+  [[ -s $DB ]] || { echo "Nothing installed outside the $HOST repo by tux-pkg."; return; }
+  printf '%-24s %-22s %s\n' NAME SOURCE "LAUNCHER/COMMANDS"
+  awk -F'\t' '{ printf "%-24s %-22s %s\n", $1, $2, ($5 == "-" || $5 == "" ? "-" : $5) }' "$DB"
+}
+
+cmd_upgrade_boxes() {  # used by sysup (as the user)
+  command -v distrobox >/dev/null || return 0
+  local bx; for bx in $(podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^tux-'); do
+    say "Updating box $bx"; distrobox upgrade "$bx" || warn "update of $bx had problems"
+    [[ $bx == tux-arch ]] && distrobox enter tux-arch -- sh -c 'command -v yay >/dev/null && yay -Sua --noconfirm' || true
+  done
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  install) cmd_install "$@" ;;
+  remove) cmd_remove "$@" ;;
+  search) cmd_search "$@" ;;
+  list) cmd_list ;;
+  upgrade-boxes) cmd_upgrade_boxes ;;
+  info) native info "$@" ;;
+  list-files) native list-files "$@" ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# //'; exit 1 ;;
 esac
