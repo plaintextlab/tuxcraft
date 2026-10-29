@@ -20,6 +20,7 @@ core	alsa-utils rtkit	alsa-utils rtkit	alsa-utils rtkit
 core	libnotify	libnotify-bin	libnotify
 core	dunst	dunst	dunst
 core	alacritty	alacritty	alacritty
+core	thunar thunar-archive-plugin thunar-volman tumbler exo xarchiver	thunar thunar-archive-plugin thunar-volman tumbler exo-utils xarchiver	Thunar thunar-archive-plugin thunar-volman tumbler exo xarchiver
 core	xdg-utils xdg-user-dirs	xdg-utils xdg-user-dirs	xdg-utils xdg-user-dirs
 core	xdg-desktop-portal xdg-desktop-portal-gtk	xdg-desktop-portal xdg-desktop-portal-gtk	xdg-desktop-portal xdg-desktop-portal-gtk
 core	polkit mate-polkit	polkitd mate-polkit	polkit mate-polkit
@@ -94,7 +95,7 @@ tui	chafa	chafa	chafa
 tui	tmux	tmux	tmux
 #
 # ---- optional bundles (chosen in the wizard)
-gui-fm	nemo nemo-fileroller	nemo	nemo
+firewall	nftables	nftables	nftables
 music	mpd ncmpcpp mpc	mpd ncmpcpp mpc	mpd ncmpcpp mpc
 firefox	firefox	firefox-esr	firefox
 chromium	chromium	chromium	chromium

@@ -158,7 +158,7 @@ TUX_THEME=$THEME
 TUX_FONT=$FONT
 TUX_FONT_SIZE=11
 TUX_BROWSER=none
-TUX_BUNDLES="gui-fm flatpak bluetooth"
+TUX_BUNDLES="firewall flatpak bluetooth"
 TUX_EXTRA=""
 TUX_EXCLUDE=""
 EOF

@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# tux-firewall — a small nftables firewall: incoming connections are dropped, except the
+# ports you list, and those only from the local network (private/link-local addresses).
+# Outgoing traffic, replies, loopback, ping and the libvirt VM bridges are always allowed.
+#
+#   tux-firewall [status]            show the state and the open ports
+#   tux-firewall on [--boot-only]    write /etc/nftables.conf, load it, start it at boot
+#   tux-firewall off                 remove the rules and stop loading them at boot
+#   tux-firewall allow PORT/PROTO    open a port to the LAN, e.g. 8188/tcp (applies at once)
+#   tux-firewall deny PORT/PROTO     close it again
+#
+# Open ports live in /etc/tuxcraft/firewall.conf. The rules sit in their own table
+# (inet tuxcraft) and never flush the rest, so libvirt's and docker's own rules stay intact.
+set -euo pipefail
+
+CONF=/etc/tuxcraft/firewall.conf
+NFT=/etc/nftables.conf
+DEFAULT_PORTS="22/tcp"   # SSH
+
+say()  { printf ':: %s\n' "$*"; }
+die()  { printf 'tux-firewall: %s\n' "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"; }
+init_system() { if [[ -d /run/systemd/system ]]; then echo systemd; else echo runit; fi; }
+
+load_conf() {
+  PORTS=$DEFAULT_PORTS
+  # shellcheck source=/dev/null
+  [[ -f $CONF ]] && . "$CONF"
+  return 0
+}
+
+save_conf() {
+  mkdir -p "${CONF%/*}"
+  cat >"$CONF" <<EOF
+# tux-firewall: ports open to the local network (port/tcp or port/udp, space separated).
+# Change with 'tux-firewall allow|deny PORT/PROTO', or edit and run 'sudo tux-firewall on'.
+PORTS="$PORTS"
+EOF
+}
+
+valid_port() { [[ $1 =~ ^[0-9]{1,5}(-[0-9]{1,5})?/(tcp|udp)$ ]] || die "expected PORT/tcp or PORT/udp, got '$1'"; }
+
+# "22/tcp 53317/tcp 53317/udp" + tcp -> "22, 53317"
+ports_for() {
+  local p out=()
+  for p in $PORTS; do [[ ${p#*/} == "$1" ]] && out+=("${p%/*}"); done
+  local IFS=,; local s="${out[*]}"; echo "${s//,/, }"
+}
+
+write_rules() {
+  local tcp udp r=''
+  tcp=$(ports_for tcp); udp=$(ports_for udp)
+  [[ -n $tcp ]] && r+="    ip saddr @lan4 tcp dport { $tcp } accept
+    ip6 saddr @lan6 tcp dport { $tcp } accept
+"
+  [[ -n $udp ]] && r+="    ip saddr @lan4 udp dport { $udp } accept
+    ip6 saddr @lan6 udp dport { $udp } accept
+"
+  [[ -f $NFT && ! -f $NFT.pre-tuxcraft ]] && ! grep -q 'tux-firewall' "$NFT" && cp -a "$NFT" "$NFT.pre-tuxcraft"
+  cat >"$NFT" <<EOF
+#!/usr/sbin/nft -f
+# Written by tux-firewall from $CONF — edit that, not this file.
+# Only the tuxcraft table is replaced; other tables (libvirt, docker) are left alone.
+table inet tuxcraft {}
+delete table inet tuxcraft
+
+table inet tuxcraft {
+  set lan4 { type ipv4_addr; flags interval; elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } }
+  set lan6 { type ipv6_addr; flags interval; elements = { fc00::/7, fe80::/10 } }
+
+  chain input {
+    type filter hook input priority filter; policy drop;
+    ct state established,related accept
+    ct state invalid drop
+    iif lo accept
+    iifname "virbr*" accept
+    meta l4proto { icmp, ipv6-icmp } accept
+    ip6 saddr fe80::/10 udp dport 546 accept
+    ip saddr @lan4 udp dport 5353 accept
+    ip6 saddr @lan6 udp dport 5353 accept
+$r  }
+}
+EOF
+}
+
+svc_on() {
+  if [[ $(init_system) == systemd ]]; then
+    systemctl enable nftables.service >/dev/null 2>&1 || die "could not enable nftables.service"
+  else
+    [[ -d /etc/sv/nftables ]] || die "runit service nftables not found (install nftables)"
+    ln -sfn /etc/sv/nftables /etc/runit/runsvdir/default/nftables
+  fi
+}
+
+svc_off() {
+  if [[ $(init_system) == systemd ]]; then
+    systemctl disable nftables.service >/dev/null 2>&1 || true
+  else
+    rm -f /etc/runit/runsvdir/default/nftables
+  fi
+}
+
+cmd_on() {
+  command -v nft >/dev/null || die "nft not found: install nftables first"
+  load_conf; save_conf; write_rules
+  nft -c -f "$NFT" || die "the generated ruleset does not load (see $NFT)"
+  svc_on
+  [[ ${1:-} == --boot-only ]] && { say "Firewall enabled from the next boot (open: $PORTS)"; return; }
+  nft -f "$NFT"
+  # Mark the unit active too (it reloads the same table; no-op when already running).
+  [[ $(init_system) == systemd ]] && { systemctl start nftables.service >/dev/null 2>&1 || true; }
+  say "Firewall on. Open to the LAN: $PORTS"
+}
+
+cmd_off() {
+  svc_off
+  nft delete table inet tuxcraft 2>/dev/null || true
+  say "Firewall off (rules removed, not loaded at boot)"
+}
+
+cmd_allow() {
+  [[ $# -gt 0 ]] || die "usage: tux-firewall allow PORT/PROTO..."
+  load_conf
+  local p
+  for p in "$@"; do valid_port "$p"; [[ " $PORTS " == *" $p "* ]] || PORTS+=" $p"; done
+  save_conf; cmd_on
+}
+
+cmd_deny() {
+  [[ $# -gt 0 ]] || die "usage: tux-firewall deny PORT/PROTO..."
+  load_conf
+  local p keep=()
+  for p in $PORTS; do [[ " $* " == *" $p "* ]] || keep+=("$p"); done
+  PORTS="${keep[*]}"
+  save_conf; cmd_on
+}
+
+cmd_status() {
+  load_conf
+  if nft list table inet tuxcraft >/dev/null 2>&1; then
+    say "Firewall: on"
+  elif [[ $EUID -ne 0 ]]; then
+    say "Firewall: unknown (run as root to check)"
+  else
+    say "Firewall: off"
+  fi
+  say "Open to the LAN: ${PORTS:-nothing}"
+}
+
+case ${1:-status} in
+  on)     need_root "$@"; shift; cmd_on "$@" ;;
+  off)    need_root "$@"; cmd_off ;;
+  allow)  need_root "$@"; shift; cmd_allow "$@" ;;
+  deny)   need_root "$@"; shift; cmd_deny "$@" ;;
+  status) cmd_status ;;
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$1' (try --help)" ;;
+esac

@@ -12,7 +12,7 @@ set $menu fuzzel
 set $windows tux-windows
 set $lock tux-lock
 set $clip tux-clip
-set $files_gui nemo
+set $files_gui thunar
 
 include ~/.config/sway/theme.conf
 include ~/.config/sway/input.conf

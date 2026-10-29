@@ -6,7 +6,7 @@ desktop_packages() {
   local groups="core tui"
   [[ $TUX_SESSION == sway ]] && groups+=' wayland' || groups+=' x11'
   local b
-  for b in gui-fm music firefox chromium dev flatpak printing gaming office; do
+  for b in firewall music firefox chromium dev flatpak printing gaming office; do
     has_word "$TUX_BUNDLES" "$b" && groups+=" $b"
   done
   { [[ ${HAS_BT:-0} == 1 ]] || has_word "$TUX_BUNDLES" bluetooth; } && groups+=' bluetooth'
@@ -65,6 +65,10 @@ desktop_services() {
     has_word "$TUX_BUNDLES" printing && svc_enable cupsd avahi-daemon
     has_word "$TUX_BUNDLES" dev && svc_enable docker
     [[ ${IS_LAPTOP:-0} == 1 ]] && svc_enable power-profiles-daemon
+  fi
+  if has_word "$TUX_BUNDLES" firewall; then
+    local fw=(on); [[ $TUX_MODE == install ]] && fw+=(--boot-only)
+    /usr/local/bin/tux-firewall "${fw[@]}" >>"$TUX_LOG" 2>&1 || warn "Could not set up the firewall"
   fi
   # Tap-to-click and natural behaviour on touchpads (from debi3n touchpad-setup.sh)
   if [[ ${IS_LAPTOP:-0} == 1 ]]; then
@@ -214,7 +218,7 @@ default_apps() {
   done
   command -v zathura >/dev/null && as_user xdg-mime default org.pwmt.zathura.desktop application/pdf 2>/dev/null
   [[ $b != none ]] && as_user xdg-settings set default-web-browser "$b.desktop" 2>/dev/null
-  as_user xdg-mime default yazi.desktop inode/directory 2>/dev/null
+  as_user xdg-mime default thunar.desktop inode/directory 2>/dev/null
   return 0
 }
 

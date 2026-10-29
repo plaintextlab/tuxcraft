@@ -34,7 +34,7 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
 3. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
 4. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
 5. **Font** (previews below) and size
-6. **Browser** and **optional extras** (Nemo, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
+6. **Browser** and **optional extras** (firewall, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
    *Gaming* = Steam, gamemode, MangoHud, Heroic (Flatpak), plus the limits Proton needs (`vm.max_map_count`,
    open files); on Void also gamescope, Wine, winetricks, protontricks, vkBasalt and the 32-bit libraries.
    With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU.
@@ -71,6 +71,7 @@ udiskie, gammastep (night light), xdg portals, Papirus icons, adw-gtk3.
 X11 and Wayland, systemd and runit, and is coloured by the system theme (the console palette is
 themed too). LightDM is used only if tuigreet is not packaged.
 
+**Files:** Thunar (right-click → Open Terminal Here opens alacritty), yazi in the terminal.
 **TUI apps:** yazi (files), btop, lazygit, nmtui, bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
 fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, ncmpcpp.
 
@@ -116,7 +117,7 @@ dead SSD — that is what `tux-backup` is for.
 |---|---|---|---|
 | Super+Enter | terminal | Super+D | launcher |
 | Super+Space | window switcher | Super+Q | close |
-| Super+E / Shift+E | yazi / Nemo | Super+B | browser |
+| Super+E / Shift+E | Thunar / Thunar in /media | Super+B | browser |
 | Super+Escape | **system menu** | Super+U | **update (sysup)** |
 | Super+V | clipboard history | Print / Super+Print | screenshot / capture menu |
 | Super+Ctrl+T / F / W | theme / font / wallpaper | Super+Ctrl+N / B / A / M | network / bluetooth / audio / btop |
@@ -124,6 +125,7 @@ dead SSD — that is what `tux-backup` is for.
 | Super+1..0 | workspaces | Super+Shift+1..0 | move window |
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
 | Super+T | notes | Super+A | web apps |
+| Ctrl+Tab / Ctrl+Shift+Tab | next / previous window in this workspace | Alt+Tab | last workspace |
 
 ## Commands
 
@@ -134,6 +136,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-backup [mountpoint]` | backup to an external drive |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
+| `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |

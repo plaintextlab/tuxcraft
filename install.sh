@@ -179,7 +179,7 @@ wizard() {
   ((HAS_BT)) && bt=on
   [[ $DISTRO == arch ]] && aur=on
   checklist TUX_BUNDLES "Optional extras" \
-    "gui-fm|Nemo file manager|on|GUI file manager next to yazi (drag & drop)" \
+    "firewall|Firewall (nftables)|on|block incoming connections; SSH open to the LAN only" \
     "flatpak|Flatpak + Flathub|on|sandboxed apps, themed like the rest" \
     "wallpapers|debi3n wallpapers|on|~320 MB pack from plaintextlab/debi3n" \
     "bluetooth|Bluetooth|$bt|bluez + bluetui" \

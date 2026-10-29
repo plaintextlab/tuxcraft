@@ -10,7 +10,7 @@ set $menu rofi -show drun -show-icons
 set $windows rofi -show window -show-icons
 set $lock tux-lock
 set $clip tux-clip
-set $files_gui nemo
+set $files_gui thunar
 
 include ~/.config/i3/theme.conf
 include ~/.config/tuxcraft/wm/common.conf
