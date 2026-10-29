@@ -99,9 +99,9 @@ sys_bootloader() {
   if [[ -f /etc/default/grub ]]; then
     sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$cmdline\"|" /etc/default/grub
     sed -i 's|^#\?GRUB_TIMEOUT=.*|GRUB_TIMEOUT=3|' /etc/default/grub
-    # Remember the last booted entry so picking linux-lts once sticks until changed.
-    grep -q '^GRUB_DEFAULT=saved' /etc/default/grub || sed -i 's|^GRUB_DEFAULT=.*|GRUB_DEFAULT=saved|' /etc/default/grub
-    grep -q '^GRUB_SAVEDEFAULT' /etc/default/grub || echo 'GRUB_SAVEDEFAULT=true' >>/etc/default/grub
+    # Always boot the first entry. No GRUB_SAVEDEFAULT: /boot sits on btrfs, where GRUB cannot
+    # write grubenv, and every boot would stop at "error: sparse file not allowed".
+    sed -i 's|^GRUB_DEFAULT=.*|GRUB_DEFAULT=0|; /^GRUB_SAVEDEFAULT=/d' /etc/default/grub
     # Arch default ordering would otherwise put linux-lts first.
     grep -q '^GRUB_TOP_LEVEL' /etc/default/grub || [[ $DISTRO != arch ]] || echo 'GRUB_TOP_LEVEL="/boot/vmlinuz-linux"' >>/etc/default/grub
   fi
