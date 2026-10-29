@@ -25,6 +25,8 @@ fi
 once tux-polkit
 eval "$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)" || true
 once dunst
+# A new session starts with plain gamma: forget dimming and night light left from the last one.
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/tux-dim" "${XDG_RUNTIME_DIR:-/tmp}/tux-nightlight"
 # tux-gamevm: say so if a drive shared with Windows came back read-only.
 [[ -s /run/tux-gamevm.notice ]] && { sleep 3; notify-send -u critical "Gaming VM" "$(cat /run/tux-gamevm.notice)"; } &
 # Volume popup for changes made anywhere (bar scroll, mixers), not only the volume keys.

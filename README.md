@@ -126,6 +126,7 @@ dead SSD — that is what `tux-backup` is for.
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
 | Super+T | notes | Super+A | web apps |
 | Ctrl+Tab / Ctrl+Shift+Tab | next / previous window in this workspace | Alt+Tab | last workspace |
+| Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
 
 ## Commands
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# tux-osd volume up|down|mute | mic mute | brightness up|down | contrast up|down | watch
+# tux-osd volume up|down|mute | mic mute | brightness up|down|set 0-100 | contrast up|down | watch
 # Change + show a bar notification that replaces itself (from debi3n script-volume-slider.sh).
-# brightness/contrast: laptop backlight via brightnessctl, external monitors via DDC/CI (ddcutil).
+# brightness/contrast: laptop backlight via brightnessctl, external monitors via DDC/CI (ddcutil);
+# brightness goes on below 0% by dimming the picture (down to -80%).
 # watch: show the volume popup for changes made anywhere (bar scroll, mixers); run by tux-autostart.
 RUN=${XDG_RUNTIME_DIR:-/tmp}
 
@@ -22,38 +23,102 @@ ddc_bus() {  # first DDC-capable display's I2C bus, cached for the session
   b=$(ddcutil detect --terse 2>/dev/null | sed -n 's|.*/dev/i2c-\([0-9]*\).*|\1|p' | head -n1)
   [[ -n $b ]] && echo "$b" | tee "$f"
 }
-ddc_step() {  # ddc_step <vcp code> up|down -> prints the new value in percent
-  local bus cur max new step=5
-  [[ $2 == down ]] && step=-5
-  bus=$(ddc_bus) || return 1; [[ -n $bus ]] || return 1
+ddc_lock() {
+  BUS=$(ddc_bus) || return 1; [[ -n $BUS ]] || return 1
   # Key repeat fires faster than DDC answers: serialise instead of piling up commands.
-  exec 9>"$RUN/tux-ddc.lock"; flock -w 3 9 || return 1
+  exec 9>"$RUN/tux-ddc.lock"; flock -w 3 9
+}
+ddc_get() {  # ddc_get <vcp code> -> "cur max"
   # Monitors keep reporting the old value for seconds after a change, so stepping from a fresh
-  # read loses key presses. Step from the value we set last; read the monitor only when that is
+  # read loses key presses. Use the value we set last; read the monitor only when that is
   # older than a minute (picks up changes made with the monitor's own buttons).
-  local cache="$RUN/tux-ddc-$1"
+  local cache="$RUN/tux-ddc-$1" cur max
   if [[ -n $(find "$cache" -mmin -1 2>/dev/null) ]]; then read -r cur max <"$cache"
-  else read -r _ _ _ cur max < <(ddcutil --bus "$bus" --brief getvcp "$1" 2>/dev/null); fi
+  else read -r _ _ _ cur max < <(ddcutil --bus "$BUS" --brief getvcp "$1" 2>/dev/null); fi
   [[ $cur =~ ^[0-9]+$ && $max =~ ^[0-9]+$ && $max -gt 0 ]] || return 1
-  new=$(( cur + step * max / 100 ))
-  (( new < 0 )) && new=0; (( new > max )) && new=$max
-  ddcutil --bus "$bus" --noverify setvcp "$1" "$new" >/dev/null 2>&1 || return 1
-  echo "$new $max" >"$cache"
-  echo $(( new * 100 / max ))
+  echo "$cur $max"
+}
+ddc_set() {  # ddc_set <vcp code> <percent> <max>
+  local new=$(( $2 * $3 / 100 ))
+  ddcutil --bus "$BUS" --noverify setvcp "$1" "$new" >/dev/null 2>&1 || return 1
+  echo "$new $3" >"$RUN/tux-ddc-$1"
 }
 
-monitor() {  # monitor brightness|contrast up|down
-  local p icon=󰃟 title=Brightness code=10
-  [[ $1 == contrast ]] && { icon=󰆕 title=Contrast code=12; }
-  if [[ $1 == brightness ]] && compgen -G '/sys/class/backlight/*' >/dev/null; then
-    case $2 in up) brightnessctl -q set 5%+ ;; down) brightnessctl -q set 5%- ;; esac
-    p=$(( $(brightnessctl get) * 100 / $(brightnessctl max) ))
-  elif command -v ddcutil >/dev/null; then
-    p=$(ddc_step "$code" "$2") || { note "$icon  $title" "Monitor did not answer over DDC/CI (enable DDC/CI in its menu?)" 0; return 1; }
+# --- the level: 0..100 is the backlight or the monitor, below 0 dims the picture -------------
+# At 0% many screens are still bright. Below that the colours are scaled down (xrandr
+# --brightness, or gammastep with the night light / on Wayland; see tux-nightlight).
+DIM_MIN=-80
+dim_get() { local d=0; [[ -s $RUN/tux-dim ]] && read -r d <"$RUN/tux-dim"; echo "$d"; }
+dim_set() {
+  (( $1 == $(dim_get) )) && return
+  if (( $1 < 0 )); then echo "$1" >"$RUN/tux-dim"; else rm -f "$RUN/tux-dim"; fi
+  tux-nightlight apply
+}
+
+KIND=none
+if compgen -G '/sys/class/backlight/*' >/dev/null; then KIND=backlight
+elif command -v ddcutil >/dev/null; then KIND=ddc; fi
+no_ddc() { note "$1" "Monitor did not answer over DDC/CI (enable DDC/CI in its menu?)" 0; exit 1; }
+
+hw_get() {  # hardware brightness in percent
+  local cur max
+  case $KIND in
+    backlight) echo $(( $(brightnessctl get) * 100 / $(brightnessctl max) )) ;;
+    ddc) read -r cur max < <(ddc_get 10) || return 1; echo $(( cur * 100 / max )) ;;
+  esac
+}
+hw_set() {  # hw_set <percent> [contrast too]
+  local cur max
+  case $KIND in
+    backlight) brightnessctl -q set "$1%" ;;
+    ddc)
+      read -r cur max < <(ddc_get 10) || return 1; ddc_set 10 "$1" "$max" || return 1
+      [[ -n ${2:-} ]] || return 0
+      read -r cur max < <(ddc_get 12) || return 1; ddc_set 12 "$1" "$max" ;;
+  esac
+}
+
+show_level() {  # show_level <level> [contrast]
+  local what=Brightness; [[ -n ${2:-} && $KIND == ddc ]] && what="Brightness + contrast"
+  if (( $1 < 0 )); then
+    # Its own colour and a bar that fills as it gets darker, so it never reads as "0% + a bit".
+    local orange='#e69875'
+    [[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/colors.sh ]] && orange=$(. "${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/colors.sh"; echo "$orange")
+    notify-send -a osd -u low -t 1200 -h string:x-dunst-stack-tag:osd -h "string:hlcolor:$orange" \
+      -h "int:value:$(( -$1 * 100 / -DIM_MIN ))" "󰃞  $what $1%" "dimmed below the screen's minimum"
   else
-    note "$icon  $title" "Install ddcutil to control an external monitor" 0; return 1
+    note "󰃟  $what $1%" "" "$1"
   fi
-  note "$icon  $title $p%" "" "$p"
+}
+
+brightness() {  # brightness up|down|set <0-100>
+  [[ $KIND == none ]] && { note "󰃟  Brightness" "Install ddcutil to control an external monitor" 0; return 1; }
+  [[ $KIND == ddc ]] && { ddc_lock || no_ddc "󰃟  Brightness"; }
+  local d p; d=$(dim_get)
+  case $1 in
+    set)
+      dim_set 0; hw_set "$2" contrast || no_ddc "󰃟  Brightness"
+      show_level "$2" contrast; return ;;
+    up)
+      if (( d < 0 )); then d=$(( d + 10 > 0 ? 0 : d + 10 )); dim_set "$d"; show_level "$d"; return; fi
+      p=$(hw_get) || no_ddc "󰃟  Brightness"; p=$(( p + 5 > 100 ? 100 : p + 5 )) ;;
+    down)
+      p=0; (( d == 0 )) && { p=$(hw_get) || no_ddc "󰃟  Brightness"; }
+      if (( d < 0 || p == 0 )); then d=$(( d - 10 < DIM_MIN ? DIM_MIN : d - 10 )); dim_set "$d"; show_level "$d"; return; fi
+      p=$(( p - 5 < 0 ? 0 : p - 5 )) ;;
+  esac
+  hw_set "$p" || no_ddc "󰃟  Brightness"
+  show_level "$p"
+}
+
+contrast() {  # contrast up|down (DDC only)
+  local cur max p step=5; [[ $1 == down ]] && step=-5
+  [[ $KIND == ddc ]] || { note "󰆕  Contrast" "Only external monitors (DDC/CI) have a contrast control" 0; return 1; }
+  ddc_lock || no_ddc "󰆕  Contrast"
+  read -r cur max < <(ddc_get 12) || no_ddc "󰆕  Contrast"
+  p=$(( cur * 100 / max + step )); (( p < 0 )) && p=0; (( p > 100 )) && p=100
+  ddc_set 12 "$p" "$max" || no_ddc "󰆕  Contrast"
+  note "󰆕  Contrast $p%" "" "$p"
 }
 
 case $1 in
@@ -69,7 +134,8 @@ case $1 in
   mic)
     pactl set-source-mute @DEFAULT_SOURCE@ toggle
     pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes && note "󰍭  Microphone muted" "" 0 || note "󰍬  Microphone on" "" 100 ;;
-  brightness|contrast) monitor "$1" "$2" ;;
+  brightness) shift; brightness "$@" ;;
+  contrast) contrast "$2" ;;
   watch)
     state() { echo "$(pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null | grep -o '[0-9]*%' | head -n1) $(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null)"; }
     last=$(state)
