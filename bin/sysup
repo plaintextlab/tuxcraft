@@ -75,7 +75,23 @@ case $DISTRO in
   arch)
     pacman -Syu || rc=$?
     if ((rc == 0)) && [[ -n $user ]] && command -v paru >/dev/null; then
-      step "AUR"; sudo -u "$user" paru -Sua || warn "AUR update had problems"
+      step "AUR"
+      # paru-bin is prebuilt against one libalpm: a pacman update that bumps its soname
+      # leaves paru unable to start, and paru cannot rebuild itself. Rebuild it from the AUR.
+      if ! sudo -u "$user" paru --version >/dev/null 2>&1; then
+        warn "paru no longer starts (pacman's libalpm changed): rebuilding paru-bin"
+        t=$(mktemp -d /tmp/sysup-paru.XXXXXX); chown "$user" "$t"
+        sudo -u "$user" git clone -q --depth 1 https://aur.archlinux.org/paru-bin.git "$t/paru-bin" &&
+          sudo -u "$user" sh -c "cd '$t/paru-bin' && makepkg --noconfirm" >/dev/null &&
+          pacman -U --noconfirm "$t"/paru-bin/paru-bin-*.pkg.tar.* >/dev/null
+        rm -rf "$t"
+      fi
+      if sudo -u "$user" paru --version >/dev/null 2>&1; then
+        sudo -u "$user" paru -Sua || warn "AUR update had problems"
+      else
+        warn "paru still does not start; the AUR's paru-bin may not be rebuilt for this pacman yet."
+        echo "   Build it from source instead: git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si"
+      fi
     fi ;;
   debian)
     apt-get update || rc=$?
