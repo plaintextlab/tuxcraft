@@ -44,3 +44,9 @@
 @define-color thumbnail_fg_color {{fg}};
 @define-color shade_color rgba(0, 0, 0, 0.25);
 @define-color scrollbar_outline_color rgba(0, 0, 0, 0.5);
+
+/* Square corners everywhere: buttons, entries, menus, popovers, tooltips, window corners.
+   User CSS outranks the theme, so the universal selector is enough. Radio buttons keep
+   their circle, so they still look different from checkboxes. */
+* { border-radius: 0; }
+radio { border-radius: 100%; }

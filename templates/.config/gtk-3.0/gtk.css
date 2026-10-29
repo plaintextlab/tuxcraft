@@ -52,3 +52,9 @@ iconview:selected, iconview:selected:focus, iconview text:selected,
   background-color: @accent_bg_color;
   color: @accent_fg_color;
 }
+
+/* Square corners everywhere: buttons, entries, menus, popovers, tooltips, window corners.
+   User CSS outranks the theme, so the universal selector is enough. Radio buttons keep
+   their circle, so they still look different from checkboxes. */
+* { border-radius: 0; -gtk-outline-radius: 0; }
+radio { border-radius: 100%; }
