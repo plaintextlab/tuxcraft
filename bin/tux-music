@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# tux-music [folder [PATH] | show | update | start]  — the music library, without editing mpd.conf.
+#   folder PATH  use PATH as the music library (mpd restarts and rescans it)
+#   folder       pick it from a menu (~/Music, mounted drives, ...; or type any path)
+#   show         print the current music folder (default)
+#   update       rescan the library
+#   start        start mpd if it is not running (tux-autostart calls this)
+#   player       start mpd if needed, then open rmpc (Super+M)
+# The folder lives in ~/.config/mpd/music.conf, which mpd.conf includes. Player: rmpc (Super+M).
+set -uo pipefail
+conf_dir="$HOME/.config/mpd"; music_conf="$conf_dir/music.conf"
+
+current() {
+  local d
+  d=$(sed -n 's/^music_directory[[:space:]]*"\(.*\)"/\1/p' "$music_conf" 2>/dev/null)
+  echo "${d:-$HOME/Music}"
+}
+
+ensure_conf() {
+  mkdir -p "$conf_dir/playlists"
+  [[ -s $music_conf ]] || write_conf "$(xdg-user-dir MUSIC 2>/dev/null || echo "$HOME/Music")"
+  mkdir -p "$(current)" 2>/dev/null || true
+}
+
+write_conf() {
+  printf '# Written by tux-music. Change with: tux-music folder <path>\nmusic_directory "%s"\n' "$1" >"$music_conf"
+}
+
+running() { pgrep -u "$UID" -x mpd >/dev/null; }
+
+start() {
+  ensure_conf
+  running && return 0
+  mpd "$conf_dir/mpd.conf" 2>>"$HOME/.local/state/tuxcraft/mpd.log"
+}
+
+restart() {
+  if running; then mpd --kill "$conf_dir/mpd.conf" 2>/dev/null || pkill -u "$UID" -x mpd
+    for _ in {1..30}; do running || break; sleep 0.1; done
+  fi
+  start
+}
+
+pick() {
+  local cur c; cur=$(current)
+  {
+    echo "$cur"
+    for c in "$HOME/Music" "$(xdg-user-dir MUSIC 2>/dev/null)" "$HOME/Downloads" "$HOME"; do [[ -d $c ]] && echo "$c"; done
+    # Mounted drives (udiskie / USB / internal data disks), and Music folders on them.
+    for c in /run/media/"$USER"/* /media/"$USER"/* /mnt/*; do
+      [[ -d $c ]] || continue; echo "$c"
+      find "$c" -maxdepth 2 -type d -iname 'music*' 2>/dev/null
+    done
+  } | awk 'NF && !seen[$0]++' | tux-menu "music folder (or type a path)"
+}
+
+set_folder() {
+  local d=${1/#\~/$HOME}
+  [[ -n $d ]] || return 0
+  d=$(realpath -m -- "$d")
+  [[ -d $d ]] || { notify "Not a folder: $d"; echo "tux-music: not a folder: $d" >&2; return 1; }
+  mkdir -p "$conf_dir"; write_conf "$d"
+  restart && sleep 0.5 && mpc -q update
+  notify "Music folder: ${d/#$HOME/\~} — scanning"
+  echo "Music folder: $d"
+}
+
+notify() { command -v notify-send >/dev/null && notify-send -a music "Music" "$1"; true; }
+
+mkdir -p "$HOME/.local/state/tuxcraft"
+case ${1:-show} in
+  folder) if [[ -n ${2:-} ]]; then set_folder "$2"; else set_folder "$(pick)"; fi ;;
+  show)   ensure_conf; current ;;
+  update) start; mpc -q update && notify "Rescanning $(current)" ;;
+  start)  start ;;
+  player) start; exec rmpc ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

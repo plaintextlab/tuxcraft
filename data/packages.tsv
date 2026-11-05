@@ -19,7 +19,7 @@ core	pipewire-jack	pipewire-jack	libjack-pipewire
 core	alsa-utils rtkit	alsa-utils rtkit	alsa-utils rtkit
 core	libnotify	libnotify-bin	libnotify
 core	dunst	dunst	dunst
-core	alacritty	alacritty	alacritty
+core	kitty	kitty	kitty
 core	thunar thunar-archive-plugin thunar-volman tumbler exo xarchiver	thunar thunar-archive-plugin thunar-volman tumbler exo-utils xarchiver	Thunar thunar-archive-plugin thunar-volman tumbler exo xarchiver
 core	xdg-utils xdg-user-dirs	xdg-utils xdg-user-dirs	xdg-utils xdg-user-dirs
 core	xdg-desktop-portal xdg-desktop-portal-gtk	xdg-desktop-portal xdg-desktop-portal-gtk	xdg-desktop-portal xdg-desktop-portal-gtk
@@ -96,7 +96,8 @@ tui	tmux	tmux	tmux
 #
 # ---- optional bundles (chosen in the wizard)
 firewall	nftables	nftables	nftables
-music	mpd ncmpcpp mpc	mpd ncmpcpp mpc	mpd ncmpcpp mpc
+# rmpc: mpd client with album art (kitty graphics) and a cava visualizer pane. Debian: upstream release.
+music	mpd mpc rmpc cava	mpd mpc cava	mpd mpc rmpc cava
 firefox	firefox	firefox-esr	firefox
 chromium	chromium	chromium	chromium
 dev	docker docker-compose lazydocker	docker.io docker-compose	docker docker-compose lazydocker

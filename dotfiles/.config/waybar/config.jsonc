@@ -15,10 +15,10 @@
     "format": "{icon} {volume}%",
     "format-muted": "󰝟 muted",
     "format-icons": { "default": ["󰕿", "󰖀", "󰕾"] },
-    "on-click": "alacritty --class tux-float -e tux-mixer",
+    "on-click": "tux-term --class tux-float -e tux-mixer",
     "on-click-right": "tux-osd volume mute"
   },
-  "custom/net": { "exec": "tux-netinfo --plain", "interval": 5, "on-click": "alacritty --class tux-float -e nmtui" },
+  "custom/net": { "exec": "tux-netinfo --plain", "interval": 5, "on-click": "tux-term --class tux-float -e nmtui" },
   "cpu": { "format": " {usage}%", "interval": 2 },
   "memory": { "format": " {percentage}%", "interval": 3 },
   "battery": {
@@ -28,7 +28,7 @@
     "format-icons": ["󰁺", "󰁼", "󰁾", "󰂀", "󰂂", "󰁹"]
   },
   "custom/powerprofile": { "exec": "~/.config/polybar/scripts/powerprofile.sh", "interval": 5, "on-click": "tux-powerprofile" },
-  "custom/updates": { "exec": "tux-updates --plain", "interval": 1800, "on-click": "alacritty --class tux-float-big -e sysup --pause" },
+  "custom/updates": { "exec": "tux-updates --plain", "interval": 1800, "on-click": "tux-term --class tux-float-big -e sysup --pause" },
   "clock": { "format": "󰥔 {:%H:%M}", "format-alt": "󰃭 {:%a %d %b %Y  %H:%M:%S}", "interval": 1, "tooltip-format": "<tt>{calendar}</tt>" },
   "tray": { "spacing": 8 }
 }

@@ -11,17 +11,19 @@ distro-neutral.
 
 ## Quick start
 
-Boot the live ISO of the distro you want, connect to the internet, then:
+Boot the live ISO of the distro you want, connect to the internet, and run **one command**.
+It downloads tuxcraft, asks its questions (disk, user, password, desktop, extras…), installs
+everything and reboots into the new desktop.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | sudo bash
-```
-
-| Distro | Boot this | Notes |
+| Distro | Boot this | The one command |
 |---|---|---|
-| Arch | official `archlinux-*.iso` | Wi-Fi: `iwctl` |
-| Debian | a **live** ISO (`debian-live-13-*-standard.iso`) — the netinst image has no shell to run scripts | installs the same release as the ISO |
-| Void | `void-live-x86_64-*-base.iso` (glibc recommended; NVIDIA needs glibc) | Wi-Fi: `nmtui` or `wpa_supplicant`. The ISO has no curl: first run `xbps-install -Syu xbps && xbps-install -y curl` |
+| Arch | official `archlinux-*.iso` (Wi-Fi: `iwctl`) | `curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh \| bash` |
+| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell) | `wget -qO- https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh \| bash` |
+| Void | `void-live-x86_64-*-base.iso`, glibc (log in as `root`/`voidlinux`; Wi-Fi: `nmtui`) | `xbps-fetch https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh && bash install.sh` |
+
+Each uses the download tool that ISO already has (curl, wget, xbps-fetch); the script becomes
+root with sudo when needed and installs curl itself where it is missing. On a system that is
+already installed, the same command sets up only the desktop.
 
 On Void, the installer times the mirrors from the official list and uses the fastest
 up-to-date one for every repository (no xmirror needed). Re-pick any time with `sudo tux-mirror`
@@ -39,6 +41,9 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
 4. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
 5. **Font** (previews below) and size
 6. **Browser** and **optional extras** (firewall, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
+   *Music* (on by default) = **rmpc** + mpd with album art and a **cava** visualizer: **Super+M** opens it
+   (`8` = full-screen visualizer), **Super+Shift+M** opens cava on its own. Pick the music folder with
+   **System menu → Music folder** or `tux-music folder ~/path` — no mpd.conf editing.
    *Gaming* = Steam, gamemode, MangoHud, Heroic (Flatpak), plus the limits Proton needs (`vm.max_map_count`,
    open files); on Void also gamescope, Wine, winetricks, protontricks, vkBasalt and the 32-bit libraries.
    With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU.
@@ -72,20 +77,25 @@ with the DOS font. Change any time with **Super+Ctrl+F** or `tux-font set dos 13
 | Screenshots / recording | maim, ffmpeg | grim, slurp, wf-recorder |
 | Monitors | autorandr / arandr | kanshi |
 
-Shared by both: **Alacritty**, dunst, PipeWire, NetworkManager, polkit agent, gnome-keyring,
+Shared by both: **kitty** (via `tux-term`), dunst, PipeWire, NetworkManager, polkit agent, gnome-keyring,
 udiskie, gammastep (night light), xdg portals, Papirus icons, adw-gtk3.
 
 **Login screen:** greetd + **tuigreet** — a TUI login that fits a keyboard-driven setup, works with
 X11 and Wayland, systemd and runit, and is coloured by the system theme (the console palette is
 themed too). LightDM is used only if tuigreet is not packaged.
 
-**Files:** Thunar (right-click → Open Terminal Here opens alacritty), yazi in the terminal.
+**Terminal and images:** kitty is the default because it shows real images (kitty graphics
+protocol, X11 and Wayland): album art in rmpc, image previews in yazi, and `img photo.jpg` for any
+picture (chafa; block art over ssh/tmux). Everything opens the terminal through `tux-term`; for
+Alacritty instead, put `TERMINAL=alacritty` in `~/.config/tuxcraft/state` (no images there).
+
+**Files:** Thunar (right-click → Open Terminal Here), yazi in the terminal.
 **TUI apps:** yazi (files), btop, lazygit, nmtui, bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
-fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, ncmpcpp.
+fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, rmpc, cava.
 
 ## One theme, everywhere
 
-`tux-theme` renders a single palette into i3/sway, polybar/waybar, rofi/fuzzel, dunst, Alacritty,
+`tux-theme` renders a single palette into i3/sway, polybar/waybar, rofi/fuzzel, dunst, kitty, Alacritty, rmpc, cava,
 GTK 3 (adw-gtk3), GTK 4/libadwaita, **Qt 5/6 (qt5ct/qt6ct, Fusion + the same palette, so Qt and
 GTK apps match)**, btop, micro, starship, fzf, zathura, swaylock, the wallpaper, the login screen
 and the TTY. Switch with **Super+Ctrl+T** or `tux-theme set nord`.

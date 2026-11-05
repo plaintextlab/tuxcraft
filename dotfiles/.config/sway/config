@@ -7,7 +7,7 @@
 
 set $mod Mod4
 set $alt Mod1
-set $term alacritty
+set $term tux-term
 set $menu fuzzel
 set $windows tux-windows
 set $lock tux-lock

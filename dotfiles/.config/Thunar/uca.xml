@@ -5,8 +5,8 @@
 	<name>Open Terminal Here</name>
 	<submenu></submenu>
 	<unique-id>1792921976998965-1</unique-id>
-	<command>exo-open --working-directory %f --launch TerminalEmulator</command>
-	<description>Open alacritty in this folder</description>
+	<command>tux-term --working-directory %f</command>
+	<description>Open a terminal in this folder</description>
 	<range></range>
 	<patterns>*</patterns>
 	<startup-notify/>

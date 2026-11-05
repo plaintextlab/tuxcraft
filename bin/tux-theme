@@ -95,6 +95,7 @@ reload_all() {
     i3-msg reload >/dev/null 2>&1 || true
     pgrep -x polybar >/dev/null && "$HOME/.config/polybar/launch.sh" >/dev/null 2>&1 &
   fi
+  pkill -USR1 -x kitty 2>/dev/null || true   # kitty re-reads kitty.conf (+ theme.conf)
   if pgrep -x dunst >/dev/null; then
     dunstctl reload 2>/dev/null || { pkill -x dunst; setsid -f dunst >/dev/null 2>&1; }
   fi

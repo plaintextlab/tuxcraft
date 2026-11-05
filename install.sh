@@ -4,26 +4,28 @@
 #   From a live ISO (Arch / Debian live / Void):   erases a disk, installs everything
 #   From an installed system:                       sets up the desktop on top of it
 #
-#   curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | bash   (Arch)
+#   wget -qO- https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | bash    (Debian live)
+#   xbps-fetch https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh && bash install.sh   (Void)
 #   sudo ./install.sh [--config answers.conf] [--yes] [--desktop]
 set -Eeuo pipefail
 umask 022   # an inherited 077 would leave / and /home unreadable to the new user
 
 TUX_REPO_TARBALL=${TUX_REPO_TARBALL:-https://github.com/plaintextlab/tuxcraft/archive/refs/heads/main.tar.gz}
 
-# --- the Void live ISO ships without curl; xbps itself must be current to install it ---
-if ! command -v curl >/dev/null && command -v xbps-install >/dev/null && [[ $EUID -eq 0 ]]; then
-  echo ":: Installing curl..."
-  { xbps-install -Syu xbps && xbps-install -y curl; } >/dev/null || { echo "Could not install curl (network?)" >&2; exit 1; }
-fi
-
-# --- self-bootstrap when piped through curl -------------------------------------------
+# --- self-bootstrap when piped from the internet ----------------------------------------
+# Uses whatever the live ISO has: curl (Arch), wget (Debian live), xbps-fetch (Void).
 TUX_SRC=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)
 if [[ ! -f $TUX_SRC/lib/ui.sh ]]; then
   echo ":: Downloading tuxcraft..."
-  rm -rf /tmp/tuxcraft && mkdir -p /tmp/tuxcraft
-  curl -fsSL "$TUX_REPO_TARBALL" | tar -xz -C /tmp/tuxcraft --strip-components=1
-  exec bash /tmp/tuxcraft/install.sh "$@" </dev/tty
+  dl=/tmp/tuxcraft; rm -rf "$dl" "$dl.tar.gz" && mkdir -p "$dl"
+  if command -v curl >/dev/null; then curl -fsSL -o "$dl.tar.gz" "$TUX_REPO_TARBALL"
+  elif command -v wget >/dev/null; then wget -qO "$dl.tar.gz" "$TUX_REPO_TARBALL"
+  elif command -v xbps-fetch >/dev/null; then xbps-fetch -o "$dl.tar.gz" "$TUX_REPO_TARBALL" >/dev/null
+  else echo "Need curl, wget or xbps-fetch to download tuxcraft" >&2; exit 1; fi || {
+    echo "Download failed. Connected to the internet? (Wi-Fi: iwctl on Arch, nmtui on Debian/Void)" >&2; exit 1; }
+  tar -xzf "$dl.tar.gz" -C "$dl" --strip-components=1 || { echo "Download was not a tuxcraft archive" >&2; exit 1; }
+  exec bash "$dl/install.sh" "$@" </dev/tty
 fi
 
 usage() {
@@ -34,6 +36,7 @@ Usage: sudo ./install.sh [options]
   --yes           accept defaults for anything not in the answers file
   --desktop       set up the desktop on this running system even if it looks like a live ISO
   --no-reboot     do not reboot when the install is finished (unattended runs)
+  --update        already set up: keep every saved answer, just bring tuxcraft up to date
   -h, --help      this help
 
 Answer keys (see README): TUX_DISK TUX_HOSTNAME TUX_USER TUX_PASSWORD TUX_TIMEZONE TUX_LOCALE
@@ -42,7 +45,7 @@ TUX_EXTRA TUX_EXCLUDE
 EOF
 }
 
-STAGE=wizard FORCE_DESKTOP=0 CONFIG='' NO_REBOOT=0
+STAGE=wizard FORCE_DESKTOP=0 CONFIG='' NO_REBOOT=0 UPDATE=0
 ORIG_ARGS=("$@")
 while (($#)); do
   case $1 in
@@ -50,6 +53,7 @@ while (($#)); do
     --yes|-y) export TUX_YES=1 ;;
     --desktop) FORCE_DESKTOP=1 ;;
     --no-reboot) NO_REBOOT=1 ;;
+    --update) UPDATE=1 ;;
     --stage) STAGE=$2; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -59,6 +63,15 @@ done
 
 if [[ $EUID -ne 0 ]]; then
   exec sudo -E bash "$0" "${ORIG_ARGS[@]}"
+fi
+
+# The rest of tuxcraft downloads with curl; the Void and Debian live ISOs come without it.
+if ! command -v curl >/dev/null; then
+  echo ":: Installing curl..."
+  if command -v xbps-install >/dev/null; then { xbps-install -Syu xbps && xbps-install -Sy curl; } >/dev/null
+  elif command -v apt-get >/dev/null; then { apt-get update && apt-get install -y curl ca-certificates; } >/dev/null
+  elif command -v pacman >/dev/null; then pacman -Sy --noconfirm curl >/dev/null
+  fi || { echo "Could not install curl (network?)" >&2; exit 1; }
 fi
 
 for f in ui core pkg disk bootstrap system gpu hwfix extras fonts desktop snapshots; do
@@ -112,10 +125,50 @@ preview_fonts() {
   done
 }
 
+# Already set up here (answers saved by an earlier run): offer to keep them instead of asking again.
+offer_update() {
+  local saved=$TUX_ETC/answers.conf
+  [[ -z $CONFIG && -z ${TUX_MODE:-} && -r $saved ]] || return 0
+  ((IS_LIVE)) && ((!FORCE_DESKTOP)) && return 0
+  if ((UPDATE)); then TUX_HOW=update
+  else
+    choose TUX_HOW "tuxcraft is already set up here (choices saved $(date -r "$saved" +%F)). What now?" update \
+      "update|Update|keep every choice: new tools, configs and fixes only" \
+      "extras|Update + change extras|keep your choices, re-pick the optional extras (music, printing, ...)" \
+      "redo|Answer everything again|your files and settings stay"
+  fi
+  [[ $TUX_HOW == redo ]] && return 0
+  # shellcheck source=/dev/null
+  . "$saved"
+  TUX_MODE=desktop TUX_UPDATE=1
+  export TUX_UPDATE
+  # The theme may have changed since (tux-theme): the user's state file is the truth.
+  local home st
+  home=$(getent passwd "$TUX_USER" | cut -d: -f6); st="$home/.config/tuxcraft/state"
+  [[ -r $st ]] && TUX_THEME=$(sed -n 's/^THEME=//p' "$st" | tr -d "\"'")
+  if [[ $TUX_HOW == extras ]]; then
+    TUX_SAVED_BUNDLES=${TUX_BUNDLES:-}; unset TUX_BUNDLES
+  fi
+  return 0
+}
+
+# Default for an extra in the checklist: the saved choice when re-picking, else the stock default.
+# Something installed by hand since counts as chosen (e.g. cups for printing).
+extra_default() {  # extra_default key stock
+  [[ -v TUX_SAVED_BUNDLES ]] || { echo "$2"; return; }
+  local cmd=''
+  case $1 in
+    music) cmd=mpd ;; printing) cmd=lpadmin ;; office) cmd=soffice ;; flatpak) cmd=flatpak ;;
+    dev) cmd=docker ;; gaming) cmd=steam ;; bluetooth) cmd=bluetoothctl ;; firewall) cmd=nft ;;
+  esac
+  if has_word "$TUX_SAVED_BUNDLES" "$1" || { [[ -n $cmd ]] && command -v "$cmd" >/dev/null; }; then echo on; else echo off; fi
+}
+
 wizard() {
   clear || true
   banner
   info "Detected: $DISTRO_ID, ${BOOT_MODE^^} boot, GPU: ${GPU_VENDORS:-none}$( ((IS_LAPTOP)) && echo ', laptop')"
+  offer_update
 
   if [[ -z ${TUX_MODE:-} ]]; then
     if ((IS_LIVE)) && ((!FORCE_DESKTOP)); then
@@ -180,16 +233,16 @@ wizard() {
   [[ -n ${PRINTERS:-} ]] && prn="found: $PRINTERS"
   [[ $DISTRO == arch ]] && aur=on
   checklist TUX_BUNDLES "Optional extras" \
-    "firewall|Firewall (nftables)|on|block incoming connections; SSH open to the LAN only" \
-    "flatpak|Flatpak + Flathub|on|sandboxed apps, themed like the rest" \
-    "wallpapers|debi3n wallpapers|on|~320 MB pack from plaintextlab/debi3n" \
-    "bluetooth|Bluetooth|$bt|bluez + bluetui" \
-    "music|Music (mpd+ncmpcpp)|off|TUI music player" \
-    "printing|Printing|on|$prn" \
-    "dev|Developer tools|off|docker, lazydocker, node, go, rust, python" \
-    "office|Office & PDF|on|LibreOffice + zathura" \
-    "gaming|Gaming|off|Steam, gamemode, MangoHud (+ 32-bit drivers)" \
-    "aur|AUR helper (paru)|$aur|Arch only"
+    "firewall|Firewall (nftables)|$(extra_default firewall on)|block incoming connections; SSH open to the LAN only" \
+    "flatpak|Flatpak + Flathub|$(extra_default flatpak on)|sandboxed apps, themed like the rest" \
+    "wallpapers|debi3n wallpapers|$(extra_default wallpapers on)|~320 MB pack from plaintextlab/debi3n" \
+    "bluetooth|Bluetooth|$(extra_default bluetooth $bt)|bluez + bluetui" \
+    "music|Music|$(extra_default music on)|rmpc + mpd: album art, cava visualizer; folder via tux-music" \
+    "printing|Printing|$(extra_default printing on)|$prn" \
+    "dev|Developer tools|$(extra_default dev off)|docker, lazydocker, node, go, rust, python" \
+    "office|Office & PDF|$(extra_default office on)|LibreOffice + zathura" \
+    "gaming|Gaming|$(extra_default gaming off)|Steam, gamemode, MangoHud (+ 32-bit drivers)" \
+    "aur|AUR helper (paru)|$(extra_default aur $aur)|Arch only"
   # A reused answers file already lists the browser; don't add it twice.
   [[ -n ${TUX_BUNDLES_BROWSER:-} ]] && ! has_word "${TUX_BUNDLES:-}" "$TUX_BUNDLES_BROWSER" && TUX_BUNDLES+=" $TUX_BUNDLES_BROWSER"
 
@@ -200,7 +253,7 @@ wizard() {
   TUX_EXTRA=${TUX_EXTRA:-} TUX_EXCLUDE=${TUX_EXCLUDE:-}
 
   printf '\n%sSummary%s\n' "$C_BOLD" "$C_RESET"
-  printf '  %-12s %s\n' Mode "$TUX_MODE" Distro "$DISTRO" User "$TUX_USER" Session "$TUX_SESSION" \
+  printf '  %-12s %s\n' Mode "$TUX_MODE${TUX_UPDATE:+ (update, saved choices)}" Distro "$DISTRO" User "$TUX_USER" Session "$TUX_SESSION" \
     NVIDIA "$TUX_NVIDIA" Theme "$TUX_THEME" Font "$(font_field "$TUX_FONT" 2) $TUX_FONT_SIZE" \
     Browser "$TUX_BROWSER" Extras "${TUX_BUNDLES:-none}"
   [[ $TUX_MODE == install ]] && printf '  %-12s %s\n' Disk "$TUX_DISK (ERASED, btrfs + snapshots)" Host "$TUX_HOSTNAME" \

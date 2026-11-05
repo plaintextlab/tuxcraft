@@ -104,7 +104,7 @@ check "console palette written" test -f /etc/tuxcraft/vtrgb
 section "Desktop ($SESSION)"
 if [[ $SESSION == sway ]]; then apps=(sway waybar fuzzel swaylock swayidle swaybg grim slurp wl-copy cliphist)
 else apps=(i3 polybar rofi picom feh i3lock xss-lock maim xclip startx xsettingsd); fi
-apps+=(alacritty dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
+apps+=(kitty tux-term dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
 for a in "${apps[@]}"; do command -v "$a" >/dev/null || bad "missing: $a"; done
 ok "session programs checked"
 check "polkit agent found" bash -c 'grep -o "/usr/[^ ]*polkit[^ ]*agent-1" /usr/local/bin/tux-polkit | while read -r p; do [ -x "$p" ] && exit 0; done; exit 1'
@@ -129,7 +129,7 @@ command -v wiremix >/dev/null || command -v pulsemixer >/dev/null || bad "no TUI
 section "Theme & fonts"
 tdir="$HOME/.config"
 left=$(grep -rl '{{' "$tdir/i3" "$tdir/sway" "$tdir/polybar" "$tdir/waybar" "$tdir/rofi" "$tdir/fuzzel" "$tdir/dunst" \
-       "$tdir/alacritty" "$tdir/gtk-3.0" "$tdir/gtk-4.0" "$tdir/qt5ct" "$tdir/qt6ct" "$tdir/starship.toml" 2>/dev/null)
+       "$tdir/kitty" "$tdir/alacritty" "$tdir/gtk-3.0" "$tdir/gtk-4.0" "$tdir/qt5ct" "$tdir/qt6ct" "$tdir/starship.toml" 2>/dev/null)
 [[ -z $left ]] && ok "all templates rendered" || bad "unrendered placeholders in: $left"
 check "GTK3 theme adw-gtk3 installed" bash -c 'ls -d /usr/share/themes/adw-gtk3* ~/.local/share/themes/adw-gtk3* 2>/dev/null | grep -q .'
 check "Papirus icons installed" test -d /usr/share/icons/Papirus-Dark
@@ -137,7 +137,7 @@ check "Qt palette (qt6ct)" test -f "$tdir/qt6ct/colors/tuxcraft.conf"
 check "QT_QPA_PLATFORMTHEME set by tux-session" grep -q 'QT_QPA_PLATFORMTHEME=qt5ct' /usr/local/bin/tux-session
 check "font '${FONT:-?}' known to fontconfig" bash -c "fc-list : family | grep -qF \"${FONT:-JetBrainsMono Nerd Font}\""
 check "Symbols Nerd Font installed" bash -c 'fc-list : family | grep -q "Symbols Nerd Font"'
-check "theme switch round-trip" bash -c 'cur=$(tux-theme current); TUX_NO_RELOAD=1 tux-theme set nord && grep -q 2e3440 ~/.config/alacritty/theme.toml && TUX_NO_RELOAD=1 tux-theme set "$cur"'
+check "theme switch round-trip" bash -c 'cur=$(tux-theme current); TUX_NO_RELOAD=1 tux-theme set nord && grep -q 2e3440 ~/.config/kitty/theme.conf && TUX_NO_RELOAD=1 tux-theme set "$cur"'
 
 section "Updates"
 check "sysup present" test -x /usr/local/bin/sysup

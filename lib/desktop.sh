@@ -75,6 +75,8 @@ desktop_services() {
     has_word "$TUX_BUNDLES" printing && svc_enable cups avahi-daemon
     has_word "$TUX_BUNDLES" dev && svc_enable docker
     [[ ${IS_LAPTOP:-0} == 1 ]] && svc_enable power-profiles-daemon
+    # mpd runs per user (tux-music start at login); a system mpd would hold port 6600.
+    systemctl disable --now mpd.service mpd.socket >>"$TUX_LOG" 2>&1 || true
   else
     pkg_installed bluez && svc_enable bluetoothd
     has_word "$TUX_BUNDLES" printing && svc_enable cupsd avahi-daemon && { [[ -d /etc/sv/ipp-usb ]] && svc_enable ipp-usb; true; }
@@ -191,7 +193,13 @@ deploy_dotfiles() {
   fam=$(font_field "$TUX_FONT" 2)
   term_fam=$fam
   [[ $TUX_FONT == noto ]] && term_fam=$(font_field jetbrains 2)
-  cat >"$TUX_HOME/.config/tuxcraft/state" <<EOF
+  local st="$TUX_HOME/.config/tuxcraft/state" keep=''
+  if [[ ${TUX_UPDATE:-} == 1 && -s $st ]]; then
+    info "Keeping your theme, font and wallpaper (~/.config/tuxcraft/state)"
+  else
+  # Re-running the wizard: keep what was picked since (wallpaper, terminal).
+  [[ -s $st ]] && keep=$(grep -E '^(WALLPAPER|TERMINAL)=' "$st" || true)
+  cat >"$st" <<EOF
 THEME=$TUX_THEME
 FONT="$fam"
 TERM_FONT="$term_fam"
@@ -200,13 +208,17 @@ TERM_FONT_SIZE=${TUX_TERM_FONT_SIZE:-12}
 BROWSER=${TUX_BROWSER:-firefox}
 WALLPAPER=theme
 EOF
+  if [[ -n $keep ]]; then { grep -vE '^(WALLPAPER|TERMINAL)=' "$st"; echo "$keep"; } >"$st.new" && mv "$st.new" "$st"; fi
+  fi
   chown -R "$TUX_USER:" "$TUX_HOME/.config" "$TUX_HOME/.local" "$TUX_HOME"/.[!.]* 2>/dev/null || true
 }
 
 wallpapers_stage() {
   local dir="$TUX_HOME/Pictures/Wallpapers"
   mkdir -p "$dir"
-  if has_word "$TUX_BUNDLES" wallpapers; then
+  if has_word "$TUX_BUNDLES" wallpapers && [[ ${TUX_UPDATE:-} == 1 ]] && compgen -G "$dir/*" >/dev/null; then
+    info "Wallpapers already there; not downloading them again"
+  elif has_word "$TUX_BUNDLES" wallpapers; then
     info "Fetching the debi3n wallpaper pack (~320 MB)"
     local t; t=$(mktemp -d)
     if run git clone --depth 1 --filter=blob:none --sparse https://github.com/plaintextlab/debi3n "$t/d" &&

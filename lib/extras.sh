@@ -15,6 +15,19 @@ ensure_yazi() {
   rm -rf "$t"
 }
 
+ensure_rmpc() {
+  has_word "$TUX_BUNDLES" music || return 0
+  command -v rmpc >/dev/null && return 0; _is_x86_64 || return 0
+  local t tag; t=$(_tmpdir); tag=$(gh_latest_tag mierak/rmpc)
+  if fetch "https://github.com/mierak/rmpc/releases/download/$tag/rmpc-$tag-x86_64-unknown-linux-musl.tar.gz" "$t/r.tgz" &&
+     tar -xzf "$t/r.tgz" -C "$t"; then
+    install -m755 "$t/rmpc" /usr/local/bin/ && ok "rmpc installed from upstream release"
+    [[ -f $t/man/rmpc.1 ]] && install -Dm644 "$t/man/rmpc.1" /usr/local/share/man/man1/rmpc.1
+    [[ -f $t/completions/rmpc.bash ]] && install -Dm644 "$t/completions/rmpc.bash" /usr/share/bash-completion/completions/rmpc
+  else warn "Could not install rmpc"; fi
+  rm -rf "$t"
+}
+
 ensure_starship() {
   command -v starship >/dev/null && return 0; _is_x86_64 || return 0
   local t; t=$(_tmpdir)
@@ -128,6 +141,7 @@ extras_stage() {
   ensure_debian_shims
   ensure_yazi
   ensure_starship
+  ensure_rmpc
   ensure_lazygit
   [[ ${HAS_BT:-0} == 1 ]] || has_word "$TUX_BUNDLES" bluetooth && ensure_bluetui
   ensure_adw_gtk3

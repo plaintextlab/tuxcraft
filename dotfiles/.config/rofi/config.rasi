@@ -2,7 +2,7 @@
 configuration {
     modi: "drun,run,window";
     show-icons: true;
-    terminal: "alacritty";
+    terminal: "tux-term";
     drun-display-format: "{name}";
     disable-history: false;
     sidebar-mode: true;

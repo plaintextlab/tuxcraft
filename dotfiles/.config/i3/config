@@ -5,7 +5,7 @@
 
 set $mod Mod4
 set $alt Mod1
-set $term alacritty
+set $term tux-term
 set $menu rofi -show drun -show-icons
 set $windows rofi -show window -show-icons
 set $lock tux-lock

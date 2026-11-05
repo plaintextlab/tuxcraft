@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# tux-term [--class NAME] [--working-directory DIR] [-e CMD ARGS...]  — the terminal, whichever it is.
+# Takes Alacritty-style arguments and starts the configured terminal:
+#   kitty (default: shows real images — album art in rmpc, previews in yazi, `img photo.jpg`)
+#   alacritty, foot
+# Choose with TERMINAL=alacritty in ~/.config/tuxcraft/state (then log out and in, or just use it).
+state="$HOME/.config/tuxcraft/state"
+want=$(sed -n 's/^TERMINAL=//p' "$state" 2>/dev/null | tr -d "\"'")
+class='' dir='' cmd=()
+while (($#)); do
+  case $1 in
+    --class|--app-id) class=$2; shift ;;
+    --working-directory|--directory|--cd) dir=$2; shift ;;
+    -e) shift; cmd=("$@"); break ;;
+    *) cmd=("$@"); break ;;
+  esac; shift
+done
+
+for t in ${want:-kitty} kitty alacritty foot xterm; do command -v "$t" >/dev/null && break; done
+case $t in
+  kitty)     exec kitty ${class:+--class "$class"} ${dir:+--directory "$dir"} "${cmd[@]}" ;;
+  alacritty) exec alacritty ${class:+--class "$class"} ${dir:+--working-directory "$dir"} ${cmd[0]:+-e "${cmd[@]}"} ;;
+  foot)      exec foot ${class:+--app-id "$class"} ${dir:+--working-directory "$dir"} "${cmd[@]}" ;;
+  *)         [[ -n $dir ]] && { cd "$dir" || exit; }; exec xterm ${class:+-class "$class"} ${cmd[0]:+-e "${cmd[@]}"} ;;
+esac
