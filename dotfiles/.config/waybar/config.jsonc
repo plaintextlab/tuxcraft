@@ -18,7 +18,7 @@
     "on-click": "tux-term --class tux-float -e tux-mixer",
     "on-click-right": "tux-osd volume mute"
   },
-  "custom/net": { "exec": "tux-netinfo --plain", "interval": 5, "on-click": "tux-term --class tux-float -e nmtui" },
+  "custom/net": { "exec": "tux-netinfo --plain", "interval": 5, "on-click": "tux-term --class tux-float -e tux-net", "on-click-right": "tux-term --class tux-float -e tux-net nmtui" },
   "cpu": { "format": " {usage}%", "interval": 2 },
   "memory": { "format": " {percentage}%", "interval": 3 },
   "battery": {

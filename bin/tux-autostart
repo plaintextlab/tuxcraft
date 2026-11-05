@@ -46,6 +46,7 @@ idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))
 case $session in
   i3)
     once xsettingsd
+    command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr   # desktop cursor = themed one
     command -v picom >/dev/null && once picom
     command -v autorandr >/dev/null && autorandr --change --default default >/dev/null 2>&1
     command -v numlockx >/dev/null && numlockx on

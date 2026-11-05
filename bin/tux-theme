@@ -35,6 +35,13 @@ state_set() {  # state_set KEY VALUE
 render() {
   local tf; tf=$(theme_file "$THEME") || { echo "Unknown theme: $THEME" >&2; exit 1; }
   local sedf; sedf=$(mktemp)
+  # Mouse cursor in the scheme's colours (downloaded once per colour; Adwaita when offline).
+  local cursor_theme
+  cursor_theme=$(TUX_SHARE=$SHARE "$(dirname "$(readlink -f "$0")")/tux-cursor" ensure "$THEME" 2>/dev/null || echo Adwaita)
+  CURSOR_THEME=$cursor_theme
+  # Apps that read no settings (X root window, plain Xlib/Qt) use the "default" cursor theme.
+  mkdir -p "$HOME/.icons/default"
+  printf '[Icon Theme]\nName=Default\nInherits=%s\n' "$cursor_theme" >"$HOME/.icons/default/index.theme"
   (
     # shellcheck source=/dev/null
     . "$tf"
@@ -52,7 +59,7 @@ render() {
       printf 's|{{%s}}|%s|g\n' "$k" "$(esc "${!k}")"
       printf 's|{{%s_raw}}|%s|g\n' "$k" "$(esc "${!k#\#}")"
     done
-    for k in theme theme_name variant home font term_font font_size term_font_size gtk_theme icon_theme prefer_dark color_scheme papirus; do
+    for k in theme theme_name variant home font term_font font_size term_font_size gtk_theme icon_theme prefer_dark color_scheme papirus cursor_theme; do
       printf 's|{{%s}}|%s|g\n' "$k" "$(esc "${!k}")"
     done
   ) >"$sedf"
@@ -84,10 +91,11 @@ reload_all() {
     fi
     gsettings set $gi font-name "$FONT $FONT_SIZE"
     gsettings set $gi monospace-font-name "$TERM_FONT $TERM_FONT_SIZE"
-    gsettings set $gi cursor-theme Adwaita
+    gsettings set $gi cursor-theme "${CURSOR_THEME:-Adwaita}"
   fi 2>/dev/null || true
   pkill -HUP -x xsettingsd 2>/dev/null || true
   [[ -n ${DISPLAY:-} ]] && command -v xrdb >/dev/null && xrdb -merge "$HOME/.Xresources" 2>/dev/null
+  [[ -n ${DISPLAY:-} && -z ${WAYLAND_DISPLAY:-} ]] && command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr 2>/dev/null
   if [[ -n ${SWAYSOCK:-} ]]; then
     swaymsg reload >/dev/null 2>&1 || true
     pkill -SIGUSR2 -x waybar 2>/dev/null || true

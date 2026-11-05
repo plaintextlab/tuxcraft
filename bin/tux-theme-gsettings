@@ -12,4 +12,4 @@ gsettings set $gi icon-theme "$icons"
 [[ $gtk == *dark* ]] && gsettings set $gi color-scheme prefer-dark || gsettings set $gi color-scheme prefer-light
 gsettings set $gi font-name "${FONT:-Noto Sans} ${FONT_SIZE:-11}"
 gsettings set $gi monospace-font-name "${TERM_FONT:-monospace} ${TERM_FONT_SIZE:-12}"
-gsettings set $gi cursor-theme Adwaita
+cur=$(sed -n 's/^gtk-cursor-theme-name=//p' "$ini"); gsettings set $gi cursor-theme "${cur:-Adwaita}"

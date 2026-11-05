@@ -1,0 +1,10 @@
+# ble.sh settings (tuxcraft). Hints: grey text after the cursor, from history and completion.
+# Accept: → or End (whole hint), Alt+F (one word). Tab: completion menu. Ctrl+R: fzf history.
+# Turn ble.sh off: touch ~/.config/tuxcraft/no-blesh
+bleopt exec_errexit_mark=        # starship already shows a failed exit code
+bleopt exec_elapsed_mark=        # ... and how long a slow command took
+bleopt edit_bell=                # no beep, no flash
+bleopt complete_menu_style=align-nowrap
+# Up/Down: search history for lines starting with what is typed (like .inputrc).
+ble-bind -f up   'history-search-backward hide-status:immediate-accept:empty=history-move:point=end'
+ble-bind -f down 'history-search-forward hide-status:immediate-accept:empty=history-move:point=end'

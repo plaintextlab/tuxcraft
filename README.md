@@ -88,9 +88,20 @@ themed too). LightDM is used only if tuigreet is not packaged.
 protocol, X11 and Wayland): album art in rmpc, image previews in yazi, and `img photo.jpg` for any
 picture (chafa; block art over ssh/tmux). Everything opens the terminal through `tux-term`; for
 Alacritty instead, put `TERMINAL=alacritty` in `~/.config/tuxcraft/state` (no images there).
+kitty runs as one process for all windows, so a new terminal opens instantly, and its cursor
+leaves a short trail when it jumps.
+
+**Shell:** bash with **ble.sh**: grey command hints from history as you type (→ or End accepts,
+Alt+F takes one word), syntax colours and a completion menu (off: `touch ~/.config/tuxcraft/no-blesh`).
+History keeps 200,000 commands with no duplicates and none of the noise (`clear`, `ls`, `cd`, ...),
+is saved after every command, and is searched with **Ctrl+R** (fzf) or by typing the start of a
+command and pressing **Up/Down**.
+
+**Mouse cursor:** coloured like the scheme (Catppuccin cursors in the shade closest to the accent,
+picked and downloaded by `tux-theme`); `CURSOR=Adwaita` in the state file keeps the plain one.
 
 **Files:** Thunar (right-click → Open Terminal Here), yazi in the terminal.
-**TUI apps:** yazi (files), btop, lazygit, nmtui, bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
+**TUI apps:** yazi (files), btop, lazygit, wifitui (Wi-Fi; nmtui for wired/VPN), bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
 fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, rmpc, cava.
 
 ## One theme, everywhere

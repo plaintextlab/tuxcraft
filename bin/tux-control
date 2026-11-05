@@ -26,7 +26,7 @@ case $c in
   *sysup*) $T sysup --pause ;;
   *Snapshots) $T tux-snap ;;
   *external*) $T bash -c 'tux-backup; read -n1 -rp "Press any key"' ;;
-  *Network) $t nmtui ;;
+  *Network) $t tux-net ;;
   *Bluetooth) $t bluetui ;;
   *mixer) $t tux-mixer ;;
   *output) tux-audio output ;;

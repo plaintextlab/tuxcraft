@@ -18,7 +18,9 @@ done
 
 for t in ${want:-kitty} kitty alacritty foot xterm; do command -v "$t" >/dev/null && break; done
 case $t in
-  kitty)     exec kitty ${class:+--class "$class"} ${dir:+--directory "$dir"} "${cmd[@]}" ;;
+  # One kitty process for all windows (--single-instance): a new window opens in a few ms
+  # instead of starting kitty from scratch each time.
+  kitty)     exec kitty --single-instance --instance-group tuxcraft ${class:+--class "$class"} ${dir:+--directory "$dir"} "${cmd[@]}" ;;
   alacritty) exec alacritty ${class:+--class "$class"} ${dir:+--working-directory "$dir"} ${cmd[0]:+-e "${cmd[@]}"} ;;
   foot)      exec foot ${class:+--app-id "$class"} ${dir:+--working-directory "$dir"} "${cmd[@]}" ;;
   *)         [[ -n $dir ]] && { cd "$dir" || exit; }; exec xterm ${class:+-class "$class"} ${cmd[0]:+-e "${cmd[@]}"} ;;

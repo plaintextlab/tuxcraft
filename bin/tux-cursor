@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# tux-cursor [name|ensure|list] [theme]  — mouse cursors coloured like the colour scheme.
+#   name     print the cursor theme for the current (or given) colour scheme
+#   ensure   the same, downloading it first if needed (falls back to Adwaita offline)
+#   list     show the cursor picked for every colour scheme
+# Cursors: Catppuccin cursors (Volantes-based, scalable): Mocha set for dark schemes, Latte set
+# for light ones, in the colour closest to the scheme's accent. tux-theme calls this.
+# Override in ~/.config/tuxcraft/state: CURSOR=Adwaita, CURSOR=catppuccin-mocha-blue-cursors,
+# or any installed cursor theme (CURSOR=auto to go back).
+set -uo pipefail
+SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+CONF="$HOME/.config/tuxcraft"; STATE="$CONF/state"
+VERSION=v2.0.0
+ICONS="$HOME/.local/share/icons"
+THEME=gruvbox CURSOR=auto
+# shellcheck source=/dev/null
+[[ -f $STATE ]] && . "$STATE"
+mode=${1:-name}; [[ -n ${2:-} ]] && THEME=$2
+
+theme_file() {
+  local f
+  for f in "$CONF/themes/$1.theme" "$SHARE/themes/$1.theme"; do [[ -f $f ]] && { echo "$f"; return 0; }; done
+  return 1
+}
+
+pick() {  # pick theme-name -> cursor theme name
+  [[ $CURSOR != auto && -n $CURSOR && $mode != list ]] && { echo "$CURSOR"; return; }
+  local tf accent variant
+  tf=$(theme_file "$1") || { echo Adwaita; return; }
+  # shellcheck source=/dev/null
+  read -r accent variant < <(. "$tf"; echo "$accent ${variant:-dark}")
+  awk -v hex="$accent" -v light="$([[ $variant == light ]] && echo 1 || echo 0)" '
+    function hx(s) { s = tolower(s); return (index("0123456789abcdef", substr(s, 1, 1)) - 1) * 16 + index("0123456789abcdef", substr(s, 2, 1)) - 1 }
+    function hsv(h,   r, g, b, mx, mn, d) {
+      r = hx(substr(h, 2, 2)) / 255; g = hx(substr(h, 4, 2)) / 255; b = hx(substr(h, 6, 2)) / 255
+      mx = r; if (g > mx) mx = g; if (b > mx) mx = b
+      mn = r; if (g < mn) mn = g; if (b < mn) mn = b
+      d = mx - mn; V = mx; S = (mx ? d / mx : 0)
+      if (!d) H = 0
+      else if (mx == r) H = 60 * (((g - b) / d) % 6)
+      else if (mx == g) H = 60 * ((b - r) / d + 2)
+      else H = 60 * ((r - g) / d + 4)
+      if (H < 0) H += 360
+    }
+    BEGIN {
+      fl = light ? "latte" : "mocha"
+      if (light) n = split("rosewater #dc8a78 flamingo #dd7878 pink #ea76cb mauve #8839ef red #d20f39 maroon #e64553 peach #fe640b yellow #df8e1d green #40a02b teal #179299 sky #04a5e5 sapphire #209fb5 blue #1e66f5 lavender #7287fd", c, " ")
+      else       n = split("rosewater #f5e0dc flamingo #f2cdcd pink #f5c2e7 mauve #cba6f7 red #f38ba8 maroon #eba0ac peach #fab387 yellow #f9e2af green #a6e3a1 teal #94e2d5 sky #89dceb sapphire #74c7ec blue #89b4fa lavender #b4befe", c, " ")
+      hsv(hex); h0 = H; s0 = S; v0 = V
+      # Greys (monochrome schemes): a plain cursor that stands out from the background.
+      if (s0 < 0.15) { print "catppuccin-" fl "-" (light ? "dark" : "light") "-cursors"; exit }
+      best = ""; bd = 1e9
+      for (i = 1; i < n; i += 2) {
+        hsv(c[i + 1]); dh = H - h0; if (dh < 0) dh = -dh; if (dh > 180) dh = 360 - dh
+        d = dh + 40 * (S > s0 ? S - s0 : s0 - S) + 40 * (V > v0 ? V - v0 : v0 - V)
+        if (d < bd) { bd = d; best = c[i] }
+      }
+      print "catppuccin-" fl "-" best "-cursors"
+    }'
+}
+
+installed() { [[ -f $ICONS/$1/index.theme || -f /usr/share/icons/$1/index.theme || -f $HOME/.icons/$1/index.theme ]]; }
+
+ensure() {
+  local name t; name=$(pick "$THEME")
+  installed "$name" && { echo "$name"; return; }
+  if [[ $name == catppuccin-*-cursors ]] && command -v unzip >/dev/null; then
+    t=$(mktemp -d)
+    if curl -fsSL --max-time 60 -o "$t/c.zip" "https://github.com/catppuccin/cursors/releases/download/$VERSION/$name.zip" &&
+       mkdir -p "$ICONS" && unzip -qo "$t/c.zip" -d "$ICONS" && installed "$name"; then
+      rm -rf "$t"; echo "$name"; return
+    fi
+    rm -rf "$t"
+  fi
+  echo "tux-cursor: could not get $name; using Adwaita" >&2
+  echo Adwaita
+}
+
+case $mode in
+  name)   pick "$THEME" ;;
+  ensure) ensure ;;
+  list)   for f in "$SHARE"/themes/*.theme "$CONF"/themes/*.theme; do
+            [[ -f $f ]] || continue; t=$(basename "$f" .theme); printf '%-18s %s\n' "$t" "$(pick "$t")"
+          done ;;
+  *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

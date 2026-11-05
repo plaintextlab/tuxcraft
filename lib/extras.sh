@@ -28,6 +28,31 @@ ensure_rmpc() {
   rm -rf "$t"
 }
 
+# ble.sh (bash autosuggestions + syntax colours): no distro packages it. The release tarball is
+# the built program; it is only copied into place (no install script runs).
+ensure_blesh() {
+  [[ -r /usr/local/share/blesh/ble.sh ]] && return 0
+  local t; t=$(_tmpdir)
+  if fetch https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz "$t/b.txz" &&
+     tar -xJf "$t/b.txz" -C "$t" && [[ -r $t/ble-nightly/ble.sh ]]; then
+    rm -rf /usr/local/share/blesh && mkdir -p /usr/local/share && cp -a "$t/ble-nightly" /usr/local/share/blesh &&
+      ok "ble.sh installed from upstream release"
+  else warn "Could not install ble.sh (bash still works, without command hints)"; fi
+  rm -rf "$t"
+}
+
+# wifitui: Wi-Fi TUI for NetworkManager (nicer than nmtui). Not packaged by any distro yet.
+ensure_wifitui() {
+  command -v wifitui >/dev/null && return 0
+  local arch; case $(uname -m) in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) return 0 ;; esac
+  local t tag; t=$(_tmpdir); tag=$(gh_latest_tag shazow/wifitui)
+  if fetch "https://github.com/shazow/wifitui/releases/download/$tag/wifitui-${tag#v}-linux-$arch.tar.gz" "$t/w.tgz" &&
+     tar -xzf "$t/w.tgz" -C "$t" wifitui; then
+    install -m755 "$t/wifitui" /usr/local/bin/ && ok "wifitui installed from upstream release"
+  else warn "Could not install wifitui; the network menu uses nmtui"; fi
+  rm -rf "$t"
+}
+
 ensure_starship() {
   command -v starship >/dev/null && return 0; _is_x86_64 || return 0
   local t; t=$(_tmpdir)
@@ -142,6 +167,8 @@ extras_stage() {
   ensure_yazi
   ensure_starship
   ensure_rmpc
+  ensure_blesh
+  ensure_wifitui
   ensure_lazygit
   [[ ${HAS_BT:-0} == 1 ]] || has_word "$TUX_BUNDLES" bluetooth && ensure_bluetui
   ensure_adw_gtk3

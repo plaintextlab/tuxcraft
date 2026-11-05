@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# tux-net [nmtui]  — the network TUI: wifitui (Wi-Fi via NetworkManager, themed) when this machine
+# has Wi-Fi, otherwise nmtui. `tux-net nmtui` for the full editor (wired, VPN, static IPs).
+if [[ ${1:-} != nmtui ]] && command -v wifitui >/dev/null && compgen -G '/sys/class/net/*/wireless' >/dev/null; then
+  theme="$HOME/.config/wifitui/theme.toml"
+  [[ -f $theme ]] && exec wifitui --theme "$theme"
+  exec wifitui
+fi
+exec nmtui
