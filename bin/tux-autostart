@@ -18,8 +18,10 @@ if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/nu
 else
   # shellcheck disable=SC2086
   dbus-update-activation-environment $vars
-  # No systemd user units (Void): start the audio stack ourselves.
-  once pipewire
+  # No systemd user units (Void): start the audio stack ourselves. Nothing stops it at logout,
+  # so a quick re-login used to find the last session's pipewire (bound to a dead D-Bus bus)
+  # and keep it. tux-pipewire replaces it with a fresh, supervised one.
+  tux-pipewire start
 fi
 
 once tux-polkit

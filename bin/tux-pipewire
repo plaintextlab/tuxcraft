@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# tux-pipewire [start|restart|status] — the audio stack on systems without systemd user units (Void).
+#   start    kill whatever pipewire is left (e.g. from the last session) and supervise a fresh one,
+#            respawning it for as long as this session's D-Bus bus answers. Called by tux-autostart.
+#   restart  save a diagnostic snapshot, then restart pipewire + wireplumber + pipewire-pulse cleanly.
+#   status   print that snapshot.
+# pipewire itself launches wireplumber and pipewire-pulse (pipewire.conf.d/10-wireplumber.conf,
+# 20-pipewire-pulse.conf), so those are never started here — only cleaned up.
+log="$HOME/.local/state/tuxcraft/pipewire.log"; mkdir -p "${log%/*}"
+
+stop_stack() {
+  pkill -u "$UID" -x wireplumber; pkill -u "$UID" -x pipewire   # pipewire-pulse is "pipewire -c ..."
+  for _ in {1..30}; do pgrep -u "$UID" -x 'pipewire|wireplumber' >/dev/null || return 0; sleep 0.1; done
+  pkill -KILL -u "$UID" -x 'pipewire|wireplumber'; sleep 0.2
+}
+
+bus_alive() { dbus-send --session --dest=org.freedesktop.DBus --print-reply / org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1; }
+
+supervise() {
+  exec >>"$log" 2>&1
+  while bus_alive; do
+    echo "--- $(date) starting pipewire"
+    pipewire; echo "--- $(date) pipewire exited ($?)"
+    pkill -u "$UID" -x wireplumber; pkill -u "$UID" -f '^/usr/bin/pipewire -c pipewire-pulse'
+    sleep 2
+  done
+  echo "--- $(date) session bus gone, supervisor exiting"
+}
+
+status() {
+  echo "### $(date)"
+  echo "## processes"; pgrep -a -u "$UID" 'pipewire|wireplumber|tux-pipewire' || echo "(none)"
+  echo "## stuck in kernel (D state) or holding /dev/snd"
+  ps -eo pid,stat,wchan:30,cmd | awk '$2 ~ /D/'
+  command -v fuser >/dev/null && fuser -v /dev/snd/* 2>&1 | grep -v '^ *USER'
+  echo "## pactl"; timeout 3 pactl info 2>&1 | grep -E 'Server Name|Default S|Connection' || echo "pactl timed out / failed"
+  echo "## sinks"; timeout 3 pactl list short sinks 2>&1
+  echo "## sound cards"; cat /proc/asound/cards
+}
+
+case ${1:-start} in
+  start)
+    stop_stack
+    supervise </dev/null &
+    disown ;;
+  restart)
+    status >>"$log" 2>&1
+    if pgrep -u "$UID" -f 'tux-pipewire start' >/dev/null; then stop_stack   # the supervisor respawns it
+    else stop_stack; setsid -f "$0" start; fi
+    sleep 2
+    if timeout 3 pactl info >/dev/null 2>&1; then notify-send -a audio "Audio" "Sound system restarted"
+    else notify-send -u critical -a audio "Audio" "Sound system did not come back — see $log"; fi ;;
+  status) status ;;
+  *) echo "usage: tux-pipewire [start|restart|status]" >&2; exit 2 ;;
+esac

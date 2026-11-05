@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# tux-audio output|input — pick the default sound device and move running streams to it
-# (from debi3n rofi-audio-output-switch.sh / rofi-audio-input-switch.sh, merged).
+# tux-audio output|input|restart — pick the default sound device and move running streams to it
+# (from debi3n rofi-audio-output-switch.sh / rofi-audio-input-switch.sh, merged), or restart
+# the sound system when volume / device changes stop working.
 kind=${1:-output}
+if [[ $kind == restart ]]; then
+  if command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+    systemctl --user restart wireplumber pipewire pipewire-pulse && notify-send -a audio "Audio" "Sound system restarted"
+  else exec tux-pipewire restart; fi
+  exit
+fi
 if [[ $kind == input ]]; then list=sources; get='get-default-source'; set='set-default-source'; streams='source-outputs'; move='move-source-output'
 else list=sinks; get='get-default-sink'; set='set-default-sink'; streams='sink-inputs'; move='move-sink-input'; fi
 cur=$(pactl "$get")
