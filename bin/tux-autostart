@@ -47,7 +47,11 @@ case $session in
   i3)
     once xsettingsd
     command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr   # desktop cursor = themed one
-    command -v picom >/dev/null && once picom
+    # NVIDIA queues frames ahead by default, so compositor animations trail a little; one
+    # frame in flight keeps them smooth and in step with the screen.
+    if command -v picom >/dev/null; then
+      if [[ -d /proc/driver/nvidia ]]; then __GL_MaxFramesAllowed=1 once picom; else once picom; fi
+    fi
     command -v autorandr >/dev/null && autorandr --change --default default >/dev/null 2>&1
     command -v numlockx >/dev/null && numlockx on
     if (( idle > 0 )); then

@@ -36,7 +36,7 @@ case $c in
   *mirror*) $t bash -c 'sudo tux-mirror && sudo xbps-install -S; read -rsn1 -p "Done. Press a key."' ;;
   *profile) tux-powerprofile ;;
   *Night*) tux-nightlight toggle ;;
-  *Compositor*) pgrep -x picom >/dev/null && pkill -x picom || setsid -f picom ;;
+  *Compositor*) if pgrep -x picom >/dev/null; then pkill -x picom; else __GL_MaxFramesAllowed=1 setsid -f picom; fi ;;
   *Displays) if [[ -n ${WAYLAND_DISPLAY:-} ]]; then $t bash -c 'swaymsg -t get_outputs; echo; echo "Edit ~/.config/kanshi/config to persist."; read -n1'; else arandr; fi ;;
   *Keybindings) tux-keys ;;
   *info) $t bash -c 'fastfetch; read -n1 -rp ""' ;;

@@ -70,7 +70,7 @@ with the DOS font. Change any time with **Super+Ctrl+F** or `tux-font set dos 13
 | Window manager | i3 | sway |
 | Bar | polybar | waybar |
 | Launcher / menus | rofi | fuzzel |
-| Compositor | picom (v12 rules, animations) | built in |
+| Compositor | picom: Hyprland-style animations (springy open, gliding tiles, workspace crossfade) at the monitor's refresh rate | built in |
 | Lock / idle | i3lock + xss-lock | swaylock + swayidle |
 | Wallpaper | feh | swaybg |
 | Clipboard history | CopyQ | cliphist |
