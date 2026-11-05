@@ -18,7 +18,10 @@ pkg_refresh() {
   case $DISTRO in
     arch)   run pacman -Sy --noconfirm ;;
     debian) run apt-get update ;;
-    void)   run xbps-install -Sy xbps; run xbps-install -Sy ;;
+    void)
+      # Fastest mirror (picked once, then re-applied so repos added since by void-repo-* use it too).
+      run bash "$TUX_SRC/bin/tux-mirror" --if-unset || warn "Could not set a Void mirror; using the default"
+      run xbps-install -Sy xbps; run xbps-install -Sy ;;
   esac
 }
 

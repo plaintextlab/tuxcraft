@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# tux-mirror [-r root] [--list | --best | --apply | --if-unset | URL]  — Void Linux package mirror.
+#   (no args)   time the mirrors from the official list, pick the fastest up-to-date one and
+#               point every repository (main, nonfree, multilib, ...) at it
+#   URL         use that mirror (e.g. https://repo-fi.voidlinux.org)
+#   --list      show the timings, change nothing
+#   --best      print the fastest mirror, change nothing
+#   --apply     re-apply the saved mirror (after a void-repo-* package added a repository)
+#   --if-unset  --apply if a mirror was saved, otherwise pick one
+#   -r root     act on another root (the installer's target), like xbps -r
+# The mirror is remembered in /etc/tuxcraft/mirror. Replaces xmirror; same mirror list.
+set -uo pipefail
+root='' mode=auto url=''
+while (($#)); do
+  case $1 in
+    -r) root=${2%/}; shift ;;
+    --list|--best|--apply|--if-unset) mode=${1#--} ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    http://*|https://*) mode=set url=${1%/} ;;
+    *) echo "tux-mirror: unknown argument $1" >&2; exit 2 ;;
+  esac; shift
+done
+saved="$root/etc/tuxcraft/mirror"
+LIST_URL=https://xmirror.voidlinux.org/raw/mirrors.lst
+DEFAULT=https://repo-default.voidlinux.org
+here=$(dirname "$(readlink -f "$0")")
+
+arch=$(XBPS_TARGET_ARCH='' xbps-uhelper arch 2>/dev/null || uname -m)
+if [[ $arch == *-musl ]]; then repodata="current/musl/$arch-repodata"; else repodata="current/$arch-repodata"; fi
+
+mirror_list() {
+  local f
+  curl -fsSL --max-time 8 "$LIST_URL" 2>/dev/null && return
+  for f in /usr/share/tuxcraft/data/void-mirrors.lst "$here/../data/void-mirrors.lst" /usr/share/xmirror/mirrors.lst; do
+    [[ -r $f ]] && { cat "$f"; return; }
+  done
+  printf 'World\t%s/\tdefault\t1\n' "$DEFAULT"
+}
+
+# Prints "speed_bytes_per_s tier url location", fastest first.
+rank() {
+  local tmp; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' RETURN
+  local i=0 region u loc tier
+  # 1) latency, all mirrors at once: time to first byte of the repodata index (+ its age).
+  while IFS=$'\t' read -r region u loc tier; do
+    [[ -z $u || $region == \#* ]] && continue
+    u=${u%/}
+    ( curl -s -o /dev/null -r 0-0 --connect-timeout 3 --max-time 6 \
+        -w '%{http_code} %{time_starttransfer} %header{last-modified}\n' "$u/$repodata" 2>/dev/null |
+        { read -r code ttfb lm; [[ $code == 20[06] ]] || exit
+          age=$(date -d "$lm" +%s 2>/dev/null || echo 0)
+          printf '%s\t%s\t%s\t%s\t%s\n' "$ttfb" "$age" "${tier:-2}" "$u" "$loc"; } ) >"$tmp/$i" &
+    ((i++))
+  done < <(mirror_list)
+  wait
+  cat "$tmp"/* 2>/dev/null >"$tmp/all"
+  [[ -s $tmp/all ]] || return 1
+  # Drop mirrors whose index is >2 days older than the newest seen (stale tier-2 mirrors).
+  local newest; newest=$(cut -f2 "$tmp/all" | sort -n | tail -1)
+  awk -F'\t' -v n="$newest" '$2 == 0 || $2 >= n - 172800' "$tmp/all" | sort -t$'\t' -k1,1g | head -6 >"$tmp/near"
+  # 2) throughput, the nearest few one after another: 2 MiB of the index each.
+  local ttfb age speed
+  while IFS=$'\t' read -r ttfb age tier u loc; do
+    speed=$(curl -s -o /dev/null -r 0-2097151 --connect-timeout 3 --max-time 10 -w '%{speed_download}' "$u/$repodata" 2>/dev/null)
+    printf '%s\t%s\t%s\t%s\n' "${speed%.*}" "$tier" "$u" "$loc"
+  done <"$tmp/near" | sort -t$'\t' -k1,1nr
+}
+
+write_repos() {  # point every repository file at $1
+  local m=$1 f n=0
+  mkdir -p "$root/etc/xbps.d" "${saved%/*}"
+  for f in "$root"/usr/share/xbps.d/*-repository-*.conf; do
+    [[ -e $f ]] || continue
+    sed "s|$DEFAULT|$m|g" "$f" >"$root/etc/xbps.d/${f##*/}"; ((n++))
+  done
+  # No repository files yet (bare bootstrap): at least the main one.
+  ((n)) || { local p=current; [[ $arch == *-musl ]] && p+=/musl; echo "repository=$m/$p" >"$root/etc/xbps.d/00-repository-main.conf"; }
+  echo "$m" >"$saved"
+  echo "Mirror: $m"
+}
+
+pick() {
+  local best; best=$(rank | head -1) || true
+  [[ -n $best ]] || { echo "tux-mirror: no mirror answered; keeping $DEFAULT" >&2; echo "$DEFAULT"; return 1; }
+  cut -f3 <<<"$best"
+}
+
+need_root() { [[ $EUID -eq 0 || ( -n $root && -w $root ) ]] || { echo "tux-mirror: run as root (sudo tux-mirror ...)" >&2; exit 1; }; }
+
+case $mode in
+  list) printf '%-10s %-5s %-50s %s\n' "KiB/s" tier mirror location
+        rank | awk -F'\t' '{printf "%-10d %-5s %-50s %s\n", $1/1024, $2, $3, $4}' ;;
+  best) pick ;;
+  set)  need_root; write_repos "$url" ;;
+  apply|if-unset)
+        need_root
+        if [[ -s $saved ]]; then write_repos "$(<"$saved")"
+        elif [[ $mode == apply ]]; then echo "tux-mirror: no saved mirror; run tux-mirror" >&2; exit 1
+        else write_repos "$(pick)"; fi ;;
+  auto) need_root; echo "Timing mirrors..."; write_repos "$(pick)" ;;
+esac

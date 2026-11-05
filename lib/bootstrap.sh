@@ -75,11 +75,15 @@ EOF
 }
 
 bootstrap_void() {
-  local repo=https://repo-default.voidlinux.org/current arch
+  local mirror repo arch
   arch=$(uname -m)
+  step "Picking the fastest Void mirror"
+  mirror=$(bash "$TUX_SRC/bin/tux-mirror" --best) || warn "No mirror answered the speed test; using the default"
+  info "Mirror: $mirror"
+  repo=$mirror/current
   if ldd --version 2>&1 | grep -qi musl; then repo+=/musl; arch+=-musl; fi
   step "Installing Void Linux base (xbps, $arch)"
-  run xbps-install -Syu xbps || true
+  run xbps-install -Syu -R "$repo" xbps || true
   mkdir -p "$TARGET/var/db/xbps/keys"
   cp -a /var/db/xbps/keys/. "$TARGET/var/db/xbps/keys/"
   # shellcheck disable=SC2046
@@ -89,8 +93,9 @@ bootstrap_void() {
   # Microcode for Intel lives in the nonfree repo, which only exists after void-repo-nonfree.
   local uc; uc=$(ucode_pkg)
   [[ -n $uc ]] && XBPS_ARCH=$arch run xbps-install -Sy -r "$TARGET" -R "$repo" -R "$repo/nonfree" "$uc" || true
-  mkdir -p "$TARGET/etc/xbps.d"
-  echo "repository=$repo" >"$TARGET/etc/xbps.d/00-repository-main.conf"
+  # Every repository file (main, nonfree, later multilib) on the same mirror; remembered for later.
+  run bash "$TUX_SRC/bin/tux-mirror" -r "$TARGET" "$mirror" ||
+    { mkdir -p "$TARGET/etc/xbps.d"; echo "repository=$repo" >"$TARGET/etc/xbps.d/00-repository-main.conf"; }
 }
 
 live_prereqs() {
