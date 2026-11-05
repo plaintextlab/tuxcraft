@@ -69,9 +69,37 @@ options nvidia_drm modeset=1 fbdev=1
 # Keep VRAM contents across suspend so the session survives sleep.
 options nvidia NVreg_PreserveVideoMemoryAllocations=1
 EOF
+  nvidia_uvm_setup
   if [[ $INIT == systemd ]]; then
     svc_enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
     # Dynamic Boost: shifts power between CPU and GPU on Ampere+ laptops (no-op elsewhere).
     ((IS_LAPTOP)) && [[ $DISTRO == arch ]] && svc_enable nvidia-powerd.service
   fi
+}
+
+# CUDA and NVENC (OBS, Blender, DaVinci Resolve, Flatpak apps) need /dev/nvidia-uvm. Loading the
+# nvidia_uvm module does not create it: a CUDA program normally does, through the setuid helper
+# nvidia-modprobe, but Flatpak sandboxes cannot run it, so Flatpak OBS reports "cuda_init_999"
+# and falls back to x264. Arch's driver ships a udev rule for this; Void's and Debian's do not.
+nvidia_uvm_setup() {
+  mkdir -p /etc/modules-load.d /etc/udev/rules.d
+  [[ -f /etc/modules-load.d/nvidia-uvm.conf ]] || echo nvidia-uvm >/etc/modules-load.d/nvidia-uvm.conf
+  local mp rules=/etc/udev/rules.d/70-tuxcraft-nvidia-uvm.rules
+  mp=$(command -v nvidia-modprobe || true)
+  {
+    echo '# tuxcraft: create /dev/nvidia-uvm(-tools) when the module loads (CUDA/NVENC, Flatpak OBS).'
+    if [[ -n $mp ]]; then
+      echo "ACTION==\"add\", SUBSYSTEM==\"module\", KERNEL==\"nvidia_uvm\", RUN+=\"$mp -c0 -u\""
+    else
+      # No nvidia-modprobe: make the nodes from the major number in /proc/devices.
+      echo 'ACTION=="add", SUBSYSTEM=="module", KERNEL=="nvidia_uvm", RUN+="/bin/sh -c '"'"'m=$$(grep nvidia-uvm /proc/devices | cut -d\  -f1); mknod -m 666 /dev/nvidia-uvm c $$m 0; mknod -m 666 /dev/nvidia-uvm-tools c $$m 1'"'"'"'
+    fi
+  } >"$rules"
+  # runit (Void): modules can load before udevd runs; make sure at the end of boot as well.
+  if [[ $INIT != systemd && -n $mp ]] && ! grep -qs 'nvidia-modprobe' /etc/rc.local; then
+    printf '\n# tuxcraft: /dev/nvidia-uvm for CUDA/NVENC (see %s)\n%s -c0 -u 2>/dev/null || true\n' "$rules" "$mp" >>/etc/rc.local
+  fi
+  # Right away too, so the running desktop gets it without a reboot.
+  if [[ -n $mp ]] && grep -q '^nvidia_uvm ' /proc/modules 2>/dev/null; then "$mp" -c0 -u 2>/dev/null || true; fi
+  return 0
 }

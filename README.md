@@ -46,7 +46,8 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    **System menu → Music folder** or `tux-music folder ~/path` — no mpd.conf editing.
    *Gaming* = Steam, gamemode, MangoHud, Heroic (Flatpak), plus the limits Proton needs (`vm.max_map_count`,
    open files); on Void also gamescope, Wine, winetricks, protontricks, vkBasalt and the 32-bit libraries.
-   With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU.
+   With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU,
+   and `/dev/nvidia-uvm` is created at boot so CUDA/NVENC work, also in Flatpak apps (OBS GPU encoding).
    *Printing* and *Office* (LibreOffice) are on by default. Printing sets up CUPS with network
    (mDNS) and USB (ipp-usb) discovery and driverless IPP printing; printers found at install time
    get their vendor driver (hplip, escpr, brlaser, splix). At the first login, printers on the
