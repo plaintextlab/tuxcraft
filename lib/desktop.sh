@@ -10,6 +10,11 @@ desktop_packages() {
     has_word "$TUX_BUNDLES" "$b" && groups+=" $b"
   done
   { [[ ${HAS_BT:-0} == 1 ]] || has_word "$TUX_BUNDLES" bluetooth; } && groups+=' bluetooth'
+  # Vendor printer drivers only for the makes detected (driverless IPP covers the rest).
+  local m
+  if has_word "$TUX_BUNDLES" printing; then
+    for m in ${PRINTER_MAKES:-}; do [[ $m == canon ]] || groups+=" printer-$m"; done
+  fi
   [[ ${IS_LAPTOP:-0} == 1 ]] && groups+=' laptop'
   # shellcheck disable=SC2086
   pkg_install_groups $groups
@@ -51,8 +56,18 @@ void_pipewire() {
   ln -sf /usr/share/alsa/alsa.conf.d/99-pipewire-default.conf /etc/alsa/conf.d/ 2>/dev/null || true
 }
 
+# Printing: lp/lpadmin groups (lpadmin may add queues without sudo) and .local name lookup.
+printing_setup() {
+  local g
+  for g in lp lpadmin; do getent group "$g" >/dev/null && usermod -aG "$g" "$TUX_USER"; done
+  # Arch's nsswitch has no mDNS (Debian's libnss-mdns and Void's base-files set it up).
+  if [[ $DISTRO == arch ]] && ! grep -q mdns /etc/nsswitch.conf; then
+    sed -i 's/^\(hosts:.*\)\bresolve\b/\1mdns_minimal [NOTFOUND=return] resolve/' /etc/nsswitch.conf
+  fi
+}
+
 desktop_services() {
-  has_word "$TUX_BUNDLES" printing && { usermod -aG lp "$TUX_USER" 2>/dev/null || true; }
+  has_word "$TUX_BUNDLES" printing && printing_setup
   local g
   for g in docker lpadmin video input; do getent group "$g" >/dev/null && usermod -aG "$g" "$TUX_USER"; done
   if [[ $INIT == systemd ]]; then
@@ -62,7 +77,7 @@ desktop_services() {
     [[ ${IS_LAPTOP:-0} == 1 ]] && svc_enable power-profiles-daemon
   else
     pkg_installed bluez && svc_enable bluetoothd
-    has_word "$TUX_BUNDLES" printing && svc_enable cupsd avahi-daemon
+    has_word "$TUX_BUNDLES" printing && svc_enable cupsd avahi-daemon && { [[ -d /etc/sv/ipp-usb ]] && svc_enable ipp-usb; true; }
     has_word "$TUX_BUNDLES" dev && svc_enable docker
     [[ ${IS_LAPTOP:-0} == 1 ]] && svc_enable power-profiles-daemon
   fi

@@ -175,8 +175,9 @@ wizard() {
     "firefox|Firefox|" "chromium|Chromium|" "none|None|install your own later"
   [[ $TUX_BROWSER == none ]] || TUX_BUNDLES_BROWSER=$TUX_BROWSER
 
-  local bt=off aur=off
+  local bt=off aur=off prn="CUPS, finds network/USB printers by itself"
   ((HAS_BT)) && bt=on
+  [[ -n ${PRINTERS:-} ]] && prn="found: $PRINTERS"
   [[ $DISTRO == arch ]] && aur=on
   checklist TUX_BUNDLES "Optional extras" \
     "firewall|Firewall (nftables)|on|block incoming connections; SSH open to the LAN only" \
@@ -184,9 +185,9 @@ wizard() {
     "wallpapers|debi3n wallpapers|on|~320 MB pack from plaintextlab/debi3n" \
     "bluetooth|Bluetooth|$bt|bluez + bluetui" \
     "music|Music (mpd+ncmpcpp)|off|TUI music player" \
-    "printing|Printing|off|CUPS + network printer discovery" \
+    "printing|Printing|on|$prn" \
     "dev|Developer tools|off|docker, lazydocker, node, go, rust, python" \
-    "office|Office & PDF|off|LibreOffice + zathura" \
+    "office|Office & PDF|on|LibreOffice + zathura" \
     "gaming|Gaming|off|Steam, gamemode, MangoHud (+ 32-bit drivers)" \
     "aur|AUR helper (paru)|$aur|Arch only"
   # A reused answers file already lists the browser; don't add it twice.

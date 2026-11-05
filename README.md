@@ -23,6 +23,10 @@ curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.
 | Debian | a **live** ISO (`debian-live-13-*-standard.iso`) — the netinst image has no shell to run scripts | installs the same release as the ISO |
 | Void | `void-live-x86_64-*-base.iso` (glibc recommended; NVIDIA needs glibc) | Wi-Fi: `nmtui` or `wpa_supplicant`. The ISO has no curl: first run `xbps-install -Syu xbps && xbps-install -y curl` |
 
+On Void, the installer times the mirrors from the official list and uses the fastest
+up-to-date one for every repository (no xmirror needed). Re-pick any time with `sudo tux-mirror`
+(`--list` shows the timings, `sudo tux-mirror https://…` sets one).
+
 Already have a minimal install (e.g. Debian from the normal installer)? Run the same
 command there: tuxcraft detects that it is not on a live ISO and only sets up the desktop
 (snapshots are added too if `/` is btrfs).
@@ -38,6 +42,10 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    *Gaming* = Steam, gamemode, MangoHud, Heroic (Flatpak), plus the limits Proton needs (`vm.max_map_count`,
    open files); on Void also gamescope, Wine, winetricks, protontricks, vkBasalt and the 32-bit libraries.
    With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU.
+   *Printing* and *Office* (LibreOffice) are on by default. Printing sets up CUPS with network
+   (mDNS) and USB (ipp-usb) discovery and driverless IPP printing; printers found at install time
+   get their vendor driver (hplip, escpr, brlaser, splix). At the first login, printers on the
+   network are added automatically; later, **System menu → Printers** or `tux-printer`.
 7. Extra packages to **add**, packages to **leave out**
 
 Answers are saved to `/etc/tuxcraft/answers.conf` (without the password); reuse them for an

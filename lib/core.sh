@@ -69,8 +69,36 @@ detect_gpu() {
 detect_laptop() { compgen -G '/sys/class/power_supply/BAT*' >/dev/null && IS_LAPTOP=1 || IS_LAPTOP=0; }
 detect_bluetooth() { compgen -G '/sys/class/bluetooth/*' >/dev/null && HAS_BT=1 || HAS_BT=0; }
 
+# Printers: USB ones (interface class 07) and, when an mDNS browser is available, network ones.
+# Sets PRINTERS ("make model, ..." for the wizard) and PRINTER_MAKES (hp epson brother samsung canon).
+printer_make() {
+  case ${1,,} in
+    *hewlett*|hp*|*" hp "*|03f0) echo hp ;; *epson*|04b8) echo epson ;; *brother*|04f9) echo brother ;;
+    *samsung*|04e8) echo samsung ;; *canon*|04a9) echo canon ;;
+  esac
+}
+detect_printers() {
+  PRINTERS='' PRINTER_MAKES=''
+  local d m name
+  for d in /sys/bus/usb/devices/*:*; do
+    [[ $(cat "$d/bInterfaceClass" 2>/dev/null) == 07 ]] || continue
+    d=${d%:*}
+    name="$(cat "$d/manufacturer" 2>/dev/null) $(cat "$d/product" 2>/dev/null)"
+    m=$(printer_make "$(cat "$d/idVendor" 2>/dev/null)")
+    PRINTERS+="${PRINTERS:+, }${name# } (USB)"; [[ -n $m ]] && PRINTER_MAKES+=" $m"
+  done
+  if command -v avahi-browse >/dev/null; then
+    while IFS= read -r name; do
+      PRINTERS+="${PRINTERS:+, }$name (network)"
+      m=$(printer_make "$name"); [[ -n $m ]] && PRINTER_MAKES+=" $m"
+    done < <(timeout 5 avahi-browse -tpk _ipp._tcp 2>/dev/null | awk -F';' '$1=="+" {print $4}' | sed 's/\\032/ /g' | sort -u)
+  fi
+  PRINTER_MAKES=$(tr ' ' '\n' <<<"$PRINTER_MAKES" | sed '/^$/d' | sort -u | tr '\n' ' ')
+  return 0
+}
+
 detect_all() {
-  detect_distro; detect_live; detect_firmware; detect_cpu; detect_gpu; detect_laptop; detect_bluetooth
+  detect_distro; detect_live; detect_firmware; detect_cpu; detect_gpu; detect_laptop; detect_bluetooth; detect_printers
   if [[ -d /run/systemd/system ]] || [[ $DISTRO != void ]]; then INIT=systemd; else INIT=runit; fi
 }
 

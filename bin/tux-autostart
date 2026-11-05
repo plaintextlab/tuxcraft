@@ -33,6 +33,8 @@ rm -f "${XDG_RUNTIME_DIR:-/tmp}/tux-dim" "${XDG_RUNTIME_DIR:-/tmp}/tux-nightligh
 [[ -s /run/tux-gamevm.notice ]] && { sleep 3; notify-send -u critical "Gaming VM" "$(cat /run/tux-gamevm.notice)"; } &
 # Volume popup for changes made anywhere (bar scroll, mixers), not only the volume keys.
 pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
+# First login with printing set up but no printer yet: add the ones found on the network / USB.
+command -v lpadmin >/dev/null && { sleep 15; tux-printer --auto; } &
 once nm-applet --indicator
 command -v udiskie >/dev/null && once udiskie --smart-tray --notify
 tux-theme-gsettings 2>/dev/null || true

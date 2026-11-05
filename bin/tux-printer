@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# tux-printer [--auto | --list]  — find printers (network via mDNS, USB via ipp-usb) and add them.
+#   (no args)  list what is found, add the ones that have no queue yet, make one the default
+#   --auto     the same, silently, but only if no printer is set up at all (run at login)
+#   --list     only show what is found
+# Queues are driverless (IPP Everywhere / AirPrint), which nearly every printer since ~2015
+# speaks. For older printers use system-config-printer, with the vendor driver installed
+# (hplip for HP, epson-inkjet-printer-escpr, brlaser, splix, gutenprint).
+set -uo pipefail
+mode=${1:-add}; mode=${mode#--}
+say() { [[ $mode == auto ]] || echo "$*"; }
+
+command -v lpadmin >/dev/null || { say "CUPS is not installed (enable the Printing bundle, or install cups)."; exit 1; }
+if ! lpstat -r >/dev/null 2>&1; then say "The CUPS service (cupsd) is not running."; exit 1; fi
+command -v ippfind >/dev/null || { say "ippfind (part of CUPS) is missing."; exit 1; }
+
+configured=$(lpstat -v 2>/dev/null)
+[[ $mode == auto && -n $configured ]] && exit 0
+
+# name|uri|make-and-model for each IPP printer announced on the network (and ipp-usb on localhost).
+mapfile -t found < <(timeout 12 ippfind -T 6 _ipp._tcp,_print --exec echo '{service_name}|{service_uri}|{txt_ty}' \; 2>/dev/null | sort -u -t'|' -k1,1)
+if ((${#found[@]} == 0)); then
+  say "No printers found. Check that the printer is on and on the same network (or plugged in),"
+  say "and that avahi-daemon is running. Older printers: add them in system-config-printer."
+  exit 0
+fi
+
+added=() hp=0
+for f in "${found[@]}"; do
+  IFS='|' read -r name uri model <<<"$f"
+  queue=$(tr -cs 'A-Za-z0-9_-' '_' <<<"$name"); queue=${queue%_}
+  [[ ${model,,} == *hp* || ${name,,} == hp* ]] && hp=1
+  if grep -q "device for $queue:" <<<"$configured"; then say "  ✓ $name (already set up as $queue)"; continue; fi
+  if [[ $mode == list ]]; then say "  • $name  ($uri)"; continue; fi
+  if err=$(lpadmin -p "$queue" -D "${model:-$name}" -E -v "$uri" -m everywhere 2>&1); then
+    say "  + $name added as $queue"; added+=("$queue")
+  else
+    say "  ✗ $name: $err — add it in system-config-printer"
+  fi
+done
+
+if ((${#added[@]})) && ! lpstat -d 2>/dev/null | grep -q 'system default destination:'; then
+  lpadmin -d "${added[0]}" 2>/dev/null || lpoptions -d "${added[0]}" >/dev/null
+  say "Default printer: ${added[0]}"
+fi
+((${#added[@]})) && command -v notify-send >/dev/null &&
+  notify-send -a printer "Printer ready" "Added: ${added[*]}"
+if ((hp)) && [[ $mode != auto ]] && ! command -v hp-setup >/dev/null; then
+  say "Tip: for HP ink levels, scanning and older HP models, install hplip."
+fi
+exit 0

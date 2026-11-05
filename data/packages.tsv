@@ -102,8 +102,16 @@ chromium	chromium	chromium	chromium
 dev	docker docker-compose lazydocker	docker.io docker-compose	docker docker-compose lazydocker
 dev	nodejs npm python-pip go rust	nodejs npm python3-pip golang rustc cargo	nodejs python3-pip go rust cargo
 flatpak	flatpak	flatpak	flatpak
-printing	cups cups-pdf system-config-printer	cups printer-driver-cups-pdf system-config-printer	cups cups-pdf system-config-printer
-printing	avahi nss-mdns	avahi-daemon libnss-mdns	avahi nss-mdns
+printing	cups cups-filters cups-pdf ghostscript system-config-printer	cups cups-filters printer-driver-cups-pdf ghostscript system-config-printer	cups cups-filters cups-pdf ghostscript system-config-printer
+# driverless printing (IPP Everywhere/AirPrint) over USB, plus generic drivers for older printers
+printing	ipp-usb gutenprint foomatic-db foomatic-db-engine	ipp-usb printer-driver-gutenprint foomatic-db-compressed-ppds	ipp-usb gutenprint foomatic-db
+# network printer discovery: mDNS/DNS-SD
+printing	avahi nss-mdns	avahi-daemon avahi-utils libnss-mdns	avahi avahi-utils nss-mdns
+# vendor drivers, added when a printer of that make is detected (or by tux-printer later)
+printer-hp	hplip	hplip printer-driver-hpcups	hplip
+printer-epson	epson-inkjet-printer-escpr	printer-driver-escpr	epson-inkjet-printer-escpr
+printer-brother	brlaser	printer-driver-brlaser	-
+printer-samsung	-	printer-driver-splix	splix
 bluetooth	bluez bluez-utils	bluez	bluez
 laptop	power-profiles-daemon	power-profiles-daemon	power-profiles-daemon
 laptop	acpi	acpi	acpi
