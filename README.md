@@ -166,16 +166,17 @@ dead SSD — that is what `tux-backup` is for.
 | Keys | Action | Keys | Action |
 |---|---|---|---|
 | Super+Enter | terminal | Super+D | launcher |
-| Super+Space | window switcher | Super+Q | close |
+| Super+Space | **workspace overview** (thumbnails, pick one) | Super+Q | close |
 | Super+E / Shift+E | Thunar / Thunar in /media | Super+B | browser |
 | Super+Escape | **system menu** | Super+U | **update (sysup)** |
 | Super+V | clipboard history | Print / Super+Print | screenshot / capture menu |
 | Super+Ctrl+T / F / W | theme / font / wallpaper | Super+Ctrl+N / B / A / M | network / bluetooth / audio / btop |
 | Super+Shift+L | power menu | Super+Alt+L | lock |
 | Super+1..0 | workspaces | Super+Shift+1..0 | move window |
+| Super+O | window switcher | Super+Tab / Shift+Tab | next / previous workspace |
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
 | Super+T | notes | Super+A | web apps |
-| Ctrl+Tab / Ctrl+Shift+Tab | next / previous window in this workspace | Alt+Tab | last workspace |
+| Super+Alt+Tab / +Shift | next / previous window in this workspace | Alt+Tab | last workspace |
 | Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
 
 ## Commands

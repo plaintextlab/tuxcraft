@@ -68,6 +68,8 @@ x11	copyq	copyq	CopyQ
 wayland	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle
 wayland	waybar	waybar	Waybar
 wayland	fuzzel	fuzzel	fuzzel
+# rofi draws the workspace overview grid (native Wayland since rofi 2.0, XWayland before)
+wayland	rofi	rofi	rofi
 wayland	grim slurp wl-clipboard cliphist wf-recorder	grim slurp wl-clipboard cliphist wf-recorder	grim slurp wl-clipboard cliphist wf-recorder
 wayland	xdg-desktop-portal-wlr	xdg-desktop-portal-wlr	xdg-desktop-portal-wlr
 wayland	xorg-xwayland	xwayland	xorg-server-xwayland

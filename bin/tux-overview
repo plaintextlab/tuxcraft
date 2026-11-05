@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# tux-overview [watch]  — workspace overview (Super+Space): a grid of every workspace with a live-ish
+# thumbnail and the apps on it. Pick one (arrows/mouse/number/typing + Enter) to go there.
+#   watch   keep the thumbnails fresh (tux-autostart runs this): i3/sway hide the windows of other
+#           workspaces, so each thumbnail is the workspace as it last looked on screen.
+# Works on i3 (ffmpeg x11grab) and sway (grim). Grid: rofi, themed like every other menu.
+set -uo pipefail
+dir="${XDG_RUNTIME_DIR:-/tmp/tux-$UID}/tux-overview"; mkdir -p "$dir"
+if [[ -n ${SWAYSOCK:-} ]]; then msg=swaymsg; else msg=i3-msg; fi
+SCALE=4   # thumbnails are 1/4 of the screen size
+
+key() { printf '%s' "$1" | md5sum | cut -c1-12; }   # file name for a workspace name
+
+# Thumbnail of every workspace that is on screen right now (one per monitor).
+capture() {
+  local name x y w h f
+  while IFS=$'\t' read -r name x y w h; do
+    f="$dir/$(key "$name").jpg"
+    if [[ $msg == swaymsg ]]; then
+      grim -g "$x,$y ${w}x$h" -s "$(awk "BEGIN{print 1/$SCALE}")" -t jpeg -q 80 "$f.tmp" 2>/dev/null
+    else
+      ffmpeg -loglevel quiet -y -f x11grab -draw_mouse 0 -video_size "${w}x$h" -i "${DISPLAY:-:0}+$x,$y" \
+        -frames:v 1 -vf "scale=iw/$SCALE:-1" -q:v 4 -f image2 "$f.tmp" </dev/null
+    fi && mv -f "$f.tmp" "$f"
+  done < <($msg -t get_workspaces | jq -r '.[] | select(.visible) | [.name, .rect.x, .rect.y, .rect.width, .rect.height] | @tsv')
+}
+
+watch() {
+  exec 9>"$dir/watch.lock"; flock -n 9 || exit 0   # one watcher per session
+  capture
+  # Capture half a second after things change (lets the open/close animations finish), and
+  # every 10 s while nothing happens, so video or a long build still looks current.
+  $msg -t subscribe -m '["workspace","window"]' 2>/dev/null | while :; do
+    if read -r -t 10 _; then
+      while read -r -t 0.5 _; do :; done   # swallow a burst of events
+      capture
+    else
+      [[ $? -gt 128 ]] || break            # EOF: the WM is gone (logout)
+      capture
+    fi
+  done
+}
+
+show() {
+  pgrep -x rofi >/dev/null && { pkill -x rofi; exit 0; }   # pressing Super+Space again closes it
+  capture
+  local -a names labels icons
+  local name apps cur i=0 sel=0
+  # name<TAB>apps, in workspace order; the scratchpad is not a workspace you visit.
+  while IFS=$'\t' read -r name apps; do
+    names+=("$name")
+    labels+=("$name   ${apps:-empty}")
+    if [[ -f $dir/$(key "$name").jpg ]]; then icons+=("$dir/$(key "$name").jpg"); else icons+=("user-desktop"); fi
+  done < <($msg -t get_tree | jq -r '
+      [.. | objects | select(.type == "workspace" and (.name | startswith("__") | not))]
+      | sort_by(.num // 9999)[]
+      | [.name, ([.. | objects | select(.pid != null or .window != null)
+                 | (.app_id // .window_properties.class // .name // "?") | split(".") | last] | unique | join(" · "))]
+      | @tsv')
+  ((${#names[@]})) || exit 0
+  # Forget thumbnails of workspaces that no longer exist.
+  local keep=" " f; for name in "${names[@]}"; do keep+="$(key "$name").jpg "; done
+  for f in "$dir"/*.jpg; do [[ -e $f && $keep != *" ${f##*/} "* ]] && rm -f "$f"; done
+  cur=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .name')
+  for ((i = 0; i < ${#names[@]}; i++)); do [[ ${names[i]} == "$cur" ]] && sel=$i; done
+
+  local n=${#names[@]} cols rows tw
+  cols=$(( n < 4 ? n : (n <= 6 ? 3 : 4) )); rows=$(( (n + cols - 1) / cols ))
+  # Thumbnail width so the grid fills ~80% of the screen width.
+  local sw; sw=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .rect.width'); sw=${sw:-1920}
+  tw=$(( sw * 80 / 100 / cols - 40 ))
+  ((tw > 420)) && tw=420; ((tw < 160)) && tw=160
+
+  local pick
+  pick=$(for ((i = 0; i < n; i++)); do printf '%s\0icon\x1f%s\n' "${labels[i]}" "${icons[i]}"; done |
+    rofi -dmenu -i -show-icons -format i -selected-row "$sel" -p "workspaces" -no-custom \
+      -theme-str "window { width: $(( (tw + 40) * cols + 40 ))px; }
+                  listview { columns: $cols; lines: $rows; flow: horizontal; fixed-columns: true; spacing: 16px; scrollbar: false; }
+                  element { orientation: vertical; padding: 10px; spacing: 8px; border-radius: 6px; }
+                  element-icon { size: ${tw}px; horizontal-align: 0.5; }
+                  element-text { horizontal-align: 0.5; }
+                  inputbar { children: [prompt, entry]; }") || exit 0
+  [[ -n $pick ]] && $msg workspace "\"${names[pick]}\"" >/dev/null
+}
+
+case ${1:-show} in
+  watch) watch ;;
+  show)  show ;;
+  *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
