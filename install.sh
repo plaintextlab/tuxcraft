@@ -4,29 +4,40 @@
 #   From a live ISO (Arch / Debian live / Void):   erases a disk, installs everything
 #   From an installed system:                       sets up the desktop on top of it
 #
-#   curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | bash   (Arch)
-#   wget -qO- https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | bash    (Debian live)
-#   xbps-fetch https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh && bash install.sh   (Void)
+#   curl -fsSL https://plaintextlab.org/tuxcraft | sh                 (Arch)
+#   wget -qO- https://plaintextlab.org/tuxcraft | sh                  (Debian live)
+#   xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t         (Void)
+#   (the same with https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh)
 #   sudo ./install.sh [--config answers.conf] [--yes] [--desktop]
-set -Eeuo pipefail
-umask 022   # an inherited 077 would leave / and /home unreadable to the new user
-
+#
+# --- bootstrap ------------------------------------------------------------------------------
+# Plain POSIX sh up to the "exec bash" lines: "curl ... | sh" runs this under dash on Debian and
+# Void. No git needed: the repository comes as a tarball, with whatever download tool the live
+# ISO has (curl on Arch, wget on Debian live, xbps-fetch on Void). sh reads a piped script one
+# command at a time, so the bash-only code below is never parsed by it.
 TUX_REPO_TARBALL=${TUX_REPO_TARBALL:-https://github.com/plaintextlab/tuxcraft/archive/refs/heads/main.tar.gz}
-
-# --- self-bootstrap when piped from the internet ----------------------------------------
-# Uses whatever the live ISO has: curl (Arch), wget (Debian live), xbps-fetch (Void).
-TUX_SRC=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo /tmp)
-if [[ ! -f $TUX_SRC/lib/ui.sh ]]; then
+TUX_SRC=
+[ -f "$0" ] && TUX_SRC=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+if [ ! -f "$TUX_SRC/lib/ui.sh" ]; then
+  # Piped from the internet (or a lone install.sh): fetch the rest.
   echo ":: Downloading tuxcraft..."
-  dl=/tmp/tuxcraft; rm -rf "$dl" "$dl.tar.gz" && mkdir -p "$dl"
+  dl=/tmp/tuxcraft; rm -rf "$dl" "$dl.tar.gz" && mkdir -p "$dl" || exit 1
   if command -v curl >/dev/null; then curl -fsSL -o "$dl.tar.gz" "$TUX_REPO_TARBALL"
   elif command -v wget >/dev/null; then wget -qO "$dl.tar.gz" "$TUX_REPO_TARBALL"
   elif command -v xbps-fetch >/dev/null; then xbps-fetch -o "$dl.tar.gz" "$TUX_REPO_TARBALL" >/dev/null
   else echo "Need curl, wget or xbps-fetch to download tuxcraft" >&2; exit 1; fi || {
     echo "Download failed. Connected to the internet? (Wi-Fi: iwctl on Arch, nmtui on Debian/Void)" >&2; exit 1; }
   tar -xzf "$dl.tar.gz" -C "$dl" --strip-components=1 || { echo "Download was not a tuxcraft archive" >&2; exit 1; }
-  exec bash "$dl/install.sh" "$@" </dev/tty
+  command -v bash >/dev/null || { echo "tuxcraft needs bash" >&2; exit 1; }
+  # stdin is the download pipe: answer the questions from the keyboard instead.
+  if (exec </dev/tty) 2>/dev/null; then exec bash "$dl/install.sh" "$@" </dev/tty; fi
+  exec bash "$dl/install.sh" "$@"
 fi
+# Started as "sh install.sh": the rest is bash.
+[ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
+# --- from here on: bash ---------------------------------------------------------------------
+set -Eeuo pipefail
+umask 022   # an inherited 077 would leave / and /home unreadable to the new user
 
 usage() {
   cat <<'EOF'

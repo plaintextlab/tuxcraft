@@ -17,13 +17,19 @@ everything and reboots into the new desktop.
 
 | Distro | Boot this | The one command |
 |---|---|---|
-| Arch | official `archlinux-*.iso` (Wi-Fi: `iwctl`) | `curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh \| bash` |
-| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell) | `wget -qO- https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh \| bash` |
-| Void | `void-live-x86_64-*-base.iso`, glibc (log in as `root`/`voidlinux`; Wi-Fi: `nmtui`) | `xbps-fetch https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh && bash install.sh` |
+| Arch | official `archlinux-*.iso` (Wi-Fi: `iwctl`) | `curl -fsSL https://plaintextlab.org/tuxcraft \| sh` |
+| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell) | `wget -qO- https://plaintextlab.org/tuxcraft \| sh` |
+| Void | `void-live-x86_64-*-base.iso`, glibc (log in as `root`/`voidlinux`; Wi-Fi: `nmtui`) | `xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t` |
 
-Each uses the download tool that ISO already has (curl, wget, xbps-fetch); the script becomes
+Each uses the download tool that ISO already has (curl, wget, xbps-fetch) and needs no git:
+the repository comes as a tarball. `| sh` and `| bash` both work. The script becomes
 root with sudo when needed and installs curl itself where it is missing. On a system that is
 already installed, the same command sets up only the desktop.
+
+`plaintextlab.org/tuxcraft` is a small launcher that fetches the current `install.sh` from this
+repository and runs it. The same works straight from GitHub:
+`curl -fsSL https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh | sh`. Pass options after `sh -s --`, e.g.
+`curl -fsSL https://plaintextlab.org/tuxcraft | sh -s -- --update`.
 
 On Void, the installer times the mirrors from the official list and uses the fastest
 up-to-date one for every repository (no xmirror needed). Re-pick any time with `sudo tux-mirror`
