@@ -175,16 +175,7 @@ ensure_gaming() {
   command -v flatpak >/dev/null || { warn "flatpak missing: Heroic not installed"; return 0; }
   run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
   run flatpak install -y --noninteractive flathub com.heroicgameslauncher.hgl || warn "Heroic could not be installed"
-  if [[ ${TUX_NVIDIA:-no} == yes ]]; then
-    local nv ext kver
-    kver=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -n1)
-    nv=$(modinfo -k "$kver" -F version nvidia 2>/dev/null || true)
-    for ext in GL GL32; do
-      [[ -n $nv ]] || break
-      run flatpak install -y --noninteractive flathub "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" ||
-        warn "Flatpak NVIDIA $ext runtime $nv not on Flathub yet (sysup installs it later)"
-    done
-  fi
+  flatpak_nvidia_runtime
   info "Gaming: Steam launch option  gamemoderun mangohud %command%"
 }
 
@@ -210,6 +201,26 @@ extras_stage() {
     run flatpak override --system --filesystem=xdg-config/gtk-3.0:ro --filesystem=xdg-config/gtk-4.0:ro \
       --filesystem=/usr/share/themes:ro --filesystem=xdg-config/qt5ct:ro --filesystem=xdg-config/qt6ct:ro \
       --env=QT_QPA_PLATFORMTHEME=qt5ct || true
+    flatpak_nvidia_runtime
   fi
+  return 0
+}
+
+# Flatpak apps get the NVIDIA driver from a runtime matching the host driver exactly
+# (GL.nvidia-595-112-07). Flatpak adds it by itself only when the nvidia module is loaded, which
+# it is not while installing from a live ISO; so install it now for the driver that boots next,
+# and OBS, Steam, Blender or games installed later have NVENC/CUDA/GL out of the box.
+# (sysup keeps it in step after driver updates; nvidia_uvm_setup provides /dev/nvidia-uvm.)
+flatpak_nvidia_runtime() {
+  [[ ${TUX_NVIDIA:-no} == yes ]] && command -v flatpak >/dev/null || return 0
+  local nv ext kver
+  kver=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -n1)
+  nv=$(modinfo -k "$kver" -F version nvidia 2>/dev/null || true)
+  [[ -n $nv ]] || return 0
+  for ext in GL GL32; do
+    flatpak info "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" >/dev/null 2>&1 ||
+      run flatpak install -y --noninteractive flathub "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" ||
+      warn "Flatpak NVIDIA $ext runtime $nv not on Flathub yet (sysup installs it later)"
+  done
   return 0
 }

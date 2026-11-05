@@ -53,7 +53,7 @@ gpu_stage() {
       ;;
     debian)
       if [[ $NVIDIA_GEN == legacy ]]; then p+=(nvidia-kernel-dkms); else p+=(nvidia-open-kernel-dkms); fi
-      p+=(nvidia-driver firmware-misc-nonfree nvidia-settings linux-headers-amd64)
+      p+=(nvidia-driver nvidia-modprobe firmware-misc-nonfree nvidia-settings linux-headers-amd64)
       ;;
     void)
       pkg_install void-repo-nonfree; pkg_refresh
