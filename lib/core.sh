@@ -140,9 +140,15 @@ as_user() {
 
 fetch() { curl -fL --retry 3 --connect-timeout 15 -o "$2" "$1" >>"$TUX_LOG" 2>&1; }
 
-# gh_latest_tag owner/repo -> v1.2.3 (follows the /releases/latest redirect, no API token needed)
+# gh_latest_tag owner/repo -> v1.2.3 (follows the /releases/latest redirect, no API token needed).
+# Prints nothing and still succeeds when GitHub can't be reached: under set -e a failed lookup
+# would otherwise end the whole install, so callers check for an empty tag and skip instead.
 gh_latest_tag() {
-  curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" | sed 's#.*/tag/##'
+  local url
+  url=$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
+          -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" 2>>"$TUX_LOG") || true
+  [[ $url == */tag/* ]] && printf '%s\n' "${url##*/tag/}"
+  return 0
 }
 
 write_file() {  # write_file path mode <<content

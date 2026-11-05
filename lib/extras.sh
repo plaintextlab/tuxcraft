@@ -19,7 +19,7 @@ ensure_rmpc() {
   has_word "$TUX_BUNDLES" music || return 0
   command -v rmpc >/dev/null && return 0; _is_x86_64 || return 0
   local t tag; t=$(_tmpdir); tag=$(gh_latest_tag mierak/rmpc)
-  if fetch "https://github.com/mierak/rmpc/releases/download/$tag/rmpc-$tag-x86_64-unknown-linux-musl.tar.gz" "$t/r.tgz" &&
+  if [[ -n $tag ]] && fetch "https://github.com/mierak/rmpc/releases/download/$tag/rmpc-$tag-x86_64-unknown-linux-musl.tar.gz" "$t/r.tgz" &&
      tar -xzf "$t/r.tgz" -C "$t"; then
     install -m755 "$t/rmpc" /usr/local/bin/ && ok "rmpc installed from upstream release"
     [[ -f $t/man/rmpc.1 ]] && install -Dm644 "$t/man/rmpc.1" /usr/local/share/man/man1/rmpc.1
@@ -46,7 +46,7 @@ ensure_wifitui() {
   command -v wifitui >/dev/null && return 0
   local arch; case $(uname -m) in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) return 0 ;; esac
   local t tag; t=$(_tmpdir); tag=$(gh_latest_tag shazow/wifitui)
-  if fetch "https://github.com/shazow/wifitui/releases/download/$tag/wifitui-${tag#v}-linux-$arch.tar.gz" "$t/w.tgz" &&
+  if [[ -n $tag ]] && fetch "https://github.com/shazow/wifitui/releases/download/$tag/wifitui-${tag#v}-linux-$arch.tar.gz" "$t/w.tgz" &&
      tar -xzf "$t/w.tgz" -C "$t" wifitui; then
     install -m755 "$t/wifitui" /usr/local/bin/ && ok "wifitui installed from upstream release"
   else warn "Could not install wifitui; the network menu uses nmtui"; fi
@@ -99,9 +99,11 @@ ensure_lazygit() {
   command -v lazygit >/dev/null && return 0; _is_x86_64 || return 0
   local t tag v u; t=$(_tmpdir)
   tag=$(gh_latest_tag jesseduffield/lazygit); v=${tag#v}
-  for u in "lazygit_${v}_Linux_x86_64.tar.gz" "lazygit_${v}_linux_x86_64.tar.gz"; do
-    fetch "https://github.com/jesseduffield/lazygit/releases/download/$tag/$u" "$t/l.tgz" && break
-  done
+  if [[ -n $tag ]]; then
+    for u in "lazygit_${v}_Linux_x86_64.tar.gz" "lazygit_${v}_linux_x86_64.tar.gz"; do
+      fetch "https://github.com/jesseduffield/lazygit/releases/download/$tag/$u" "$t/l.tgz" && break
+    done
+  fi
   if [[ -s $t/l.tgz ]] && tar -xzf "$t/l.tgz" -C "$t" lazygit; then
     install -m755 "$t/lazygit" /usr/local/bin/ && ok "lazygit installed from upstream release"
   else warn "Could not install lazygit"; fi
@@ -113,7 +115,7 @@ ensure_adw_gtk3() {
   [[ -d /usr/share/themes/adw-gtk3-dark ]] && return 0
   local t tag; t=$(_tmpdir)
   tag=$(gh_latest_tag lassekongo83/adw-gtk3)
-  if fetch "https://github.com/lassekongo83/adw-gtk3/releases/download/$tag/adw-gtk3$tag.tar.xz" "$t/a.txz"; then
+  if [[ -n $tag ]] && fetch "https://github.com/lassekongo83/adw-gtk3/releases/download/$tag/adw-gtk3$tag.tar.xz" "$t/a.txz"; then
     tar -xJf "$t/a.txz" -C /usr/share/themes && ok "adw-gtk3 installed from upstream release"
   else warn "Could not install adw-gtk3; GTK3 apps fall back to Adwaita"; fi
   rm -rf "$t"
