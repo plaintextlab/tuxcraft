@@ -123,7 +123,10 @@ theme_choices() {
   done
 }
 
+FONT_PREVIEW_PID=''
 preview_fonts() {
+  # Only when the font menu will really be asked (not on --update or unattended runs).
+  if _isset TUX_FONT || [[ -n ${TUX_YES:-} ]]; then return 0; fi
   # Real previews need a graphical session; on a bare TTY we can only describe them.
   local img="$TUX_SRC/assets/font-previews/all.png"
   [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} && -f $img ]] || {
@@ -132,8 +135,20 @@ preview_fonts() {
   }
   local v
   for v in imv feh xdg-open; do
-    command -v "$v" >/dev/null && { runuser -u "${SUDO_USER:-root}" -- "$v" "$img" >/dev/null 2>&1 & return 0; }
+    if command -v "$v" >/dev/null; then
+      runuser -u "${SUDO_USER:-root}" -- "$v" "$img" >/dev/null 2>&1 &
+      FONT_PREVIEW_PID=$!
+      trap close_font_preview EXIT   # also close it if the install stops early
+      return 0
+    fi
   done
+}
+
+# Close the preview window once a font is picked (runuser passes the signal on to the viewer).
+close_font_preview() {
+  [[ -n $FONT_PREVIEW_PID ]] || return 0
+  kill "$FONT_PREVIEW_PID" 2>/dev/null || true
+  FONT_PREVIEW_PID=''
 }
 
 # Already set up here (answers saved by an earlier run): offer to keep them instead of asking again.
@@ -233,6 +248,7 @@ wizard() {
   preview_fonts
   mapfile -t opts < <(font_choices)
   choose TUX_FONT "UI font (Nerd Font icons are added to every choice automatically)" jetbrains "${opts[@]}"
+  close_font_preview
   ask TUX_FONT_SIZE "UI font size" 11
 
   choose TUX_BROWSER "Web browser" firefox \
