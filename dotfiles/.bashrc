@@ -13,7 +13,16 @@ if command -v fzf >/dev/null; then
   eval "$(fzf --bash 2>/dev/null)" || for f in /usr/share/fzf/key-bindings.bash /usr/share/doc/fzf/examples/key-bindings.bash; do [[ -f $f ]] && . "$f"; done
 fi
 command -v zoxide   >/dev/null && eval "$(zoxide init bash --cmd cd)"
-command -v starship >/dev/null && eval "$(starship init bash)" || PS1='[\u@\h \W]\$ '
+# A slow directory scan just skips the language modules; don't print [WARN] lines above the prompt.
+export STARSHIP_LOG=error
+# Inside a distrobox/toolbox container without its own starship, borrow the host's (/run/host).
+[[ -f /run/.containerenv ]] && ! command -v starship >/dev/null && [[ -x /run/host/usr/bin/starship ]] &&
+  starship() { /run/host/usr/bin/starship "$@"; }
+if command -v starship >/dev/null; then eval "$(starship init bash)"
+else
+  _ctr=${CONTAINER_ID:-}; [[ -z $_ctr && -f /run/.containerenv ]] && _ctr=$(sed -n 's/^name="\(.*\)"/\1/p' /run/.containerenv)
+  PS1="${_ctr:+\[\e[1;30;43m\] $_ctr \[\e[0m\] }[\u@\h \W]\$ "; unset _ctr
+fi
 
 # Modern defaults
 if command -v eza >/dev/null; then
@@ -24,7 +33,7 @@ else
   alias ls='ls --color=auto'; alias ll='ls -lah --color=auto'
 fi
 alias grep='grep --color=auto'
-alias cat='bat --paging=never --style=plain'
+command -v bat >/dev/null && alias cat='bat --paging=never --style=plain'
 alias df='df -h' du='du -h' free='free -h'
 alias disk='ncdu -x /'
 alias lg='lazygit'

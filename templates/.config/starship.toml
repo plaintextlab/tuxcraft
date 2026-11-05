@@ -5,10 +5,11 @@ palette = "tuxcraft"
 
 add_newline = true
 command_timeout = 1000
-scan_timeout = 30
+scan_timeout = 250   # ms; cold caches right after login can take >30 ms to list a dir
 
 # Two-line prompt with all the good stuff
 format = """
+$container\
 $os\
 $username\
 $hostname\
@@ -43,6 +44,11 @@ Fedora = "󰣛"
 Macos = "󰀵"
 Windows = "󰍲"
 Linux = "󰌽"
+
+# ── Container badge (distrobox / podman / docker / toolbox) ─
+[container]
+format = "[ 󰆧 $name ]($style) "
+style = "bold fg:container_fg bg:container_color"
 
 # ── Username ──────────────────────────────────────────────
 [username]
@@ -188,3 +194,5 @@ duration_color   = "{{muted}}"
 prompt_ok        = "{{accent}}"
 prompt_err       = "{{red}}"
 prompt_vim       = "{{yellow}}"
+container_color  = "{{orange}}"
+container_fg     = "{{bg}}"
