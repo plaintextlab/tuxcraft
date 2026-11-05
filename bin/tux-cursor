@@ -3,8 +3,10 @@
 #   name     print the cursor theme for the current (or given) colour scheme
 #   ensure   the same, downloading it first if needed (falls back to Adwaita offline)
 #   list     show the cursor picked for every colour scheme
-# Cursors: Catppuccin cursors (Volantes-based, scalable): Mocha set for dark schemes, Latte set
-# for light ones, in the colour closest to the scheme's accent. tux-theme calls this.
+# Cursors: Catppuccin cursors (Volantes-based): the Mocha set for dark schemes, Latte for light
+# ones, in the shade closest to the scheme's accent, then repainted to the accent itself
+# (tux-cursor-recolor) and installed as "tuxcraft-cursors". The name never changes, so a theme
+# switch recolours the pointer in place. tux-theme calls this.
 # Override in ~/.config/tuxcraft/state: CURSOR=Adwaita, CURSOR=catppuccin-mocha-blue-cursors,
 # or any installed cursor theme (CURSOR=auto to go back).
 set -uo pipefail
@@ -23,10 +25,10 @@ theme_file() {
   return 1
 }
 
-pick() {  # pick theme-name -> cursor theme name
-  [[ $CURSOR != auto && -n $CURSOR && $mode != list ]] && { echo "$CURSOR"; return; }
+# pick theme-name -> "source-set body fill target" (fill/target "-": use the set as it is)
+pick() {
   local tf accent variant
-  tf=$(theme_file "$1") || { echo Adwaita; return; }
+  tf=$(theme_file "$1") || return 1
   # shellcheck source=/dev/null
   read -r accent variant < <(. "$tf"; echo "$accent ${variant:-dark}")
   awk -v hex="$accent" -v light="$([[ $variant == light ]] && echo 1 || echo 0)" '
@@ -48,39 +50,61 @@ pick() {  # pick theme-name -> cursor theme name
       else       n = split("rosewater #f5e0dc flamingo #f2cdcd pink #f5c2e7 mauve #cba6f7 red #f38ba8 maroon #eba0ac peach #fab387 yellow #f9e2af green #a6e3a1 teal #94e2d5 sky #89dceb sapphire #74c7ec blue #89b4fa lavender #b4befe", c, " ")
       hsv(hex); h0 = H; s0 = S; v0 = V
       # Greys (monochrome schemes): a plain cursor that stands out from the background.
-      if (s0 < 0.15) { print "catppuccin-" fl "-" (light ? "dark" : "light") "-cursors"; exit }
+      if (s0 < 0.15) { print "catppuccin-" fl "-" (light ? "dark" : "light") "-cursors - - -"; exit }
       best = ""; bd = 1e9
       for (i = 1; i < n; i += 2) {
         hsv(c[i + 1]); dh = H - h0; if (dh < 0) dh = -dh; if (dh > 180) dh = 360 - dh
         d = dh + 40 * (S > s0 ? S - s0 : s0 - S) + 40 * (V > v0 ? V - v0 : v0 - V)
-        if (d < bd) { bd = d; best = c[i] }
+        if (d < bd) { bd = d; best = c[i]; bhex = c[i + 1] }
       }
-      print "catppuccin-" fl "-" best "-cursors"
+      # Mocha: accent body, dark (#1e1e2e) outline. Latte: light (#eff1f5) body, accent outline.
+      print "catppuccin-" fl "-" best "-cursors " (light ? "#eff1f5" : "#1e1e2e") " " bhex " " hex
     }'
 }
 
-installed() { [[ -f $ICONS/$1/index.theme || -f /usr/share/icons/$1/index.theme || -f $HOME/.icons/$1/index.theme ]]; }
+here=$(dirname "$(readlink -f "$0")")
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/tuxcraft/cursors"
+
+fetch_set() {  # the Catppuccin set, unzipped once into the cache
+  [[ -f $CACHE/$1/index.theme ]] && return 0
+  command -v unzip >/dev/null || return 1
+  local t; t=$(mktemp -d)
+  mkdir -p "$CACHE"
+  curl -fsSL --max-time 60 -o "$t/c.zip" "https://github.com/catppuccin/cursors/releases/download/$VERSION/$1.zip" &&
+    unzip -qo "$t/c.zip" -d "$CACHE"
+  rm -rf "$t"
+  [[ -f $CACHE/$1/index.theme ]]
+}
+
+# ~/.icons is the one folder every libXcursor searches (Debian's leaves out ~/.local/share/icons).
+link_icons() { mkdir -p "$HOME/.icons"; [[ -d $HOME/.icons/$1 && ! -L $HOME/.icons/$1 ]] || ln -sfn "$ICONS/$1" "$HOME/.icons/$1"; }
 
 ensure() {
-  local name t; name=$(pick "$THEME")
-  installed "$name" && { echo "$name"; return; }
-  if [[ $name == catppuccin-*-cursors ]] && command -v unzip >/dev/null; then
-    t=$(mktemp -d)
-    if curl -fsSL --max-time 60 -o "$t/c.zip" "https://github.com/catppuccin/cursors/releases/download/$VERSION/$name.zip" &&
-       mkdir -p "$ICONS" && unzip -qo "$t/c.zip" -d "$ICONS" && installed "$name"; then
-      rm -rf "$t"; echo "$name"; return
-    fi
-    rm -rf "$t"
+  [[ $CURSOR != auto && -n $CURSOR ]] && { echo "$CURSOR"; return; }
+  local src body fill target out=$ICONS/tuxcraft-cursors
+  read -r src body fill target < <(pick "$THEME") || true
+  if [[ -z ${src:-} ]] || ! fetch_set "$src"; then
+    echo "tux-cursor: could not get the cursor set; using Adwaita" >&2; echo Adwaita; return
   fi
-  echo "tux-cursor: could not get $name; using Adwaita" >&2
-  echo Adwaita
+  if [[ $fill != - ]] && command -v python3 >/dev/null && [[ -f $here/tux-cursor-recolor ]]; then
+    if [[ $(cat "$out/.tux-source" 2>/dev/null) != "$src $target" ]]; then
+      mkdir -p "$ICONS"
+      python3 "$here/tux-cursor-recolor" "$CACHE/$src" "$out" "$body" "$fill" "$target" &&
+        echo "$src $target" >"$out/.tux-source"
+    fi
+    [[ -f $out/index.theme ]] && { link_icons tuxcraft-cursors; echo tuxcraft-cursors; return; }
+  fi
+  # No python3 (or a grey scheme): the Catppuccin set as it is.
+  mkdir -p "$ICONS"; [[ -e $ICONS/$src ]] || cp -a "$CACHE/$src" "$ICONS/"
+  link_icons "$src"
+  echo "$src"
 }
 
 case $mode in
-  name)   pick "$THEME" ;;
+  name)   if [[ $CURSOR != auto && -n $CURSOR ]]; then echo "$CURSOR"; else pick "$THEME" | awk '{print $1 ($4 != "-" ? " recoloured to " $4 : "")}'; fi ;;
   ensure) ensure ;;
   list)   for f in "$SHARE"/themes/*.theme "$CONF"/themes/*.theme; do
-            [[ -f $f ]] || continue; t=$(basename "$f" .theme); printf '%-18s %s\n' "$t" "$(pick "$t")"
+            [[ -f $f ]] || continue; t=$(basename "$f" .theme); printf '%-18s %s\n' "$t" "$(pick "$t" | awk '{print $1 ($4 != "-" ? " -> " $4 : "")}')"
           done ;;
   *) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

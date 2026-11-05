@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""tux-cursor-recolor SRC_DIR DEST_DIR BODY FILL TARGET
+
+Copy an Xcursor theme (SRC_DIR/cursors + index.theme) to DEST_DIR, repainting it: every pixel is
+treated as a blend between BODY (the outline/base colour) and FILL (the accent colour the theme
+was drawn with), and FILL is replaced by TARGET. Shading, anti-aliased edges and shadows keep
+their position on that blend, so the cursor looks hand-made in the new colour.
+Colours are #rrggbb. Used by tux-cursor to give the mouse pointer the colour scheme's exact accent.
+"""
+import os
+import shutil
+import struct
+import sys
+
+IMAGE = 0xFFFD0002
+
+
+def rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def recolor_file(data, body, fill, target):
+    if data[:4] != b"Xcur":
+        return data
+    out = bytearray(data)
+    _hsize, _ver, ntoc = struct.unpack_from("<III", data, 4)
+    dx = [fill[i] - body[i] for i in range(3)]
+    tx = [target[i] - body[i] for i in range(3)]
+    den = float(sum(d * d for d in dx)) or 1.0
+    for n in range(ntoc):
+        typ, _sub, pos = struct.unpack_from("<III", data, 16 + 12 * n)
+        if typ != IMAGE:
+            continue
+        hlen, _t, _s, _v, w, h = struct.unpack_from("<IIIIII", data, pos)
+        start = pos + hlen
+        for p in range(start, start + 4 * w * h, 4):
+            b, g, r, a = out[p], out[p + 1], out[p + 2], out[p + 3]
+            if a == 0:
+                continue
+            # Xcursor pixels are premultiplied ARGB: work on straight colour, then premultiply.
+            c = (r * 255 / a, g * 255 / a, b * 255 / a)
+            t = sum((c[i] - body[i]) * dx[i] for i in range(3)) / den
+            t = min(max(t, 0.0), 1.15)
+            # Keep whatever does not lie on the body->fill line (e.g. a white highlight).
+            rest = [c[i] - (body[i] + t * dx[i]) for i in range(3)]
+            n_ = [min(max(body[i] + t * tx[i] + rest[i], 0), 255) for i in range(3)]
+            out[p + 2] = int(n_[0] * a / 255 + 0.5)
+            out[p + 1] = int(n_[1] * a / 255 + 0.5)
+            out[p] = int(n_[2] * a / 255 + 0.5)
+    return bytes(out)
+
+
+def main():
+    if len(sys.argv) != 6:
+        sys.exit(__doc__)
+    src, dest, body, fill, target = sys.argv[1], sys.argv[2], rgb(sys.argv[3]), rgb(sys.argv[4]), rgb(sys.argv[5])
+    tmp = dest + ".tux-new"
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(os.path.join(tmp, "cursors"))
+    sdir = os.path.join(src, "cursors")
+    for name in sorted(os.listdir(sdir)):
+        sp, dp = os.path.join(sdir, name), os.path.join(tmp, "cursors", name)
+        if os.path.islink(sp):
+            os.symlink(os.readlink(sp), dp)
+            continue
+        with open(sp, "rb") as f:
+            data = f.read()
+        with open(dp, "wb") as f:
+            f.write(recolor_file(data, body, fill, target))
+    with open(os.path.join(tmp, "index.theme"), "w") as f:
+        f.write("[Icon Theme]\nName=tuxcraft cursors\nComment=Catppuccin cursors (Volantes-based), "
+                "recoloured to the tuxcraft colour scheme by tux-cursor\n")
+    for extra in ("LICENSE", "AUTHORS"):
+        if os.path.exists(os.path.join(src, extra)):
+            shutil.copy(os.path.join(src, extra), tmp)
+    # Swap in atomically-ish: apps that open a cursor mid-way never see an empty theme.
+    old = dest + ".tux-old"
+    shutil.rmtree(old, ignore_errors=True)
+    if os.path.exists(dest):
+        os.rename(dest, old)
+    os.rename(tmp, dest)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    main()
