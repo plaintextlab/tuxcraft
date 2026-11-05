@@ -38,14 +38,46 @@ apply() {  # apply key [size]
   tux-theme apply
 }
 
+# Side by side, centred together: the preview image on the left (floating, scaled to the screen
+# height) and the menu on its right, so the menu never covers it.
 menu() {
-  local viewer='' pid=''
-  if [[ -f $SHARE/assets/font-previews/all.png ]]; then
-    for v in imv feh; do command -v $v >/dev/null && { viewer=$v; break; }; done
-    [[ -n $viewer ]] && { $viewer "$SHARE/assets/font-previews/all.png" >/dev/null 2>&1 & pid=$!; }
+  local img=$SHARE/assets/font-previews/all.png viewer='' pid='' msg='' crit=''
+  local -a margs=()
+  if [[ -n ${SWAYSOCK:-} ]]; then msg=swaymsg; elif [[ -n ${DISPLAY:-} ]] && pgrep -x i3 >/dev/null; then msg=i3-msg; fi
+  if [[ -f $img && -n $msg ]]; then
+    local x y w h gap=24 menu_w=760 iw ih ix rect
+    rect=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .rect | "\(.x) \(.y) \(.width) \(.height)"')
+    read -r x y w h <<<"${rect:-0 0 1920 1080}"
+    # 1000x1936 image: as tall as the screen allows, and never wider than what is left of the menu.
+    ih=$(( h - 2 * gap )); iw=$(( ih * 1000 / 1936 ))
+    (( iw > w - menu_w - 3 * gap )) && { iw=$(( w - menu_w - 3 * gap )); ih=$(( iw * 1936 / 1000 )); }
+    ix=$(( x + (w - iw - gap - menu_w) / 2 ))
+    if [[ $msg == i3-msg ]] && command -v feh >/dev/null; then
+      viewer=feh crit='[class="^tux-fontpreview$"]'
+      feh --class tux-fontpreview --title "Font previews" -x --scale-down -g "${iw}x${ih}+${ix}+$(( y + (h - ih) / 2 ))" "$img" >/dev/null 2>&1 &
+      pid=$!
+    elif command -v imv >/dev/null; then
+      viewer=imv crit='[app_id="^imv$"]'; [[ $msg == i3-msg ]] && crit='[class="^imv$"]'
+      imv -s shrink "$img" >/dev/null 2>&1 & pid=$!
+    fi
+    if [[ -n $viewer ]]; then
+      local n=0
+      until $msg -t get_tree | grep -q -e '"tux-fontpreview"' -e '"imv"' -e "\"pid\":$pid,"; do
+        sleep 0.1; (( ++n > 30 )) && break
+      done
+      $msg -q "$crit floating enable, border none, resize set $iw $ih, move position $ix $(( y + (h - ih) / 2 ))" >/dev/null 2>&1
+      # The menu: same size and height, just right of the image.
+      local mx=$(( ix + iw + gap ))
+      if [[ $msg == i3-msg ]]; then
+        margs=(-location 1 -xoffset "$mx" -yoffset "$(( y + (h - ih) / 2 ))"
+               -theme-str "window { width: ${menu_w}px; height: ${ih}px; } listview { lines: 12; }")
+      else
+        margs=(--anchor top-left --x-margin "$mx" --y-margin "$(( y + (h - ih) / 2 ))" --width 60 --lines 12)
+      fi
+    fi
   fi
   local pick
-  pick=$(awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE" | tux-menu font) || true
+  pick=$(awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE" | tux-menu font -- "${margs[@]}") || true
   [[ -n $pid ]] && kill "$pid" 2>/dev/null
   [[ -n ${pick:-} ]] && apply "${pick%% *}"
 }

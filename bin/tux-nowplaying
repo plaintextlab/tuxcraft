@@ -1,30 +1,61 @@
 #!/usr/bin/env bash
-# tux-nowplaying [width] — polybar "now playing": icon, prev/play-pause/next buttons and a
+# tux-nowplaying [width]  — polybar "now playing": icon, prev/play-pause/next buttons and a
 # scrolling "Artist – Title" (default 24 characters wide). Run by polybar with tail = true.
+# tux-nowplaying ctl play-pause|next|previous|stop  — the same for the player shown (media keys).
 #
-# Source: MPRIS media players only (browsers playing YouTube/Netflix/music sites, Spotify, mpv,
-# VLC, ...). Games do not register as MPRIS players, so their sound is never shown.
+# Sources: MPRIS media players (browsers playing YouTube/Netflix/music sites, Spotify, mpv,
+# VLC, ...) and mpd (rmpc, ncmpcpp, mpc), which speaks no MPRIS and is asked through mpc.
+# Games do not register as players, so their sound is never shown.
 # A playing player wins over paused ones; nothing open = the module disappears.
 export LC_ALL=${LC_ALL:-C.UTF-8}   # scroll by characters, not bytes
 W=${1:-24}
 GAP='   •   '
-IGNORE='^(kdeconnect|playerctld)'   # MPRIS names that are not media playback
+IGNORE='^(kdeconnect|playerctld|mpd)'   # not media playback (mpd: an MPRIS bridge, read directly)
+
+# mpd's song as "mpd|Playing|Paused|text" lines (nothing when mpd is stopped or not running).
+mpd_line() {
+  command -v mpc >/dev/null || return 0
+  local out song state
+  # \x1f between the fields: "|" is mpc's "or" operator in a format.
+  out=$(timeout 1 mpc -f $'[%artist%]\x1f[%title%]\x1f%file%' status 2>/dev/null) || return 0
+  song=$(sed -n 1p <<<"$out"); state=$(sed -n 2p <<<"$out")
+  case $state in \[playing\]*) state=Playing ;; \[paused\]*) state=Paused ;; *) return 0 ;; esac
+  local artist title file; IFS=$'\x1f' read -r artist title file <<<"$song"
+  [[ -n $title ]] || { title=${file##*/}; title=${title%.*}; }
+  printf 'mpd|%s|%s|%s\n' "$state" "$artist" "$title"
+}
 
 # pick: the first Playing player, else the first Paused one. Prints name|status|text
 pick() {
   local best='' name status artist title line
   # playerInstance is the full name (e.g. firefox.instance_1_96) that playerctl -p accepts.
   while IFS='|' read -r name status artist title; do
-    [[ -z $name || $name =~ $IGNORE || -z $title ]] && continue
+    [[ -z $name || -z $title ]] && continue
+    [[ $name != mpd && $name =~ $IGNORE ]] && continue
     line=${artist:+$artist – }$title
     if [[ $status == Playing ]]; then printf '%s|%s|%s\n' "$name" "$status" "$line"; return; fi
     [[ $status == Paused && -z $best ]] && best="$name|$status|$line"
-  done < <(playerctl -a metadata --format '{{playerInstance}}|{{status}}|{{artist}}|{{title}}' 2>/dev/null)
+  done < <(playerctl -a metadata --format '{{playerInstance}}|{{status}}|{{artist}}|{{title}}' 2>/dev/null; mpd_line)
   [[ -n $best ]] && printf '%s\n' "$best"
 }
 
-btn() { printf '%%{A1:playerctl -p %s %s:}%s%%{A}' "$1" "$2" "$3"; }
+# ctl PLAYER ACTION: playerctl for MPRIS players, mpc for mpd.
+ctl() {
+  if [[ $1 == mpd ]]; then
+    case $2 in play-pause) mpc -q toggle ;; previous) mpc -q prev ;; *) mpc -q "$2" ;; esac
+  else
+    playerctl -p "$1" "$2"
+  fi
+}
 
+if [[ ${1:-} == ctl-* ]]; then ctl "${1#ctl-}" "${2:-play-pause}"; exit; fi
+if [[ ${1:-} == ctl ]]; then
+  IFS='|' read -r player _ _ < <(pick)
+  if [[ -n ${player:-} ]]; then ctl "$player" "${2:-play-pause}"; else playerctl "${2:-play-pause}"; fi
+  exit
+fi
+
+btn() { printf '%%{A1:tux-nowplaying ctl-%s %s:}%s%%{A}' "$1" "$2" "$3"; }
 last='' i=0
 while :; do
   IFS='|' read -r player status text < <(pick)
