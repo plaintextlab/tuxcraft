@@ -42,6 +42,8 @@ command -v lpadmin >/dev/null && { sleep 15; tux-printer --auto; } &
 once nm-applet --indicator
 command -v udiskie >/dev/null && once udiskie --smart-tray --notify
 tux-theme-gsettings 2>/dev/null || true
+# Firefox profiles made since the last theme change (e.g. the first start) get the theme too.
+command -v tux-firefox >/dev/null && { tux-firefox apply & }
 tux-wallpaper restore &
 
 idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))

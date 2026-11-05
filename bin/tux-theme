@@ -108,9 +108,16 @@ reload_all() {
     dunstctl reload 2>/dev/null || { pkill -x dunst; setsid -f dunst >/dev/null 2>&1; }
   fi
   [[ $WALLPAPER == theme ]] && tux-wallpaper theme >/dev/null 2>&1 || true
+  # Firefox: colours and fonts into every profile. It reads them at start, so say so if it runs.
+  local ff_running=0
+  if command -v tux-firefox >/dev/null && tux-firefox apply >/dev/null 2>&1; then
+    { pgrep -x firefox || pgrep -x firefox-bin || pgrep -x librewolf || pgrep -f org.mozilla.firefox; } >/dev/null 2>&1 && ff_running=1
+  fi
   # Login screen, TTY palette and icon folder colours (needs root; allowed via sudoers rule)
   sudo -n /usr/local/bin/tux-theme-system "$THEME" >/dev/null 2>&1 || true
-  notify-send -a tuxcraft "Theme" "$(. "$tf"; echo "$name") applied" 2>/dev/null || true
+  local msg; msg="$(. "$tf"; echo "$name") applied"
+  ((ff_running)) && msg+=$'\n'"Restart Firefox to see it there"
+  notify-send -a tuxcraft "Theme" "$msg" 2>/dev/null || true
 }
 
 menu() {

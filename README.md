@@ -164,6 +164,17 @@ GTK 3 (adw-gtk3), GTK 4/libadwaita, **Qt 5/6 (qt5ct/qt6ct, Fusion + the same pal
 GTK apps match)**, btop, micro, starship, fzf, zathura, swaylock, the wallpaper, the login screen
 and the TTY. Switch with **Super+Ctrl+T** or `tux-theme set nord`.
 
+**Firefox** follows too (`tux-firefox`, run by every theme or font change): tabs, toolbar,
+address bar, menus and the new-tab page take the palette, with square corners on menus,
+panels, buttons and tabs; it switches to dark or light with the theme; and every website shows
+its text in your UI font and code in your terminal font (icon fonts still load). Firefox reads
+this when it starts, so restart it after a change; the theme notification reminds you. It
+covers every profile of Firefox, Flatpak Firefox and LibreWolf, and keeps your own
+`userChrome.css` and `user.js` (tuxcraft adds one `@import` line and a marked block).
+Settings in `~/.config/tuxcraft/state`: `FIREFOX_CORNERS=round` keeps Firefox's rounded
+corners, `FIREFOX_FONTS=site` lets websites use their own fonts again, `FIREFOX_THEME=no`
+leaves Firefox alone.
+
 Own palette: copy any file from `/usr/share/tuxcraft/themes/` to `~/.config/tuxcraft/themes/`,
 edit the colours, `tux-theme set <name>`.
 
