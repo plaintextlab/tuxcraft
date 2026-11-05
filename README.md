@@ -11,6 +11,8 @@ xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t         # Void
 Already set up? Update with `curl -fsSL https://plaintextlab.org/tuxcraft | sh -s -- --update`.
 Which ISO to boot and more: [Quick start](#quick-start).
 
+![tuxcraft on i3: fastfetch, yazi and btop in the kanagawa theme](assets/screenshots/desktop.webp)
+
 One script from a live ISO to a complete, themed, keyboard-driven Linux desktop —
 **i3 (X11) or sway (Wayland)** on **Arch, Debian or Void**, with btrfs snapshots that
 make a bad update a two-minute fix instead of a reinstall.
@@ -19,6 +21,18 @@ It asks a handful of questions, then does everything else: partitioning, base sy
 drivers, desktop, TUI apps, fonts, colours, login screen, snapshots and a safe update command.
 Configs come from [debi3n](https://github.com/plaintextlab/debi3n), cleaned up and made
 distro-neutral.
+
+## Screenshots
+
+| Neovim (LazyVim, VS Code keys) | App launcher (Super+D) |
+|---|---|
+| ![Neovim with LazyVim and the file explorer](assets/screenshots/neovim.webp) | ![rofi app launcher over the desktop](assets/screenshots/launcher.webp) |
+| **Workspace overview (Super+Space)** | **One palette, every app: `tux-theme set <name>`** |
+| ![grid of workspace thumbnails](assets/screenshots/overview.webp) | ![the same desktop in Catppuccin Mocha, Gruvbox, Nord and Catppuccin Latte](assets/screenshots/themes.webp) |
+
+The theme grid shows Catppuccin Mocha, Gruvbox, Nord and Catppuccin Latte. The bar, borders,
+terminal, file manager, btop, menus and mouse cursor all switch together. Ten themes ship
+with tuxcraft (see `themes/`).
 
 ## Quick start
 
