@@ -1,5 +1,16 @@
 # tuxcraft
 
+Boot a live ISO, connect to the internet, and run:
+
+```sh
+curl -fsSL https://plaintextlab.org/tuxcraft | sh                 # Arch
+wget -qO- https://plaintextlab.org/tuxcraft | sh                  # Debian live
+xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t         # Void
+```
+
+Already set up? Update with `curl -fsSL https://plaintextlab.org/tuxcraft | sh -s -- --update`.
+Which ISO to boot and more: [Quick start](#quick-start).
+
 One script from a live ISO to a complete, themed, keyboard-driven Linux desktop —
 **i3 (X11) or sway (Wayland)** on **Arch, Debian or Void**, with btrfs snapshots that
 make a bad update a two-minute fix instead of a reinstall.
