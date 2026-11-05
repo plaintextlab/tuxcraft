@@ -255,6 +255,14 @@ theme_stage() {
   as_user /usr/local/bin/tux-theme apply || warn "tux-theme apply failed (see $TUX_LOG)"
 }
 
+# LazyVim: install the plugins now, so the first `nvim` opens ready (needs the theme file above).
+nvim_stage() {
+  command -v nvim >/dev/null && [[ -f $TUX_HOME/.config/nvim/init.lua ]] || return 0
+  info "Setting up Neovim (LazyVim plugins, takes a minute)"
+  as_user timeout 900 nvim --headless "+Lazy! sync" +qa >>"$TUX_LOG" 2>&1 ||
+    warn "Neovim plugins not fully installed yet; they finish on first start"
+}
+
 desktop_stage() {
   desktop_packages
   extras_stage
@@ -266,5 +274,6 @@ desktop_stage() {
   wallpapers_stage
   greeter_stage
   theme_stage
+  nvim_stage
   default_apps
 }

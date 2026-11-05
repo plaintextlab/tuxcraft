@@ -81,7 +81,10 @@ tui	bat eza zoxide	bat eza zoxide	bat eza zoxide
 tui	lazygit	lazygit	lazygit
 tui	ncdu	ncdu	ncdu
 tui	micro	micro	micro
-tui	neovim	neovim	neovim
+# Neovim = LazyVim (VS Code-like). Debian 13 ships 0.10 / tree-sitter 0.22: too old, so upstream releases.
+# Node runs most language servers (Python, TypeScript, JSON, YAML, Docker) that LazyVim installs on use.
+tui	neovim tree-sitter-cli	neovim	neovim tree-sitter-cli
+tui	nodejs npm	nodejs npm python3-venv	nodejs
 tui	fastfetch	fastfetch	fastfetch
 tui	starship	-	starship
 tui	pulsemixer	pulsemixer	pulsemixer

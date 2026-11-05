@@ -53,6 +53,33 @@ ensure_wifitui() {
   rm -rf "$t"
 }
 
+# version_ge A B : true when version A >= B
+version_ge() { [[ $(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1) == "$2" ]]; }
+
+# LazyVim needs Neovim >= 0.11 and tree-sitter CLI >= 0.25 (Debian 13: 0.10 / 0.22).
+ensure_neovim() {
+  local v arch
+  v=$(nvim --version 2>/dev/null | sed -n '1s/^NVIM v\([0-9.]*\).*/\1/p')
+  case $(uname -m) in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) return 0 ;; esac
+  if [[ -z $v ]] || ! version_ge "$v" 0.11; then
+    local t; t=$(_tmpdir)
+    if fetch "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-$arch.tar.gz" "$t/n.tgz" &&
+       rm -rf /opt/nvim && mkdir -p /opt/nvim && tar -xzf "$t/n.tgz" -C /opt/nvim --strip-components=1; then
+      ln -sfn /opt/nvim/bin/nvim /usr/local/bin/nvim && ok "Neovim $(/opt/nvim/bin/nvim --version | head -n1) installed from upstream release"
+    else warn "Could not install a recent Neovim; LazyVim needs 0.11+"; fi
+    rm -rf "$t"
+  fi
+  v=$(tree-sitter --version 2>/dev/null | awk '{print $2}')
+  if [[ -z $v ]] || ! version_ge "$v" 0.25; then
+    local t a; t=$(_tmpdir); a=x64; [[ $arch == arm64 ]] && a=arm64
+    if fetch "https://github.com/tree-sitter/tree-sitter/releases/latest/download/tree-sitter-cli-linux-$a.zip" "$t/t.zip" &&
+       (cd "$t" && unzip -qo t.zip) && [[ -f $t/tree-sitter ]]; then
+      install -m755 "$t/tree-sitter" /usr/local/bin/tree-sitter && ok "tree-sitter CLI installed from upstream release"
+    else warn "Could not install the tree-sitter CLI (Neovim syntax parsers will not build)"; fi
+    rm -rf "$t"
+  fi
+}
+
 ensure_starship() {
   command -v starship >/dev/null && return 0; _is_x86_64 || return 0
   local t; t=$(_tmpdir)
@@ -169,6 +196,7 @@ extras_stage() {
   ensure_rmpc
   ensure_blesh
   ensure_wifitui
+  ensure_neovim
   ensure_lazygit
   [[ ${HAS_BT:-0} == 1 ]] || has_word "$TUX_BUNDLES" bluetooth && ensure_bluetui
   ensure_adw_gtk3

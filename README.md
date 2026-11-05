@@ -97,6 +97,27 @@ History keeps 200,000 commands with no duplicates and none of the noise (`clear`
 is saved after every command, and is searched with **Ctrl+R** (fzf) or by typing the start of a
 command and pressing **Up/Down**.
 
+**Neovim = LazyVim, set up like VS Code** (`nvim`): file tree, tabs, fuzzy finder, LSP, completion,
+format on save and git signs, ready on first start (the installer pre-installs the plugins).
+Python, TypeScript/JavaScript, JSON, YAML, TOML, Markdown, Docker and git files are set up;
+their language servers install on first use (`:Mason`), more languages via `:LazyExtras`.
+Colours follow the tuxcraft scheme (its real Neovim theme, or your palette via mini.base16).
+
+| VS Code key | Does |
+|---|---|
+| Ctrl+P / F1 | find file / command palette |
+| Ctrl+Shift+F | search in all files |
+| Ctrl+B | file explorer |
+| Ctrl+/ | toggle comment |
+| Ctrl+S | save |
+| F2 / F12 / Ctrl+. | rename / go to definition / quick fix |
+| Shift+Alt+F | format |
+| Alt+↑ / Alt+↓ | move line |
+| Ctrl+Tab | next tab |
+| Ctrl+\` | terminal |
+
+Everything else: press **Space** and wait, a menu of every command appears.
+
 **Mouse cursor:** coloured like the scheme (Catppuccin cursors in the shade closest to the accent,
 picked and downloaded by `tux-theme`); `CURSOR=Adwaita` in the state file keeps the plain one.
 
