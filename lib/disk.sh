@@ -53,17 +53,35 @@ confirm_wipe() {
   [[ $ans == "$(basename "$TUX_DISK")" ]] || die "Aborted, nothing was changed."
 }
 
+# Unmount everything on disk $1, also a previous attempt's leftovers. Services with their own
+# mount namespace (udevd, logind, bluetoothd on the Debian live ISO) can keep a copy of the old
+# /mnt mounts after it is unmounted here, and sfdisk then calls the disk "in use".
+release_disk() {
+  local disk=$1 p f pid mp i
+  swapoff -a 2>/dev/null || true
+  umount -R "$TARGET" 2>/dev/null || true
+  for p in $(lsblk -lnpo NAME "$disk" | tail -n +2); do umount -f "$p" 2>/dev/null || true; done
+  for f in /proc/[0-9]*/mountinfo; do
+    pid=${f#/proc/}; pid=${pid%%/*}
+    # Field 5 is the mount point; the mount source comes after " - " and the fs type.
+    while read -r mp; do
+      [[ -n $mp ]] || continue
+      _log "Unmounting $mp left in the mount namespace of $(cat "/proc/$pid/comm" 2>/dev/null) ($pid)"
+      nsenter -t "$pid" -m umount "$mp" 2>/dev/null || nsenter -t "$pid" -m umount -l "$mp" 2>/dev/null || true
+    done < <(awk -v d="$disk" '{ split($0, h, " - "); split(h[2], t, " "); if (index(t[2], d) == 1) print $5 }' "$f" 2>/dev/null | sort -r)
+  done
+  udevadm settle 2>/dev/null || true
+  for ((i = 0; i < 10; i++)); do blockdev --rereadpt "$disk" 2>/dev/null && return 0; sleep 1; done
+  die "$disk is still in use (mounted or open somewhere). Reboot the live ISO and run tuxcraft again."
+}
+
 disk_prepare() {
   # A stable /dev/disk/by-id name is safest in an answers file (nvme0/nvme1 can swap between
   # boots), but partition names are derived from the kernel name.
   TUX_DISK=$(readlink -f "$TUX_DISK")
   [[ -b $TUX_DISK ]] || die "$TUX_DISK is not a block device"
   step "Partitioning $TUX_DISK ($BOOT_MODE)"
-  swapoff -a 2>/dev/null || true
-  umount -R "$TARGET" 2>/dev/null || true
-  # Release anything still holding partitions of this disk.
-  local p
-  for p in $(lsblk -lnpo NAME "$TUX_DISK" | tail -n +2); do umount -f "$p" 2>/dev/null || true; done
+  release_disk "$TUX_DISK"
   run wipefs -af "$TUX_DISK"
 
   if [[ $BOOT_MODE == uefi ]]; then
