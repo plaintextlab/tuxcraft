@@ -90,8 +90,11 @@ ensure_box_tools() {
     debian) sudo apt-get install -y podman distrobox ;;
   esac
   if ! command -v distrobox >/dev/null; then   # not packaged on Void: pinned upstream release
-    local v=1.8.2.5 t; t=$(mktemp -d)
-    curl -fsSL "https://github.com/89luca89/distrobox/archive/refs/tags/$v.tar.gz" | tar -xz -C "$t" --strip-components=1 &&
+    local t; t=$(mktemp -d)
+    PIN_TABLE="$SHARE/data/downloads.tsv"
+    # shellcheck source=../lib/pins.sh
+    . "$SHARE/lib/pins.sh"
+    pin_get distrobox "$t/d.tgz" && tar -xzf "$t/d.tgz" -C "$t" --strip-components=1 &&
       sudo "$t/install" --prefix /usr/local >/dev/null; rm -rf "$t"
   fi
   # No systemd user session on Void: podman must manage cgroups itself and log to a file.

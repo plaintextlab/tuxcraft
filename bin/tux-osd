@@ -133,7 +133,7 @@ case $1 in
     show_volume ;;
   mic)
     pactl set-source-mute @DEFAULT_SOURCE@ toggle
-    pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes && note "󰍭  Microphone muted" "" 0 || note "󰍬  Microphone on" "" 100 ;;
+    if pactl get-source-mute @DEFAULT_SOURCE@ | grep -q yes; then note "󰍭  Microphone muted" "" 0; else note "󰍬  Microphone on" "" 100; fi ;;
   brightness) shift; brightness "$@" ;;
   contrast) contrast "$2" ;;
   watch)

@@ -1,0 +1,14 @@
+# Added to Arch's releng package list for the tuxcraft ISO.
+# Debian installs from an Arch host
+debootstrap
+debian-archive-keyring
+# Void installs use the pinned static xbps (downloaded and verified at install time); its
+# archive is .tar.xz
+xz
+# tuxcraft itself
+git
+curl
+wget
+bash
+libarchive
+python

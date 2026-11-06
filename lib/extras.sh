@@ -3,12 +3,14 @@
 # Each installs a static upstream release into /usr/local, only if the tool is missing.
 
 _tmpdir() { mktemp -d /tmp/tuxcraft.XXXXXX; }
+# Every upstream file is pinned and checksum-verified (data/downloads.tsv, lib/pins.sh).
+pfetch() { run pin_get "$1" "$2"; }
 _is_x86_64() { [[ $(uname -m) == x86_64 ]]; }
 
 ensure_yazi() {
   command -v yazi >/dev/null && return 0; _is_x86_64 || return 0
   local t; t=$(_tmpdir)
-  if fetch https://github.com/sxyazi/yazi/releases/latest/download/yazi-x86_64-unknown-linux-gnu.zip "$t/y.zip" &&
+  if pfetch yazi "$t/y.zip" &&
      (cd "$t" && unzip -q y.zip); then
     install -m755 "$t"/yazi-*/yazi "$t"/yazi-*/ya /usr/local/bin/ && ok "yazi installed from upstream release"
   else warn "Could not install yazi"; fi
@@ -18,8 +20,8 @@ ensure_yazi() {
 ensure_rmpc() {
   has_word "$TUX_BUNDLES" music || return 0
   command -v rmpc >/dev/null && return 0; _is_x86_64 || return 0
-  local t tag; t=$(_tmpdir); tag=$(gh_latest_tag mierak/rmpc)
-  if [[ -n $tag ]] && fetch "https://github.com/mierak/rmpc/releases/download/$tag/rmpc-$tag-x86_64-unknown-linux-musl.tar.gz" "$t/r.tgz" &&
+  local t; t=$(_tmpdir)
+  if pfetch rmpc "$t/r.tgz" &&
      tar -xzf "$t/r.tgz" -C "$t"; then
     install -m755 "$t/rmpc" /usr/local/bin/ && ok "rmpc installed from upstream release"
     [[ -f $t/man/rmpc.1 ]] && install -Dm644 "$t/man/rmpc.1" /usr/local/share/man/man1/rmpc.1
@@ -33,9 +35,10 @@ ensure_rmpc() {
 ensure_blesh() {
   [[ -r /usr/local/share/blesh/ble.sh ]] && return 0
   local t; t=$(_tmpdir)
-  if fetch https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz "$t/b.txz" &&
-     tar -xJf "$t/b.txz" -C "$t" && [[ -r $t/ble-nightly/ble.sh ]]; then
-    rm -rf /usr/local/share/blesh && mkdir -p /usr/local/share && cp -a "$t/ble-nightly" /usr/local/share/blesh &&
+  local d
+  if pfetch blesh "$t/b.txz" && tar -xJf "$t/b.txz" -C "$t" && d=$(dirname "$(compgen -G "$t/ble-*/ble.sh" | head -n1)") &&
+     [[ -r $d/ble.sh ]]; then
+    rm -rf /usr/local/share/blesh && mkdir -p /usr/local/share && cp -a "$d" /usr/local/share/blesh &&
       ok "ble.sh installed from upstream release"
   else warn "Could not install ble.sh (bash still works, without command hints)"; fi
   rm -rf "$t"
@@ -44,9 +47,9 @@ ensure_blesh() {
 # wifitui: Wi-Fi TUI for NetworkManager (nicer than nmtui). Not packaged by any distro yet.
 ensure_wifitui() {
   command -v wifitui >/dev/null && return 0
-  local arch; case $(uname -m) in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) return 0 ;; esac
-  local t tag; t=$(_tmpdir); tag=$(gh_latest_tag shazow/wifitui)
-  if [[ -n $tag ]] && fetch "https://github.com/shazow/wifitui/releases/download/$tag/wifitui-${tag#v}-linux-$arch.tar.gz" "$t/w.tgz" &&
+  _is_x86_64 || return 0
+  local t; t=$(_tmpdir)
+  if pfetch wifitui "$t/w.tgz" &&
      tar -xzf "$t/w.tgz" -C "$t" wifitui; then
     install -m755 "$t/wifitui" /usr/local/bin/ && ok "wifitui installed from upstream release"
   else warn "Could not install wifitui; the network menu uses nmtui"; fi
@@ -58,12 +61,12 @@ version_ge() { [[ $(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1) == "$2" ]]
 
 # LazyVim needs Neovim >= 0.11 and tree-sitter CLI >= 0.25 (Debian 13: 0.10 / 0.22).
 ensure_neovim() {
-  local v arch
+  local v
   v=$(nvim --version 2>/dev/null | sed -n '1s/^NVIM v\([0-9.]*\).*/\1/p')
-  case $(uname -m) in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) return 0 ;; esac
+  _is_x86_64 || return 0
   if [[ -z $v ]] || ! version_ge "$v" 0.11; then
     local t; t=$(_tmpdir)
-    if fetch "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-$arch.tar.gz" "$t/n.tgz" &&
+    if pfetch neovim "$t/n.tgz" &&
        rm -rf /opt/nvim && mkdir -p /opt/nvim && tar -xzf "$t/n.tgz" -C /opt/nvim --strip-components=1; then
       ln -sfn /opt/nvim/bin/nvim /usr/local/bin/nvim && ok "Neovim $(/opt/nvim/bin/nvim --version | head -n1) installed from upstream release"
     else warn "Could not install a recent Neovim; LazyVim needs 0.11+"; fi
@@ -71,8 +74,8 @@ ensure_neovim() {
   fi
   v=$(tree-sitter --version 2>/dev/null | awk '{print $2}')
   if [[ -z $v ]] || ! version_ge "$v" 0.25; then
-    local t a; t=$(_tmpdir); a=x64; [[ $arch == arm64 ]] && a=arm64
-    if fetch "https://github.com/tree-sitter/tree-sitter/releases/latest/download/tree-sitter-cli-linux-$a.zip" "$t/t.zip" &&
+    local t; t=$(_tmpdir)
+    if pfetch tree-sitter "$t/t.zip" &&
        (cd "$t" && unzip -qo t.zip) && [[ -f $t/tree-sitter ]]; then
       install -m755 "$t/tree-sitter" /usr/local/bin/tree-sitter && ok "tree-sitter CLI installed from upstream release"
     else warn "Could not install the tree-sitter CLI (Neovim syntax parsers will not build)"; fi
@@ -83,7 +86,7 @@ ensure_neovim() {
 ensure_starship() {
   command -v starship >/dev/null && return 0; _is_x86_64 || return 0
   local t; t=$(_tmpdir)
-  if fetch https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-musl.tar.gz "$t/s.tgz"; then
+  if pfetch starship "$t/s.tgz"; then
     tar -xzf "$t/s.tgz" -C "$t" && install -m755 "$t/starship" /usr/local/bin/ && ok "starship installed from upstream release"
   else warn "Could not install starship"; fi
   rm -rf "$t"
@@ -91,20 +94,14 @@ ensure_starship() {
 
 ensure_bluetui() {
   command -v bluetui >/dev/null && return 0; _is_x86_64 || return 0
-  fetch https://github.com/pythops/bluetui/releases/latest/download/bluetui-x86_64-linux-musl /usr/local/bin/bluetui &&
-    chmod 755 /usr/local/bin/bluetui && ok "bluetui installed from upstream release" || warn "Could not install bluetui"
+  if pfetch bluetui /usr/local/bin/bluetui && chmod 755 /usr/local/bin/bluetui; then ok "bluetui installed from upstream release"
+  else warn "Could not install bluetui"; fi
 }
 
 ensure_lazygit() {
   command -v lazygit >/dev/null && return 0; _is_x86_64 || return 0
-  local t tag v u; t=$(_tmpdir)
-  tag=$(gh_latest_tag jesseduffield/lazygit); v=${tag#v}
-  if [[ -n $tag ]]; then
-    for u in "lazygit_${v}_Linux_x86_64.tar.gz" "lazygit_${v}_linux_x86_64.tar.gz"; do
-      fetch "https://github.com/jesseduffield/lazygit/releases/download/$tag/$u" "$t/l.tgz" && break
-    done
-  fi
-  if [[ -s $t/l.tgz ]] && tar -xzf "$t/l.tgz" -C "$t" lazygit; then
+  local t; t=$(_tmpdir)
+  if pfetch lazygit "$t/l.tgz" && tar -xzf "$t/l.tgz" -C "$t" lazygit; then
     install -m755 "$t/lazygit" /usr/local/bin/ && ok "lazygit installed from upstream release"
   else warn "Could not install lazygit"; fi
   rm -rf "$t"
@@ -113,9 +110,8 @@ ensure_lazygit() {
 # adw-gtk3: makes GTK3 apps look like libadwaita/GTK4 apps, so one palette themes both.
 ensure_adw_gtk3() {
   [[ -d /usr/share/themes/adw-gtk3-dark ]] && return 0
-  local t tag; t=$(_tmpdir)
-  tag=$(gh_latest_tag lassekongo83/adw-gtk3)
-  if [[ -n $tag ]] && fetch "https://github.com/lassekongo83/adw-gtk3/releases/download/$tag/adw-gtk3$tag.tar.xz" "$t/a.txz"; then
+  local t; t=$(_tmpdir)
+  if pfetch adw-gtk3 "$t/a.txz"; then
     tar -xJf "$t/a.txz" -C /usr/share/themes && ok "adw-gtk3 installed from upstream release"
   else warn "Could not install adw-gtk3; GTK3 apps fall back to Adwaita"; fi
   rm -rf "$t"
@@ -123,8 +119,8 @@ ensure_adw_gtk3() {
 
 ensure_papirus_folders() {
   command -v papirus-folders >/dev/null && return 0
-  fetch https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/master/papirus-folders /usr/local/bin/papirus-folders &&
-    chmod 755 /usr/local/bin/papirus-folders || warn "Could not install papirus-folders"
+  if pfetch papirus-folders /usr/local/bin/papirus-folders; then chmod 755 /usr/local/bin/papirus-folders
+  else warn "Could not install papirus-folders"; fi
 }
 
 # Debian ships fd and bat under other names.

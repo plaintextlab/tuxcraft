@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# tux-wifi-live — join a Wi-Fi network on the tuxcraft ISO (iwd), with a numbered list instead
+# of iwctl's syntax. The network is remembered: the installed system joins it on first boot.
+set -uo pipefail
+
+b=$'\e[1m' d=$'\e[2m' n=$'\e[0m'
+dev=$(iwctl device list 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk '$NF == "station" || /station/ { print $1; exit }')
+if [[ -z $dev ]]; then
+  # iwctl prints a header; fall back to the kernel's list of wireless interfaces.
+  dev=$(find /sys/class/net -mindepth 1 -maxdepth 1 -name 'wl*' -printf '%f\n' | head -n1)
+fi
+if [[ -z $dev ]]; then
+  echo "No Wi-Fi adapter found. Plug in a network cable (it connects by itself)."
+  exit 1
+fi
+rfkill unblock wifi 2>/dev/null || true
+
+while :; do
+  echo
+  printf '%sNo internet yet. Connect to Wi-Fi%s %s(adapter %s)%s\n' "$b" "$n" "$d" "$dev" "$n"
+  iwctl station "$dev" scan >/dev/null 2>&1; sleep 3
+  # Rows look like "  > Home WiFi     psk     ****": keep the name, drop security and signal.
+  mapfile -t nets < <(iwctl station "$dev" get-networks 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' |
+    sed -nE 's/^[[:space:]>]*(.*[^[:space:]])[[:space:]]+(psk|open|8021x|wep|owe|sae)[[:space:]]+\**[[:space:]]*$/\1/p' | sort -u)
+  for i in "${!nets[@]}"; do printf '  %2d) %s\n' $((i + 1)) "${nets[$i]}"; done
+  printf '   r) scan again    s) skip (use a cable / another console)\n'
+  read -r -p "Network number (or type a hidden network's name): " pick
+  case $pick in
+    s|S) exit 1 ;;
+    r|R|'') continue ;;
+  esac
+  ssid=$pick
+  [[ $pick =~ ^[0-9]+$ ]] && ((pick >= 1 && pick <= ${#nets[@]})) && ssid=${nets[$((pick - 1))]}
+  read -r -s -p "Password for '$ssid' (Enter if open): " pass; echo
+  if [[ -n $pass ]]; then
+    iwctl --passphrase "$pass" station "$dev" connect "$ssid"
+  else
+    iwctl station "$dev" connect "$ssid"
+  fi
+  for _ in $(seq 1 15); do
+    curl -fsI --max-time 4 https://github.com >/dev/null 2>&1 && { echo "Connected to $ssid."; exit 0; }
+    sleep 1
+  done
+  echo "Could not get online through '$ssid'. Wrong password? Try again."
+done
