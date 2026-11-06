@@ -52,8 +52,18 @@ gpu_stage() {
       has_word "$TUX_BUNDLES" gaming && p+=(lib32-nvidia-utils)
       ;;
     debian)
-      if [[ $NVIDIA_GEN == legacy ]]; then p+=(nvidia-kernel-dkms); else p+=(nvidia-open-kernel-dkms); fi
-      p+=(nvidia-driver nvidia-modprobe firmware-misc-nonfree nvidia-settings linux-headers-amd64)
+      # Headers first, in their own step: DKMS builds the module while the driver installs.
+      # linux-headers-amd64, not linux-headers-$(uname -r): in the chroot uname is the live ISO's.
+      pkg_install linux-headers-amd64
+      if [[ $NVIDIA_GEN == legacy ]]; then
+        p+=(nvidia-kernel-dkms nvidia-driver nvidia-modprobe)
+      elif nvidia_debian_repo; then
+        p+=(nvidia-open nvidia-modprobe)
+      else
+        warn "Could not add NVIDIA's repository; trying Debian's own driver"
+        p+=(nvidia-open-kernel-dkms nvidia-driver nvidia-modprobe)
+      fi
+      p+=(firmware-misc-nonfree nvidia-settings)
       ;;
     void)
       pkg_install void-repo-nonfree; pkg_refresh
@@ -73,8 +83,23 @@ EOF
   if [[ $INIT == systemd ]]; then
     svc_enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
     # Dynamic Boost: shifts power between CPU and GPU on Ampere+ laptops (no-op elsewhere).
-    if ((IS_LAPTOP)) && [[ $DISTRO == arch ]]; then svc_enable nvidia-powerd.service; fi
+    if ((IS_LAPTOP)) && [[ -e /usr/lib/systemd/system/nvidia-powerd.service || -e /lib/systemd/system/nvidia-powerd.service ]]; then svc_enable nvidia-powerd.service; fi
   fi
+}
+
+# Debian's own NVIDIA driver trails its kernel: 550.163.01 no longer builds on 6.12.115
+# (pci_resize_resource changed), so modern GPUs get NVIDIA's repository for Debian and its
+# nvidia-open driver, as NVIDIA documents. Its versions are newer, so apt prefers them.
+nvidia_debian_repo() {
+  local v deb=/tmp/cuda-keyring.deb
+  v=$(. /etc/os-release && echo "${VERSION_ID%%.*}")
+  [[ -n $v ]] || return 1
+  info "Adding NVIDIA's repository for Debian $v"
+  fetch "https://developer.download.nvidia.com/compute/cuda/repos/debian$v/x86_64/cuda-keyring_1.1-1_all.deb" "$deb" || return 1
+  run dpkg -i "$deb" || return 1
+  rm -f "$deb"
+  pkg_refresh
+  pkg_available nvidia-open
 }
 
 # CUDA and NVENC (OBS, Blender, DaVinci Resolve, Flatpak apps) need /dev/nvidia-uvm. Loading the
