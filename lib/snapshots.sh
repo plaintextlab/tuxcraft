@@ -31,7 +31,7 @@ snapshots_stage() {
 
   snap_config root /
   # /home is its own subvolume: snapshots protect against "I deleted my thesis" moments.
-  if [[ $(findmnt -no FSTYPE /home) == btrfs ]] && findmnt -no OPTIONS /home | grep -q subvol; then
+  if [[ $(findmnt -no FSTYPE /home) == btrfs ]] && findmnt -no OPTIONS /home | grep subvol >/dev/null; then
     snap_config home /home
   fi
 

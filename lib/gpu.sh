@@ -73,7 +73,7 @@ EOF
   if [[ $INIT == systemd ]]; then
     svc_enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
     # Dynamic Boost: shifts power between CPU and GPU on Ampere+ laptops (no-op elsewhere).
-    ((IS_LAPTOP)) && [[ $DISTRO == arch ]] && svc_enable nvidia-powerd.service
+    if ((IS_LAPTOP)) && [[ $DISTRO == arch ]]; then svc_enable nvidia-powerd.service; fi
   fi
 }
 

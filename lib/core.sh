@@ -56,7 +56,7 @@ detect_gpu() {
   # NVIDIA generation: Turing (TU) and newer use the open kernel modules.
   NVIDIA_GEN=''
   if has_word "$GPU_VENDORS" nvidia && command -v lspci >/dev/null; then
-    if lspci -nn | grep -iE 'vga|3d|display' | grep -i nvidia | grep -qE '\b(TU|GA|GH|AD|GB)[0-9]{3}'; then
+    if lspci -nn | grep -iE 'vga|3d|display' | grep -i nvidia | grep -E '\b(TU|GA|GH|AD|GB)[0-9]{3}' >/dev/null; then
       NVIDIA_GEN=modern
     else
       NVIDIA_GEN=legacy

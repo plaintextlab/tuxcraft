@@ -25,10 +25,12 @@ pkg_refresh() {
   esac
 }
 
+# No "grep -q" after a pipe here: it exits at the first match, the command before it dies of
+# SIGPIPE, and with pipefail the check fails (on Debian every package looked unavailable).
 pkg_available() {
   case $DISTRO in
     arch)   pacman -Si "$1" &>/dev/null || pacman -Sg "$1" &>/dev/null ;;
-    debian) apt-cache policy "$1" 2>/dev/null | grep -q 'Candidate: [^(]' ;;
+    debian) apt-cache policy "$1" 2>/dev/null | grep 'Candidate: [^(]' >/dev/null ;;
     void)   xbps-query -R "$1" &>/dev/null ;;
   esac
 }
@@ -36,7 +38,7 @@ pkg_available() {
 pkg_installed() {
   case $DISTRO in
     arch)   pacman -Qq "$1" &>/dev/null ;;
-    debian) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed' ;;
+    debian) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep 'install ok installed' >/dev/null ;;
     void)   xbps-query "$1" &>/dev/null ;;
   esac
 }

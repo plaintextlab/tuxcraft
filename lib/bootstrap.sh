@@ -81,7 +81,7 @@ bootstrap_void() {
   mirror=$(bash "$TUX_SRC/bin/tux-mirror" --best) || warn "No mirror answered the speed test; using the default"
   info "Mirror: $mirror"
   repo=$mirror/current
-  if ldd --version 2>&1 | grep -qi musl; then repo+=/musl; arch+=-musl; fi
+  if ldd --version 2>&1 | grep -i musl >/dev/null; then repo+=/musl; arch+=-musl; fi
   step "Installing Void Linux base (xbps, $arch)"
   run xbps-install -Syu -R "$repo" xbps || true
   mkdir -p "$TARGET/var/db/xbps/keys"
