@@ -147,6 +147,23 @@ EOF
   echo 'vm.swappiness = 100' >/etc/sysctl.d/99-tuxcraft-zram.conf
 }
 
+# Linux caches writes in RAM (up to ~20% of it) and lets the copy "finish" before the data is on
+# the disk, so a copy to a USB stick races to 100% and then hangs in sync/unmount. Cap the write
+# cache of USB disks and SD cards only (kernel 6.2+ strict per-device limit): file managers then
+# show the real progress, while internal disks keep the large cache that makes them fast.
+sys_writeback() {
+  mkdir -p /etc/udev/rules.d
+  cat >/etc/udev/rules.d/60-tuxcraft-usb-writeback.rules <<'EOF'
+# tuxcraft: at most 16 MiB of unwritten data per USB disk / SD card, so copy progress is real
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb", ATTR{bdi/strict_limit}="1", ATTR{bdi/max_bytes}="16777216"
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="mmcblk[0-9]*", ATTRS{type}=="SD", ATTR{bdi/strict_limit}="1", ATTR{bdi/max_bytes}="16777216"
+EOF
+  # Apply now to disks already plugged in (no-op in the installer chroot, where udevd is not running).
+  if udevadm control --reload 2>/dev/null; then
+    udevadm trigger --subsystem-match=block --action=change 2>/dev/null || true
+  fi
+}
+
 # Package manager defaults that make updates pleasant and safe.
 sys_pkgmanager() {
   step "Tuning $DISTRO package management"

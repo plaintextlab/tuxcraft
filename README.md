@@ -112,6 +112,10 @@ with the DOS font. Change any time with **Super+Ctrl+F** or `tux-font set dos 13
 Shared by both: **kitty** (via `tux-term`), dunst, PipeWire, NetworkManager, polkit agent, gnome-keyring,
 udiskie, gammastep (night light), xdg portals, Papirus icons, adw-gtk3.
 
+**Copying to USB sticks shows the real progress:** USB disks and SD cards may hold at most 16 MiB
+of unwritten data in RAM, so a copy no longer jumps to 100% and then hangs while the data is
+still being written (or the unmount does). Internal disks keep the normal large write cache.
+
 **Login screen:** greetd + **tuigreet** — a TUI login that fits a keyboard-driven setup, works with
 X11 and Wayland, systemd and runit, and is coloured by the system theme (the console palette is
 themed too). LightDM is used only if tuigreet is not packaged.

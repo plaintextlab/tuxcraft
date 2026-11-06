@@ -80,6 +80,7 @@ else
   wn "root is not btrfs: snapshot checks skipped"
 fi
 check "zram swap active" bash -c 'swapon --show=NAME --noheadings | grep -q zram'
+check "USB/SD write-cache cap rule" test -f /etc/udev/rules.d/60-tuxcraft-usb-writeback.rules
 
 section "Boot"
 check "GRUB config present" $SUDO test -f /boot/grub/grub.cfg
