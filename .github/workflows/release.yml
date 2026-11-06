@@ -1,0 +1,62 @@
+# Push a tag like v1.2.0 → a GitHub release with:
+#   tuxcraft.tar.gz        the source, exactly as tagged
+#   install.sh             the one-line installer, pinned to that tarball and its SHA-256
+#   tuxcraft-*.iso         the live ISO (+ .sha256)
+#   SHA256SUMS
+# Point https://plaintextlab.org/tuxcraft at
+#   https://github.com/plaintextlab/tuxcraft/releases/latest/download/install.sh
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: pins complete
+        run: scripts/update-pins.sh --check
+      - name: tarball + pinned installer
+        run: |
+          tag=${GITHUB_REF_NAME}
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="tuxcraft-${tag#v}/" -o dist/tuxcraft.tar.gz "$tag"
+          sum=$(sha256sum dist/tuxcraft.tar.gz | awk '{print $1}')
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/tuxcraft.tar.gz"
+          sed -e "s|^TUX_REPO_TARBALL=.*|TUX_REPO_TARBALL=\${TUX_REPO_TARBALL:-$url}|" \
+              -e "s|^TUX_REPO_SHA256=.*|TUX_REPO_SHA256=\${TUX_REPO_SHA256:-$sum}|" install.sh >dist/install.sh
+          grep -q "$sum" dist/install.sh
+      - uses: actions/upload-artifact@v4
+        with: { name: source, path: dist/ }
+
+  iso:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    steps:
+      - run: pacman -Syu --noconfirm --needed archiso git
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          TUX_VERSION=${GITHUB_REF_NAME} iso/build.sh "$GITHUB_WORKSPACE/out"
+      - uses: actions/upload-artifact@v4
+        with: { name: iso, path: "out/tuxcraft-*" }
+
+  publish:
+    needs: [source, iso]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: a, merge-multiple: true }
+      - run: cd a && sha256sum tuxcraft.tar.gz install.sh tuxcraft-*.iso >SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: a/*
+          generate_release_notes: true

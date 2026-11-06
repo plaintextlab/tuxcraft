@@ -1,0 +1,31 @@
+# Weekly: bump pinned upstream downloads (data/downloads.tsv) and open a pull request.
+# Review the diff before merging: each new hash is a file you are choosing to trust.
+name: pins
+
+on:
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: update pins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/update-pins.sh
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          branch: pins/update
+          title: "Bump pinned downloads"
+          commit-message: "Bump pinned upstream downloads"
+          body: |
+            Automated by `scripts/update-pins.sh`. Check the version jumps in the diff, then add
+            the `vm-test` label so CI installs all three distros with the new files before merging.
+          labels: vm-test

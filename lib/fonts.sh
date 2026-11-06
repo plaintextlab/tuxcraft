@@ -20,7 +20,7 @@ font_install() {  # font_install key
       [[ -d $FONT_DIR/$name ]] && return 0
       local t; t=$(mktemp -d)
       info "Downloading $name Nerd Font"
-      if fetch "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/$name.tar.xz" "$t/f.txz"; then
+      if run pin_get "nerd:$name" "$t/f.txz"; then
         mkdir -p "$FONT_DIR/$name"
         tar -xJf "$t/f.txz" -C "$FONT_DIR/$name" --wildcards '*.ttf' '*.otf' 2>/dev/null ||
           tar -xJf "$t/f.txz" -C "$FONT_DIR/$name"
@@ -42,8 +42,11 @@ fonts_stage() {
   for name in NerdFontsSymbolsOnly; do
     [[ -d $FONT_DIR/$name ]] && continue
     t=$(mktemp -d)
-    fetch "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/$name.tar.xz" "$t/f.txz" &&
+    if run pin_get "nerd:$name" "$t/f.txz"; then
       mkdir -p "$FONT_DIR/$name" && tar -xJf "$t/f.txz" -C "$FONT_DIR/$name"
+    else
+      warn "Download of $name failed: bar and launcher icons will be missing"
+    fi
     rm -rf "$t"
   done
   font_install jetbrains

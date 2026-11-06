@@ -11,6 +11,9 @@
 # or any installed cursor theme (CURSOR=auto to go back).
 set -uo pipefail
 SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+PIN_TABLE="$SHARE/data/downloads.tsv"
+# shellcheck source=../lib/pins.sh
+. "$SHARE/lib/pins.sh"
 CONF="$HOME/.config/tuxcraft"; STATE="$CONF/state"
 VERSION=v2.0.0
 ICONS="$HOME/.local/share/icons"
@@ -70,7 +73,7 @@ fetch_set() {  # the Catppuccin set, unzipped once into the cache
   command -v unzip >/dev/null || return 1
   local t; t=$(mktemp -d)
   mkdir -p "$CACHE"
-  curl -fsSL --max-time 60 -o "$t/c.zip" "https://github.com/catppuccin/cursors/releases/download/$VERSION/$1.zip" &&
+  pin_get "cursor:$1" "$t/c.zip" &&
     unzip -qo "$t/c.zip" -d "$CACHE"
   rm -rf "$t"
   [[ -f $CACHE/$1/index.theme ]]

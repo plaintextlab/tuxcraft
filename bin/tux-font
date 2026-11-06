@@ -10,6 +10,9 @@ SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
 TABLE="$SHARE/data/fonts.tsv"
 STATE="$HOME/.config/tuxcraft/state"
 UFONTS="$HOME/.local/share/fonts/tuxcraft"
+PIN_TABLE="$SHARE/data/downloads.tsv"
+# shellcheck source=../lib/pins.sh
+. "$SHARE/lib/pins.sh"
 
 field() { awk -F'\t' -v k="$1" -v c="$2" '$1==k {print $c}' "$TABLE"; }
 state_set() { touch "$STATE"; grep -q "^$1=" "$STATE" && sed -i "s|^$1=.*|$1=\"$2\"|" "$STATE" || echo "$1=\"$2\"" >>"$STATE"; }
@@ -20,9 +23,10 @@ ensure() {
   case $src in
     nerd:*)
       notify-send -u low "Downloading ${src#nerd:} Nerd Font…" 2>/dev/null || echo "Downloading ${src#nerd:}…"
+      local t; t=$(mktemp -d)
+      pin_get "$src" "$t/f.txz" || { rm -rf "$t"; echo "Download of ${src#nerd:} failed" >&2; return 1; }
       mkdir -p "$UFONTS/${src#nerd:}"
-      curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/${src#nerd:}.tar.xz" |
-        tar -xJ -C "$UFONTS/${src#nerd:}" ;;
+      tar -xJf "$t/f.txz" -C "$UFONTS/${src#nerd:}"; rm -rf "$t" ;;
     bundled:*) install -Dm644 "$SHARE/assets/fonts/${src#bundled:}" "$UFONTS/bundled/${src#bundled:}" ;;
   esac
   fc-cache -f "$UFONTS" >/dev/null

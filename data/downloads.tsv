@@ -1,0 +1,36 @@
+# Every upstream file tuxcraft downloads (outside distro repositories), pinned with its SHA-256.
+# Read by lib/pins.sh. Do not edit hashes by hand: run scripts/update-pins.sh.
+#
+# key	track	version	url	sha256
+#   track:  latest:OWNER/REPO       follow the repository's latest GitHub release
+#           commit:OWNER/REPO@REF   follow the newest commit of a branch (raw files)
+#           fixed                   only change by hand (then the script refreshes the hash)
+#   url:    {v} = version as tagged, {V} = version without a leading "v"
+#           several URLs separated by " | ": the script keeps the first that exists
+yazi	latest:sxyazi/yazi		https://github.com/sxyazi/yazi/releases/download/{v}/yazi-x86_64-unknown-linux-gnu.zip
+rmpc	latest:mierak/rmpc		https://github.com/mierak/rmpc/releases/download/{v}/rmpc-{v}-x86_64-unknown-linux-musl.tar.gz
+blesh	fixed	v0.4.0-devel3	https://github.com/akinomyoga/ble.sh/releases/download/{v}/ble-{V}.tar.xz
+wifitui	latest:shazow/wifitui		https://github.com/shazow/wifitui/releases/download/{v}/wifitui-{V}-linux-x86_64.tar.gz
+neovim	latest:neovim/neovim		https://github.com/neovim/neovim/releases/download/{v}/nvim-linux-x86_64.tar.gz
+tree-sitter	latest:tree-sitter/tree-sitter		https://github.com/tree-sitter/tree-sitter/releases/download/{v}/tree-sitter-cli-linux-x64.zip
+starship	latest:starship/starship		https://github.com/starship/starship/releases/download/{v}/starship-x86_64-unknown-linux-musl.tar.gz
+bluetui	latest:pythops/bluetui		https://github.com/pythops/bluetui/releases/download/{v}/bluetui-x86_64-linux-musl
+lazygit	latest:jesseduffield/lazygit		https://github.com/jesseduffield/lazygit/releases/download/{v}/lazygit_{V}_linux_x86_64.tar.gz | https://github.com/jesseduffield/lazygit/releases/download/{v}/lazygit_{V}_Linux_x86_64.tar.gz
+adw-gtk3	latest:lassekongo83/adw-gtk3		https://github.com/lassekongo83/adw-gtk3/releases/download/{v}/adw-gtk3{v}.tar.xz
+papirus-folders	commit:PapirusDevelopmentTeam/papirus-folders@master		https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/{v}/papirus-folders
+distrobox	fixed	1.8.2.5	https://github.com/89luca89/distrobox/archive/refs/tags/{v}.tar.gz
+nerd:NerdFontsSymbolsOnly	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/NerdFontsSymbolsOnly.tar.xz
+nerd:JetBrainsMono	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/JetBrainsMono.tar.xz
+nerd:Iosevka	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Iosevka.tar.xz
+nerd:FiraCode	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/FiraCode.tar.xz
+nerd:CascadiaCode	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/CascadiaCode.tar.xz
+nerd:IBMPlexMono	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/IBMPlexMono.tar.xz
+nerd:Hack	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Hack.tar.xz
+nerd:0xProto	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/0xProto.tar.xz
+nerd:Terminus	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Terminus.tar.xz
+nerd:DepartureMono	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/DepartureMono.tar.xz
+# Catppuccin cursor sets (tux-cursor): one row per .zip of the release, added by the script.
+cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/tag/{v}	-
+# Bootstrap of Debian / Void from a host that is not Debian / Void (the tuxcraft ISO, for one).
+debian-keyring	debian:trixie/debian-archive-keyring		https://deb.debian.org/debian/{v}	
+xbps-static	void-static		https://repo-default.voidlinux.org/static/xbps-static-static-{v}.x86_64-musl.tar.xz	

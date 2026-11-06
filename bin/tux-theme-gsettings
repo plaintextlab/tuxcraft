@@ -9,7 +9,7 @@ ini="$HOME/.config/gtk-3.0/settings.ini"
 gtk=$(sed -n 's/^gtk-theme-name=//p' "$ini"); icons=$(sed -n 's/^gtk-icon-theme-name=//p' "$ini")
 gsettings set $gi gtk-theme "$gtk"
 gsettings set $gi icon-theme "$icons"
-[[ $gtk == *dark* ]] && gsettings set $gi color-scheme prefer-dark || gsettings set $gi color-scheme prefer-light
+if [[ $gtk == *dark* ]]; then gsettings set $gi color-scheme prefer-dark; else gsettings set $gi color-scheme prefer-light; fi
 gsettings set $gi font-name "${FONT:-Noto Sans} ${FONT_SIZE:-11}"
 gsettings set $gi monospace-font-name "${TERM_FONT:-monospace} ${TERM_FONT_SIZE:-12}"
 cur=$(sed -n 's/^gtk-cursor-theme-name=//p' "$ini"); gsettings set $gi cursor-theme "${cur:-Adwaita}"
