@@ -27,10 +27,15 @@ if [[ -z $font ]]; then
   if   ((h >= 1800)); then size=32
   elif ((h >= 1300)); then size=28
   elif ((h >= 1000)); then size=24
-  else exit 0; fi
-  font=$(font_for "$size")
-  [[ -n $font ]] || exit 0
+  else size=''; fi
+  [[ -n $size ]] && font=$(font_for "$size")
 fi
-command -v setfont >/dev/null || exit 0
-for t in /dev/tty{1..7}; do setfont -C "$t" "$font" 2>/dev/null; done
+# UTF-8 on every tty first (output: ESC % G, keyboard: kbd_mode -u), so the greeter's box
+# drawing works even if console-setup switched a console to a legacy charset.
+for t in /dev/tty{1..7}; do
+  printf '\033%%G' >"$t" 2>/dev/null
+  command -v kbd_mode >/dev/null && kbd_mode -u -C "$t" 2>/dev/null
+done
+[[ -n $font ]] && command -v setfont >/dev/null &&
+  for t in /dev/tty{1..7}; do setfont -C "$t" "$font" 2>/dev/null; done
 exit 0

@@ -51,6 +51,19 @@ XKBVARIANT=""
 XKBOPTIONS=""
 BACKSPACE="guess"
 EOF
+      # debootstrap leaves CHARMAP="ISO-8859-15": the console is then not in UTF-8 mode and
+      # tuigreet's box-drawing borders come out as "âöÇâöÇ". The font is set by tux-console.
+      cat >/etc/default/console-setup <<EOF
+ACTIVE_CONSOLES="/dev/tty[1-6]"
+CHARMAP="UTF-8"
+CODESET="guess"
+FONTFACE="Fixed"
+FONTSIZE="8x16"
+VIDEOMODE=
+EOF
+      # Rebuild the cached boot scripts; the old ones (udev runs them on every new VT) still
+      # switch each console to ISO-8859-15.
+      setupcon --save-only 2>/dev/null || warn "Could not rebuild the console-setup cache"
       ;;
   esac
   # X11 layout; sway reads its own input config (written by the desktop stage)
