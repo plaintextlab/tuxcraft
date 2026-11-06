@@ -5,7 +5,7 @@
 #   From an installed system:                       sets up the desktop on top of it
 #
 #   curl -fsSL https://plaintextlab.org/tuxcraft | sh                 (Arch)
-#   wget -qO- https://plaintextlab.org/tuxcraft | sh                  (Debian live)
+#   wget -nv -O- https://plaintextlab.org/tuxcraft | sh              (Debian live)
 #   xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t         (Void)
 #   (the same with https://raw.githubusercontent.com/plaintextlab/tuxcraft/main/install.sh)
 #   sudo ./install.sh [--config answers.conf] [--yes] [--desktop]
@@ -26,7 +26,7 @@ if [ ! -f "$TUX_SRC/lib/ui.sh" ]; then
   elif command -v wget >/dev/null; then wget -qO "$dl.tar.gz" "$TUX_REPO_TARBALL"
   elif command -v xbps-fetch >/dev/null; then xbps-fetch -o "$dl.tar.gz" "$TUX_REPO_TARBALL" >/dev/null
   else echo "Need curl, wget or xbps-fetch to download tuxcraft" >&2; exit 1; fi || {
-    echo "Download failed. Connected to the internet? (Wi-Fi: iwctl on Arch, nmtui on Debian/Void)" >&2; exit 1; }
+    echo "Download failed. Connected to the internet? (Arch: iwctl; Debian live: sudo dhcpcd, Wi-Fi in the README; Void: nmtui)" >&2; exit 1; }
   tar -xzf "$dl.tar.gz" -C "$dl" --strip-components=1 || { echo "Download was not a tuxcraft archive" >&2; exit 1; }
   command -v bash >/dev/null || { echo "tuxcraft needs bash" >&2; exit 1; }
   # stdin is the download pipe: answer the questions from the keyboard instead.

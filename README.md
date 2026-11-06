@@ -4,7 +4,7 @@ Boot a live ISO, connect to the internet, and run:
 
 ```sh
 curl -fsSL https://plaintextlab.org/tuxcraft | sh                 # Arch
-wget -qO- https://plaintextlab.org/tuxcraft | sh                  # Debian live
+wget -nv -O- https://plaintextlab.org/tuxcraft | sh              # Debian live
 xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t         # Void
 ```
 
@@ -43,8 +43,15 @@ everything and reboots into the new desktop.
 | Distro | Boot this | The one command |
 |---|---|---|
 | Arch | official `archlinux-*.iso` (Wi-Fi: `iwctl`) | `curl -fsSL https://plaintextlab.org/tuxcraft \| sh` |
-| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell) | `wget -qO- https://plaintextlab.org/tuxcraft \| sh` |
+| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell). No nmtui there: wired `sudo dhcpcd`, Wi-Fi below | `wget -nv -O- https://plaintextlab.org/tuxcraft \| sh` |
 | Void | `void-live-x86_64-*-base.iso`, glibc (log in as `root`/`voidlinux`; Wi-Fi: `nmtui`) | `xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t` |
+
+Wi-Fi on the Debian live ISO (find the interface name with `ip link`, e.g. `wlp2s0`):
+
+```sh
+wpa_passphrase 'MyNetwork' 'MyPassword' | sudo tee /etc/wpa.conf >/dev/null
+sudo wpa_supplicant -B -i wlp2s0 -c /etc/wpa.conf && sudo dhcpcd wlp2s0
+```
 
 Each uses the download tool that ISO already has (curl, wget, xbps-fetch) and needs no git:
 the repository comes as a tarball. `| sh` and `| bash` both work. The script becomes

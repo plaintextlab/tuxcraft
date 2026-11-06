@@ -108,7 +108,7 @@ live_prereqs() {
   for t in sfdisk mkfs.btrfs mkfs.fat wipefs blkid findmnt; do
     command -v "$t" >/dev/null || [[ $t == mkfs.fat && $BOOT_MODE == bios ]] || die "Missing tool on live system: $t"
   done
-  ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Arch: iwctl, others: nmtui) and re-run."
+  ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Arch: iwctl; Debian live: sudo dhcpcd, Wi-Fi in the README; others: nmtui) and re-run."
 }
 
 # Wi-Fi joined on the live ISO (iwctl on Arch, NetworkManager elsewhere) works on first boot too.
