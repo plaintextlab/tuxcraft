@@ -26,7 +26,7 @@ if [ ! -f "$TUX_SRC/lib/ui.sh" ]; then
   elif command -v wget >/dev/null; then wget -qO "$dl.tar.gz" "$TUX_REPO_TARBALL"
   elif command -v xbps-fetch >/dev/null; then xbps-fetch -o "$dl.tar.gz" "$TUX_REPO_TARBALL" >/dev/null
   else echo "Need curl, wget or xbps-fetch to download tuxcraft" >&2; exit 1; fi || {
-    echo "Download failed. Connected to the internet? (Arch: iwctl; Debian live: sudo dhcpcd, Wi-Fi in the README; Void: nmtui)" >&2; exit 1; }
+    echo "Download failed. Connected to the internet? Wi-Fi: see 'Connecting to the internet' in the README" >&2; exit 1; }
   tar -xzf "$dl.tar.gz" -C "$dl" --strip-components=1 || { echo "Download was not a tuxcraft archive" >&2; exit 1; }
   command -v bash >/dev/null || { echo "tuxcraft needs bash" >&2; exit 1; }
   # stdin is the download pipe: answer the questions from the keyboard instead.

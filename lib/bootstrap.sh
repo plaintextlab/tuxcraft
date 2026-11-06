@@ -108,10 +108,35 @@ live_prereqs() {
   for t in sfdisk mkfs.btrfs mkfs.fat wipefs blkid findmnt; do
     command -v "$t" >/dev/null || [[ $t == mkfs.fat && $BOOT_MODE == bios ]] || die "Missing tool on live system: $t"
   done
-  ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Arch: iwctl; Debian live: sudo dhcpcd, Wi-Fi in the README; others: nmtui) and re-run."
+  ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Wi-Fi: see 'Connecting to the internet' in the README) and re-run."
 }
 
-# Wi-Fi joined on the live ISO (iwctl on Arch, NetworkManager elsewhere) works on first boot too.
+# A NetworkManager Wi-Fi profile: write_nm_wifi FILE SSID PSK
+write_nm_wifi() {
+  cat >"$1" <<EOF
+[connection]
+id=$2
+uuid=$(cat /proc/sys/kernel/random/uuid)
+type=wifi
+
+[wifi]
+mode=infrastructure
+ssid=$2
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$3
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+}
+
+# Wi-Fi joined on the live ISO (iwd on Arch, wpa_supplicant on Debian/Void, or NetworkManager)
+# works on first boot too.
 carry_over_wifi() {
   local dst=$TARGET/etc/NetworkManager/system-connections f ssid psk n=0
   mkdir -p "$dst"
@@ -124,28 +149,26 @@ carry_over_wifi() {
     [[ $ssid == =* ]] && continue   # hex-encoded SSID, too unusual to translate safely
     psk=$(sed -n 's/^Passphrase=//p' "$f")
     [[ -n $psk ]] || continue
-    cat >"$dst/$ssid.nmconnection" <<EOF
-[connection]
-id=$ssid
-uuid=$(cat /proc/sys/kernel/random/uuid)
-type=wifi
-
-[wifi]
-mode=infrastructure
-ssid=$ssid
-
-[wifi-security]
-key-mgmt=wpa-psk
-psk=$psk
-
-[ipv4]
-method=auto
-
-[ipv6]
-method=auto
-EOF
+    write_nm_wifi "$dst/$ssid.nmconnection" "$ssid" "$psk"
     n=1
   done
+  # Debian / Void live: networks added with wpa_passphrase (see the README). One "ssid<TAB>psk"
+  # line per network block; psk is the passphrase, or the 64-hex key NetworkManager also accepts.
+  local wpa=/etc/wpa_supplicant/wpa_supplicant.conf
+  if [[ -f $wpa ]]; then
+    while IFS=$'\t' read -r ssid psk; do
+      [[ -n $ssid && -n $psk && $ssid != */* ]] || continue
+      [[ -f $dst/$ssid.nmconnection ]] && continue
+      write_nm_wifi "$dst/$ssid.nmconnection" "$ssid" "$psk"
+      n=1
+    done < <(awk '
+      /^[ \t]*network=\{/ { ssid = ""; pass = ""; hex = ""; open = 1; next }
+      open && /^[ \t]*ssid="/   { sub(/^[ \t]*ssid="/, ""); sub(/"[ \t]*$/, ""); ssid = $0 }
+      open && /^[ \t]*#psk="/   { sub(/^[ \t]*#psk="/, ""); sub(/"[ \t]*$/, ""); pass = $0 }
+      open && /^[ \t]*psk=/     { sub(/^[ \t]*psk=/, ""); gsub(/[ \t"]/, ""); hex = $0 }
+      open && /^[ \t]*\}/       { if (ssid != "") print ssid "\t" (pass != "" ? pass : hex); open = 0 }
+    ' "$wpa")
+  fi
   chmod 600 "$dst"/*.nmconnection 2>/dev/null || true
   ((n)) && info "Wi-Fi from the live system copied to the new one"
   return 0

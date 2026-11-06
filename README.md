@@ -42,16 +42,51 @@ everything and reboots into the new desktop.
 
 | Distro | Boot this | The one command |
 |---|---|---|
-| Arch | official `archlinux-*.iso` (Wi-Fi: `iwctl`) | `curl -fsSL https://plaintextlab.org/tuxcraft \| sh` |
-| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell). No nmtui there: wired `sudo dhcpcd`, Wi-Fi below | `wget -nv -O- https://plaintextlab.org/tuxcraft \| sh` |
-| Void | `void-live-x86_64-*-base.iso`, glibc (log in as `root`/`voidlinux`; Wi-Fi: `nmtui`) | `xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t` |
+| Arch | official `archlinux-*.iso` | `curl -fsSL https://plaintextlab.org/tuxcraft \| sh` |
+| Debian | a **live** ISO, e.g. `debian-live-13-*-standard.iso` (the netinst image has no shell) | `wget -nv -O- https://plaintextlab.org/tuxcraft \| sh` |
+| Void | `void-live-x86_64-*-base.iso`, glibc (log in as `root`/`voidlinux`) | `xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t` |
 
-Wi-Fi on the Debian live ISO (find the interface name with `ip link`, e.g. `wlp2s0`):
+### Connecting to the internet
+
+A network cable just works on Arch and Void. On Debian, run `sudo dhcpcd` once. For Wi-Fi,
+first find your Wi-Fi interface: `ip link` lists it, its name starts with `wl` (e.g. `wlan0`,
+`wlp2s0`). Replace `wlan0` below with yours, and `MyNetwork` / `MyPassword` with your own
+(keep the single quotes).
+
+**Arch** (iwd):
 
 ```sh
-wpa_passphrase 'MyNetwork' 'MyPassword' | sudo tee /etc/wpa.conf >/dev/null
-sudo wpa_supplicant -B -i wlp2s0 -c /etc/wpa.conf && sudo dhcpcd wlp2s0
+iwctl station wlan0 scan && iwctl station wlan0 get-networks   # optional: list networks
+iwctl --passphrase 'MyPassword' station wlan0 connect 'MyNetwork'
 ```
+
+**Debian live** (the standard ISO has no NetworkManager, so no nmtui):
+
+```sh
+wpa_passphrase 'MyNetwork' 'MyPassword' | sudo tee -a /etc/wpa_supplicant/wpa_supplicant.conf >/dev/null
+sudo wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant/wpa_supplicant.conf && sudo dhcpcd wlan0
+```
+
+**Void** (the base ISO has no NetworkManager either; wpa_supplicant and dhcpcd already run,
+and you are root):
+
+```sh
+wpa_passphrase 'MyNetwork' 'MyPassword' >> /etc/wpa_supplicant/wpa_supplicant.conf
+sv restart wpa_supplicant
+```
+
+Then check with `ping -c2 github.com`. If that fails:
+
+- **No `wl…` interface:** the card was not recognised. A cable or USB tethering from your
+  phone is the quick way around it (Debian: `sudo dhcpcd`).
+- **"RF-kill" / blocked:** Wi-Fi is switched off by a hardware switch or Fn key. Turn it on
+  (Arch also has `rfkill unblock wifi`).
+- **Still no address:** usually a mistyped name or password. Run `wpa_supplicant` without
+  `-B` (Debian/Void) to see why it is refused, or check `iwctl station wlan0 show` (Arch).
+- **Desktop live ISO** (GNOME, KDE, Xfce…): it has NetworkManager. Use the panel's Wi-Fi menu
+  or `nmtui`.
+
+The Wi-Fi you join here is copied into the new system, so it is online on first boot.
 
 Each uses the download tool that ISO already has (curl, wget, xbps-fetch) and needs no git:
 the repository comes as a tarball. `| sh` and `| bash` both work. The script becomes
