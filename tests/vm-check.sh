@@ -108,7 +108,8 @@ else apps=(i3 polybar rofi picom feh i3lock xss-lock maim xclip startx xsettings
 apps+=(kitty tux-term dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
 for a in "${apps[@]}"; do command -v "$a" >/dev/null || bad "missing: $a"; done
 ok "session programs checked"
-check "polkit agent found" bash -c 'grep -o "/usr/[^ ]*polkit[^ ]*agent-1" /usr/local/bin/tux-polkit | while read -r p; do [ -x "$p" ] && exit 0; done; exit 1'
+# (for, not "grep | while": an exit inside the piped loop only leaves its subshell)
+check "polkit agent found" bash -c 'for p in $(grep -o "/usr/[^ ]*polkit[^ ]*agent-1" /usr/local/bin/tux-polkit); do [ -x "$p" ] && exit 0; done; exit 1'
 if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
   ok "running inside a graphical session"
   for p in dunst; do check "$p running" pgrep -x "$p"; done

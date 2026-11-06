@@ -77,6 +77,12 @@ desktop_services() {
     [[ ${IS_LAPTOP:-0} == 1 ]] && svc_enable power-profiles-daemon
     # mpd runs per user (tux-music start at login); a system mpd would hold port 6600.
     run systemctl disable --now mpd.service mpd.socket || true
+    # Debian's autorandr.service allows one start per 5 s; monitor hotplug events at boot (two
+    # GPUs) start it more often, so it shows up as failed. tux-autostart runs autorandr at login.
+    if [[ -f /usr/lib/systemd/system/autorandr.service || -f /lib/systemd/system/autorandr.service ]]; then
+      mkdir -p /etc/systemd/system/autorandr.service.d
+      printf '[Unit]\nStartLimitIntervalSec=0\n' >/etc/systemd/system/autorandr.service.d/tuxcraft.conf
+    fi
   else
     pkg_installed bluez && svc_enable bluetoothd
     has_word "$TUX_BUNDLES" printing && svc_enable cupsd avahi-daemon && { [[ -d /etc/sv/ipp-usb ]] && svc_enable ipp-usb; true; }

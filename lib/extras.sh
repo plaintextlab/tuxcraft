@@ -133,6 +133,9 @@ ensure_debian_shims() {
   [[ $DISTRO == debian ]] || return 0
   command -v fd  >/dev/null || { command -v fdfind >/dev/null && ln -sf "$(command -v fdfind)" /usr/local/bin/fd; }
   command -v bat >/dev/null || { command -v batcat >/dev/null && ln -sf "$(command -v batcat)" /usr/local/bin/bat; }
+  # Debian's imv has only imv-x11 / imv-wayland on PATH; the launcher that picks one is in libexec.
+  command -v imv >/dev/null || { [[ -x /usr/libexec/imv/imv ]] && ln -sf /usr/libexec/imv/imv /usr/local/bin/imv; }
+  return 0
 }
 
 ensure_paru() {

@@ -80,5 +80,16 @@ case $session in
     fi
     ;;
 esac
-# Apps the user added to ~/.config/autostart
-command -v dex >/dev/null && dex --autostart --environment "$session" &
+# XDG autostart entries (~/.config/autostart and /etc/xdg/autostart). Those this script already
+# started get a Hidden=true override, or dex starts a second picom / polkit agent / nm-applet
+# that only fails noisily ("Another composite manager is already running").
+if command -v dex >/dev/null; then
+  mkdir -p "$HOME/.config/autostart"
+  for a in picom compton polkit-mate-authentication-agent-1 polkit-gnome-authentication-agent-1 \
+           lxpolkit nm-applet autorandr udiskie copyq com.github.hluk.copyq; do
+    f=$HOME/.config/autostart/$a.desktop
+    [[ -e $f || ! -e /etc/xdg/autostart/$a.desktop ]] && continue
+    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n# tux-autostart starts this itself\n' "$a" >"$f"
+  done
+  dex --autostart --environment "$session" &
+fi
