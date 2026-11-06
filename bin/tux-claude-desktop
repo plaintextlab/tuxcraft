@@ -53,7 +53,7 @@ NO_SANDBOX=0
 # shellcheck source=/dev/null
 [[ -f $CONF ]] && . "$CONF"
 
-box_exists() { distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}' | grep -qx "$NAME"; }
+box_exists() { distrobox list --no-color 2>/dev/null | awk -F'|' 'NR>1{gsub(/ /,"",$2); print $2}' | grep -x "$NAME" >/dev/null; }
 inbox() { distrobox enter --name "$NAME" -- "$@"; }
 # Run a root script inside the box. It goes through a file in $HOME (shared with the box)
 # so no quoting survives two shells and podman exec.

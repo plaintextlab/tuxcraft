@@ -116,7 +116,7 @@ if command -v flatpak >/dev/null; then
   # Use the module of the newest kernel: after a driver update it is the one that boots next.
   # (After --unused, which judges by the driver loaded now and would drop the new runtime.)
   nv=$(modinfo -k "$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -printf '%f\n' | sort -V | tail -n1)" -F version nvidia 2>/dev/null)
-  if [[ -n $nv ]] && flatpak list --app --columns=application | grep -q .; then
+  if [[ -n $nv ]] && flatpak list --app --columns=application | grep . >/dev/null; then
     for ext in GL GL32; do
       ref=org.freedesktop.Platform.$ext.nvidia-${nv//./-}
       flatpak info "$ref" >/dev/null 2>&1 ||
@@ -135,7 +135,7 @@ fi
 
 # Apps installed into boxes by "ii" (tux-pkg): update each box (and the AUR in the Arch box).
 if [[ -n $user ]] && command -v distrobox >/dev/null &&
-   sudo -u "$user" podman ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^tux-'; then
+   sudo -u "$user" podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^tux-' >/dev/null; then
   step "Boxes (apps from other distros)"
   sudo -u "$user" XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" tux-pkg upgrade-boxes || warn "box update had problems"
 fi

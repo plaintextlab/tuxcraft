@@ -16,7 +16,7 @@ state_set() { touch "$STATE"; grep -q "^$1=" "$STATE" && sed -i "s|^$1=.*|$1=\"$
 
 ensure() {
   local fam src; fam=$(field "$1" 2); src=$(field "$1" 3)
-  fc-list : family | grep -qxF "$fam" && return 0
+  fc-list : family | grep -xF "$fam" >/dev/null && return 0
   case $src in
     nerd:*)
       notify-send -u low "Downloading ${src#nerd:} Nerd Font…" 2>/dev/null || echo "Downloading ${src#nerd:}…"
@@ -62,7 +62,7 @@ menu() {
     fi
     if [[ -n $viewer ]]; then
       local n=0
-      until $msg -t get_tree | grep -q -e '"tux-fontpreview"' -e '"imv"' -e "\"pid\":$pid,"; do
+      until $msg -t get_tree | grep -e '"tux-fontpreview"' -e '"imv"' -e "\"pid\":$pid," >/dev/null; do
         sleep 0.1; (( ++n > 30 )) && break
       done
       $msg -q "$crit floating enable, border none, resize set $iw $ih, move position $ix $(( y + (h - ih) / 2 ))" >/dev/null 2>&1
