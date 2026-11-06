@@ -20,7 +20,13 @@ DEFAULT_PORTS="22/tcp"   # SSH
 say()  { printf ':: %s\n' "$*"; }
 die()  { printf 'tux-firewall: %s\n' "$*" >&2; exit 1; }
 need_root() { [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"; }
-init_system() { if [[ -d /run/systemd/system ]]; then echo systemd; else echo runit; fi; }
+# In the installer's chroot systemd is not running, but the system is still a systemd one:
+# only Void (runit) has /etc/runit.
+init_system() {
+  if [[ -d /run/systemd/system ]] || { [[ ! -d /etc/runit ]] && command -v systemctl >/dev/null; }; then
+    echo systemd
+  else echo runit; fi
+}
 
 load_conf() {
   PORTS=$DEFAULT_PORTS

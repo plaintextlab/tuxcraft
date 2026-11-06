@@ -10,7 +10,7 @@ ensure_yazi() {
   local t; t=$(_tmpdir)
   if fetch https://github.com/sxyazi/yazi/releases/latest/download/yazi-x86_64-unknown-linux-gnu.zip "$t/y.zip" &&
      (cd "$t" && unzip -q y.zip); then
-    install -m755 "$t"/yazi-*/yazi "$t"/yazi-*/ya /usr/local/bin/ && ok "yazi installed from upstream release"
+    install -m755 "$t"/yazi-*/yazi "$t"/yazi-*/ya /usr/local/bin/ && upstream_ok yazi
   else warn "Could not install yazi"; fi
   rm -rf "$t"
 }
@@ -21,7 +21,7 @@ ensure_rmpc() {
   local t tag; t=$(_tmpdir); tag=$(gh_latest_tag mierak/rmpc)
   if [[ -n $tag ]] && fetch "https://github.com/mierak/rmpc/releases/download/$tag/rmpc-$tag-x86_64-unknown-linux-musl.tar.gz" "$t/r.tgz" &&
      tar -xzf "$t/r.tgz" -C "$t"; then
-    install -m755 "$t/rmpc" /usr/local/bin/ && ok "rmpc installed from upstream release"
+    install -m755 "$t/rmpc" /usr/local/bin/ && upstream_ok rmpc
     [[ -f $t/man/rmpc.1 ]] && install -Dm644 "$t/man/rmpc.1" /usr/local/share/man/man1/rmpc.1
     [[ -f $t/completions/rmpc.bash ]] && install -Dm644 "$t/completions/rmpc.bash" /usr/share/bash-completion/completions/rmpc
   else warn "Could not install rmpc"; fi
@@ -48,7 +48,7 @@ ensure_wifitui() {
   local t tag; t=$(_tmpdir); tag=$(gh_latest_tag shazow/wifitui)
   if [[ -n $tag ]] && fetch "https://github.com/shazow/wifitui/releases/download/$tag/wifitui-${tag#v}-linux-$arch.tar.gz" "$t/w.tgz" &&
      tar -xzf "$t/w.tgz" -C "$t" wifitui; then
-    install -m755 "$t/wifitui" /usr/local/bin/ && ok "wifitui installed from upstream release"
+    install -m755 "$t/wifitui" /usr/local/bin/ && upstream_ok wifitui
   else warn "Could not install wifitui; the network menu uses nmtui"; fi
   rm -rf "$t"
 }
@@ -85,7 +85,7 @@ ensure_starship() {
   command -v starship >/dev/null && return 0; _is_x86_64 || return 0
   local t; t=$(_tmpdir)
   if fetch https://github.com/starship/starship/releases/latest/download/starship-x86_64-unknown-linux-musl.tar.gz "$t/s.tgz"; then
-    tar -xzf "$t/s.tgz" -C "$t" && install -m755 "$t/starship" /usr/local/bin/ && ok "starship installed from upstream release"
+    tar -xzf "$t/s.tgz" -C "$t" && install -m755 "$t/starship" /usr/local/bin/ && upstream_ok starship
   else warn "Could not install starship"; fi
   rm -rf "$t"
 }
@@ -93,7 +93,7 @@ ensure_starship() {
 ensure_bluetui() {
   command -v bluetui >/dev/null && return 0; _is_x86_64 || return 0
   fetch https://github.com/pythops/bluetui/releases/latest/download/bluetui-x86_64-linux-musl /usr/local/bin/bluetui &&
-    chmod 755 /usr/local/bin/bluetui && ok "bluetui installed from upstream release" || warn "Could not install bluetui"
+    chmod 755 /usr/local/bin/bluetui && upstream_ok bluetui || warn "Could not install bluetui"
 }
 
 ensure_lazygit() {
@@ -106,7 +106,7 @@ ensure_lazygit() {
     done
   fi
   if [[ -s $t/l.tgz ]] && tar -xzf "$t/l.tgz" -C "$t" lazygit; then
-    install -m755 "$t/lazygit" /usr/local/bin/ && ok "lazygit installed from upstream release"
+    install -m755 "$t/lazygit" /usr/local/bin/ && upstream_ok lazygit
   else warn "Could not install lazygit"; fi
   rm -rf "$t"
 }
@@ -117,7 +117,7 @@ ensure_adw_gtk3() {
   local t tag; t=$(_tmpdir)
   tag=$(gh_latest_tag lassekongo83/adw-gtk3)
   if [[ -n $tag ]] && fetch "https://github.com/lassekongo83/adw-gtk3/releases/download/$tag/adw-gtk3$tag.tar.xz" "$t/a.txz"; then
-    tar -xJf "$t/a.txz" -C /usr/share/themes && ok "adw-gtk3 installed from upstream release"
+    tar -xJf "$t/a.txz" -C /usr/share/themes && upstream_ok adw-gtk3
   else warn "Could not install adw-gtk3; GTK3 apps fall back to Adwaita"; fi
   rm -rf "$t"
 }

@@ -45,6 +45,15 @@ pkg_installed() {
 
 PKG_MISSING=''
 
+# upstream_ok NAME: NAME was missing from the distro but came from its upstream release instead,
+# so the closing "not available and skipped" list should not name it.
+upstream_ok() {
+  local p left=''
+  ok "$1 installed from upstream release"
+  for p in $PKG_MISSING; do [[ $p == "$1" ]] || left+=" $p"; done
+  PKG_MISSING=$left
+}
+
 # pkg_install name... : installs what exists, records what does not
 pkg_install() {
   local p want=()
