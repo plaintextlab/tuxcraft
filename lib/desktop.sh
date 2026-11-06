@@ -142,17 +142,17 @@ EOF
   mkdir -p /usr/share/xsessions /usr/share/wayland-sessions
   printf '[Desktop Entry]\nName=tuxcraft (i3)\nExec=tux-session i3\nType=Application\n' >/usr/share/xsessions/tuxcraft-i3.desktop
   printf '[Desktop Entry]\nName=tuxcraft (sway)\nExec=tux-session sway\nType=Application\n' >/usr/share/wayland-sessions/tuxcraft-sway.desktop
-  # Console palette at boot (themed TTY + greeter)
+  # Console palette and a font sized for the screen at boot (themed TTY + greeter), see tux-console
   if [[ $INIT == systemd ]]; then
     cat >/etc/systemd/system/tuxcraft-vtrgb.service <<'EOF'
 [Unit]
-Description=tuxcraft console colour palette
-ConditionPathExists=/etc/tuxcraft/vtrgb
+Description=tuxcraft console colour palette and font
+After=console-setup.service systemd-vconsole-setup.service
 Before=greetd.service getty@tty1.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'setvtrgb /etc/tuxcraft/vtrgb'
+ExecStart=/usr/local/bin/tux-console
 
 [Install]
 WantedBy=multi-user.target
@@ -160,7 +160,8 @@ EOF
     svc_enable tuxcraft-vtrgb.service
   else
     touch /etc/rc.local
-    grep -q tuxcraft/vtrgb /etc/rc.local || echo '[ -f /etc/tuxcraft/vtrgb ] && setvtrgb /etc/tuxcraft/vtrgb' >>/etc/rc.local
+    sed -i '\|tuxcraft/vtrgb|d' /etc/rc.local   # older installs: palette only
+    grep -q tux-console /etc/rc.local || echo '[ -x /usr/local/bin/tux-console ] && /usr/local/bin/tux-console' >>/etc/rc.local
   fi
 }
 

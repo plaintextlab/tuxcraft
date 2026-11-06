@@ -44,7 +44,7 @@ core	gnome-themes-extra	gnome-themes-extra	gnome-themes-extra
 core	adwaita-cursors	adwaita-icon-theme	adwaita-icon-theme
 core	qt5ct qt6ct	qt5ct qt6ct	qt5ct qt6ct
 core	qt5-wayland qt6-wayland	qtwayland5 qt6-wayland	qt5-wayland qt6-wayland
-core	kbd	kbd	kbd
+core	kbd terminus-font	kbd	kbd terminus-font
 core	greetd greetd-tuigreet	greetd tuigreet	greetd tuigreet
 core	-	-	dbus elogind
 core	-	-	chrony cronie socklog-void

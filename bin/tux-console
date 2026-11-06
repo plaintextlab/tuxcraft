@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# tux-console — run once at boot (before the login screen): the themed colour palette and a
+# console font that is readable at the screen's resolution, on tty1-7 (tuigreet runs on tty7).
+# The kernel's default 8x16 font is tiny on a 1080p laptop panel and microscopic on 4K.
+#   tux-console            pick the font size from the framebuffer height
+#   TUX_CONSOLE_FONT=…     a font name/path for setfont instead (set in /etc/tuxcraft/console.conf)
+set -uo pipefail
+[[ -f /etc/tuxcraft/console.conf ]] && . /etc/tuxcraft/console.conf
+
+[[ -f /etc/tuxcraft/vtrgb ]] && command -v setvtrgb >/dev/null && setvtrgb /etc/tuxcraft/vtrgb
+
+# Terminus, bold, height x width. Debian ships it with console-setup; Arch and Void as terminus-font.
+font_for() {  # font_for HEIGHT -> path, or nothing when no font is installed
+  local h=$1 w f
+  case $h in 24) w=12 ;; 28) w=14 ;; 32) w=16 ;; *) return ;; esac
+  for f in /usr/share/consolefonts/Uni3-TerminusBold${h}x$w.psf.gz \
+           /usr/share/kbd/consolefonts/ter-v${h}b.psf.gz \
+           /usr/share/consolefonts/ter-v${h}b.psf.gz; do
+    [[ -f $f ]] && { echo "$f"; return; }
+  done
+}
+
+font=${TUX_CONSOLE_FONT:-}
+if [[ -z $font ]]; then
+  # "1920,1080" -> 1080. Rows of text this gives: ~45 at 1080p, ~51 at 1440p, ~67 at 2160p.
+  h=$(cut -d, -f2 /sys/class/graphics/fb0/virtual_size 2>/dev/null) || h=0
+  if   ((h >= 1800)); then size=32
+  elif ((h >= 1300)); then size=28
+  elif ((h >= 1000)); then size=24
+  else exit 0; fi
+  font=$(font_for "$size")
+  [[ -n $font ]] || exit 0
+fi
+command -v setfont >/dev/null || exit 0
+for t in /dev/tty{1..7}; do setfont -C "$t" "$font" 2>/dev/null; done
+exit 0
