@@ -130,7 +130,7 @@ svc_disable() {
 }
 
 # ---------------------------------------------------------------- helpers
-run() { _log "RUN   $*"; "$@" >>"$TUX_LOG" 2>&1; }
+run() { TUX_LAST_RUN="$*"; _log "RUN   $*"; "$@" >>"$TUX_LOG" 2>&1; }
 
 # as_user cmd... : run as the desktop user with a sane environment
 as_user() {

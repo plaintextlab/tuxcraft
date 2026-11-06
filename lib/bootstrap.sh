@@ -174,8 +174,7 @@ carry_over_wifi() {
   return 0
 }
 
-bootstrap_base() {
-  live_prereqs
+bootstrap_base() {  # after live_prereqs and disk_prepare
   "bootstrap_$DISTRO"
   write_fstab
   carry_over_wifi

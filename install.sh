@@ -90,7 +90,20 @@ for f in ui core pkg disk bootstrap system gpu hwfix extras fonts desktop snapsh
   . "$TUX_SRC/lib/$f.sh"
 done
 
-trap 'warn "Failed at line $LINENO: $BASH_COMMAND (full log: $TUX_LOG)"' ERR
+# A failure inside run() would only show its generic "$@" line: name the real command instead,
+# and show the end of the log, where its error output went.
+on_error() {
+  local line=$1 cmd=$2 src=${BASH_SOURCE[1]##*/}
+  if [[ $cmd == '"$@"'* && -n ${TUX_LAST_RUN:-} ]]; then
+    local tail; tail=$(tail -n 15 "$TUX_LOG" 2>/dev/null | sed 's/^/    /')
+    warn "Failed: $TUX_LAST_RUN"
+    printf '%s\n' "$tail" >&2
+  else
+    warn "Failed at $src line $line: $cmd"
+  fi
+  warn "Full log: $TUX_LOG"
+}
+trap 'on_error $LINENO "$BASH_COMMAND"' ERR
 mkdir -p "$(dirname "$TUX_LOG")"
 
 # shellcheck source=/dev/null
@@ -334,6 +347,7 @@ main() {
   wizard
   local start=$SECONDS
   if [[ $TUX_MODE == install ]]; then
+    live_prereqs   # partitioning needs parted and dosfstools, which the Debian live ISO lacks
     disk_prepare
     bootstrap_base
     step "Handing over to the new system"
