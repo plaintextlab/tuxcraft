@@ -118,7 +118,11 @@ save_answers() {  # never stores the password
   local k
   mkdir -p "$(dirname "$1")"
   { echo "# tuxcraft answers — reuse with: sudo ./install.sh --config this-file"
-    for k in "${ANSWER_KEYS[@]}"; do printf '%s=%q\n' "$k" "${!k:-}"; done; } >"$1"
+    for k in "${ANSWER_KEYS[@]}"; do
+      # The disk by its by-id name: kernel names like nvme0n1 can change between boots.
+      if [[ $k == TUX_DISK && -n ${TUX_DISK:-} ]]; then printf '%s=%q\n' "$k" "$(disk_stable_name "$TUX_DISK")"
+      else printf '%s=%q\n' "$k" "${!k:-}"; fi
+    done; } >"$1"
   chmod 600 "$1"
 }
 

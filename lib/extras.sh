@@ -59,7 +59,8 @@ version_ge() { [[ $(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1) == "$2" ]]
 # LazyVim needs Neovim >= 0.11 and tree-sitter CLI >= 0.25 (Debian 13: 0.10 / 0.22).
 ensure_neovim() {
   local v arch
-  v=$(nvim --version 2>/dev/null | sed -n '1s/^NVIM v\([0-9.]*\).*/\1/p')
+  # "|| true": with pipefail a missing command would fail the assignment and stop the install.
+  v=$({ nvim --version 2>/dev/null || true; } | sed -n '1s/^NVIM v\([0-9.]*\).*/\1/p')
   case $(uname -m) in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) return 0 ;; esac
   if [[ -z $v ]] || ! version_ge "$v" 0.11; then
     local t; t=$(_tmpdir)
@@ -69,7 +70,7 @@ ensure_neovim() {
     else warn "Could not install a recent Neovim; LazyVim needs 0.11+"; fi
     rm -rf "$t"
   fi
-  v=$(tree-sitter --version 2>/dev/null | awk '{print $2}')
+  v=$({ tree-sitter --version 2>/dev/null || true; } | awk '{print $2}')
   if [[ -z $v ]] || ! version_ge "$v" 0.25; then
     local t a; t=$(_tmpdir); a=x64; [[ $arch == arm64 ]] && a=arm64
     if fetch "https://github.com/tree-sitter/tree-sitter/releases/latest/download/tree-sitter-cli-linux-$a.zip" "$t/t.zip" &&

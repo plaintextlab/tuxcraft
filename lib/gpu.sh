@@ -81,7 +81,12 @@ options nvidia NVreg_PreserveVideoMemoryAllocations=1
 EOF
   nvidia_uvm_setup
   if [[ $INIT == systemd ]]; then
-    svc_enable nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
+    # Debian's and Arch's drivers ship these; NVIDIA's own (Debian, nvidia-open) suspends through
+    # systemd drop-ins instead and has none of them.
+    local u
+    for u in nvidia-suspend nvidia-resume nvidia-hibernate; do
+      [[ -e /usr/lib/systemd/system/$u.service || -e /lib/systemd/system/$u.service ]] && svc_enable "$u.service"
+    done
     # Dynamic Boost: shifts power between CPU and GPU on Ampere+ laptops (no-op elsewhere).
     if ((IS_LAPTOP)) && [[ -e /usr/lib/systemd/system/nvidia-powerd.service || -e /lib/systemd/system/nvidia-powerd.service ]]; then svc_enable nvidia-powerd.service; fi
   fi

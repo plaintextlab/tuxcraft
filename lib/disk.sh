@@ -43,14 +43,31 @@ pick_disk() {
   lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS -e 7,11 || true
   choose TUX_DISK "Which disk should tuxcraft ERASE and install to?" "${opts[0]%%|*}" "${opts[@]}"
   [[ -b $TUX_DISK ]] || die "$TUX_DISK is not a block device"
+  TUX_DISK=$(disk_stable_name "$TUX_DISK")
+}
+
+# The /dev/disk/by-id name (model + serial) for disk $1, or $1 when it has none. Kernel names
+# are not stable: on a laptop with two NVMe drives nvme0n1 and nvme1n1 can swap between boots,
+# so a saved answers file holding "/dev/nvme0n1" could point at the other drive next time.
+disk_stable_name() {
+  local dev l
+  dev=$(readlink -f "$1")
+  for l in /dev/disk/by-id/*; do
+    case ${l##*/} in *-part[0-9]*|nvme-eui.*|nvme-nvme.*|wwn-*) continue ;; esac
+    [[ $(readlink -f "$l") == "$dev" ]] && { echo "$l"; return 0; }
+  done
+  echo "$1"
 }
 
 confirm_wipe() {
   [[ -n ${TUX_YES:-} && -n ${TUX_WIPE_CONFIRMED:-} ]] && return 0
-  printf '\n%sALL DATA ON %s WILL BE DESTROYED.%s\n' "$C_RED$C_BOLD" "$TUX_DISK" "$C_RESET"
-  local ans
-  read -r -p "Type the disk name ($(basename "$TUX_DISK")) to continue: " ans </dev/tty
-  [[ $ans == "$(basename "$TUX_DISK")" ]] || die "Aborted, nothing was changed."
+  local ans dev desc
+  dev=$(readlink -f "$TUX_DISK")
+  desc=$(lsblk -dno SIZE,MODEL "$dev" 2>/dev/null | sed 's/  */ /g; s/^ //')
+  printf '\n%sALL DATA ON %s (%s) WILL BE DESTROYED.%s\n' "$C_RED$C_BOLD" "$dev" "${desc:-?}" "$C_RESET"
+  lsblk -o NAME,SIZE,FSTYPE,LABEL "$dev" 2>/dev/null | sed 's/^/  /' || true
+  read -r -p "Type the disk name ($(basename "$dev")) to continue: " ans </dev/tty
+  [[ $ans == "$(basename "$dev")" ]] || die "Aborted, nothing was changed."
 }
 
 # Unmount everything on disk $1, also a previous attempt's leftovers. Services with their own
