@@ -88,6 +88,11 @@ Then check with `ping -c2 github.com`. If that fails:
 
 The Wi-Fi you join here is copied into the new system, so it is online on first boot.
 
+While it installs, every command is shown as it runs (`$ apt-get install …`), with its output
+dimmed below it; everything also goes to `/var/log/tuxcraft.log`. If something fails, the
+failed command and its error are the last thing on the screen. For a calmer screen that shows
+only the steps, run it with `TUX_QUIET=1`, e.g. `wget -nv -O- https://plaintextlab.org/tuxcraft | TUX_QUIET=1 sh`.
+
 Each uses the download tool that ISO already has (curl, wget, xbps-fetch) and needs no git:
 the repository comes as a tarball. `| sh` and `| bash` both work. The script becomes
 root with sudo when needed and installs curl itself where it is missing. On a system that is

@@ -76,7 +76,7 @@ desktop_services() {
     has_word "$TUX_BUNDLES" dev && svc_enable docker
     [[ ${IS_LAPTOP:-0} == 1 ]] && svc_enable power-profiles-daemon
     # mpd runs per user (tux-music start at login); a system mpd would hold port 6600.
-    systemctl disable --now mpd.service mpd.socket >>"$TUX_LOG" 2>&1 || true
+    run systemctl disable --now mpd.service mpd.socket || true
   else
     pkg_installed bluez && svc_enable bluetoothd
     has_word "$TUX_BUNDLES" printing && svc_enable cupsd avahi-daemon && { [[ -d /etc/sv/ipp-usb ]] && svc_enable ipp-usb; true; }
@@ -85,7 +85,7 @@ desktop_services() {
   fi
   if has_word "$TUX_BUNDLES" firewall; then
     local fw=(on); [[ $TUX_MODE == install ]] && fw+=(--boot-only)
-    /usr/local/bin/tux-firewall "${fw[@]}" >>"$TUX_LOG" 2>&1 || warn "Could not set up the firewall"
+    run /usr/local/bin/tux-firewall "${fw[@]}" || warn "Could not set up the firewall"
   fi
   # Tap-to-click and natural behaviour on touchpads (from debi3n touchpad-setup.sh)
   if [[ ${IS_LAPTOP:-0} == 1 ]]; then
@@ -259,7 +259,7 @@ theme_stage() {
 nvim_stage() {
   command -v nvim >/dev/null && [[ -f $TUX_HOME/.config/nvim/init.lua ]] || return 0
   info "Setting up Neovim (LazyVim plugins, takes a minute)"
-  as_user timeout 900 nvim --headless "+Lazy! sync" +qa >>"$TUX_LOG" 2>&1 ||
+  run as_user timeout 900 nvim --headless "+Lazy! sync" +qa ||
     warn "Neovim plugins not fully installed yet; they finish on first start"
 }
 

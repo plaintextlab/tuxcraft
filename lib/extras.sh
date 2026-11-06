@@ -139,8 +139,8 @@ ensure_paru() {
   command -v paru >/dev/null && return 0
   info "Building paru (AUR helper) as $TUX_USER"
   local t; t=$(_tmpdir); chown "$TUX_USER" "$t"
-  if as_user git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$t/paru-bin" >>"$TUX_LOG" 2>&1 &&
-     as_user sh -c "cd '$t/paru-bin' && makepkg --noconfirm" >>"$TUX_LOG" 2>&1; then
+  if run as_user git clone --depth 1 https://aur.archlinux.org/paru-bin.git "$t/paru-bin" &&
+     run as_user sh -c "cd '$t/paru-bin' && makepkg --noconfirm"; then
     run pacman -U --noconfirm "$t"/paru-bin/paru-bin-*.pkg.tar.* && ok "paru installed"
   else warn "paru build failed (see $TUX_LOG)"; fi
   rm -rf "$t"

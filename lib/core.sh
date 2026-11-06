@@ -107,7 +107,7 @@ svc_enable() {
   local s
   for s in "$@"; do
     if [[ $INIT == systemd ]]; then
-      systemctl enable "$s" >>"$TUX_LOG" 2>&1 || warn "Could not enable $s"
+      run systemctl enable "$s" || warn "Could not enable $s"
     else
       if [[ -d /etc/sv/$s ]]; then
         ln -sfn "/etc/sv/$s" "/etc/runit/runsvdir/default/$s"
@@ -122,7 +122,7 @@ svc_disable() {
   local s
   for s in "$@"; do
     if [[ $INIT == systemd ]]; then
-      systemctl disable "$s" >>"$TUX_LOG" 2>&1 || true
+      run systemctl disable "$s" || true
     else
       rm -f "/etc/runit/runsvdir/default/$s"
     fi
@@ -130,7 +130,31 @@ svc_disable() {
 }
 
 # ---------------------------------------------------------------- helpers
-run() { TUX_LAST_RUN="$*"; _log "RUN   $*"; "$@" >>"$TUX_LOG" 2>&1; }
+# run cmd... : show the command on screen ("$ cmd"), stream its output below it (dimmed,
+# indented) and keep all of it in the log. TUX_QUIET=1 hides the output; the log still has it.
+run() {
+  local rc=0 fd pid i
+  TUX_LAST_RUN="$*"; _log "RUN   $*"
+  printf '%s  $ %s%s\n' "$C_DIM" "$*" "$C_RESET"
+  exec {fd}> >(_show_output); pid=$!
+  "$@" >&"$fd" 2>&1 || rc=$?
+  exec {fd}>&-
+  # Let the last lines reach the screen before anything else prints. Capped: a daemon the
+  # command started (gpg-agent, say) can keep the output open, and the install must go on.
+  for ((i = 0; i < 40; i++)); do kill -0 "$pid" 2>/dev/null || break; sleep 0.05; done
+  return "$rc"
+}
+
+# Copies a command's output into the log and, unless TUX_QUIET is set, onto the screen.
+_show_output() {
+  local line
+  while IFS= read -r line || [[ -n $line ]]; do
+    printf '%s\n' "$line" >>"$TUX_LOG" 2>/dev/null
+    [[ -n ${TUX_QUIET:-} ]] && continue
+    line=${line##*$'\r'}   # progress bars redraw with \r: show only their last state
+    printf '%s    %s%s\n' "$C_DIM" "$line" "$C_RESET"
+  done
+}
 
 # as_user cmd... : run as the desktop user with a sane environment
 as_user() {
@@ -138,7 +162,7 @@ as_user() {
     PATH="/usr/local/bin:/usr/bin:/bin" TUX_NO_RELOAD=1 "$@"
 }
 
-fetch() { curl -fL --retry 3 --connect-timeout 15 -o "$2" "$1" >>"$TUX_LOG" 2>&1; }
+fetch() { run curl -fL --retry 3 --connect-timeout 15 --no-progress-meter -o "$2" "$1"; }
 
 # gh_latest_tag owner/repo -> v1.2.3 (follows the /releases/latest redirect, no API token needed).
 # Prints nothing and still succeeds when GitHub can't be reached: under set -e a failed lookup

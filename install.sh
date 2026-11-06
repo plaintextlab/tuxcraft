@@ -90,20 +90,22 @@ for f in ui core pkg disk bootstrap system gpu hwfix extras fonts desktop snapsh
   . "$TUX_SRC/lib/$f.sh"
 done
 
-# A failure inside run() would only show its generic "$@" line: name the real command instead,
-# and show the end of the log, where its error output went.
+# A failure inside run() would only show run's own "return" line: name the real command instead.
+# Its output is already on screen above (with TUX_QUIET=1 the end of the log is shown instead).
 on_error() {
-  local line=$1 cmd=$2 src=${BASH_SOURCE[1]##*/}
-  if [[ $cmd == '"$@"'* && -n ${TUX_LAST_RUN:-} ]]; then
-    local tail; tail=$(tail -n 15 "$TUX_LOG" 2>/dev/null | sed 's/^/    /')
-    warn "Failed: $TUX_LAST_RUN"
-    printf '%s\n' "$tail" >&2
+  local rc=$1 line=$2 cmd=$3 src=${BASH_SOURCE[1]##*/}
+  if [[ $cmd == 'return "$rc"' && -n ${TUX_LAST_RUN:-} ]]; then
+    if [[ -n ${TUX_QUIET:-} ]]; then
+      local tail; tail=$(tail -n 15 "$TUX_LOG" 2>/dev/null | sed 's/^/    /')
+      printf '%s\n' "$tail" >&2
+    fi
+    warn "Failed (exit $rc): $TUX_LAST_RUN"
   else
-    warn "Failed at $src line $line: $cmd"
+    warn "Failed at $src line $line (exit $rc): $cmd"
   fi
   warn "Full log: $TUX_LOG"
 }
-trap 'on_error $LINENO "$BASH_COMMAND"' ERR
+trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
 mkdir -p "$(dirname "$TUX_LOG")"
 
 # shellcheck source=/dev/null
