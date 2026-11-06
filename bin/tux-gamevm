@@ -341,7 +341,7 @@ sound_acl() {  # sound_acl plughw:CARD=ID,DEV=0
   sed -i '/^# tux-gamevm begin/,/^# tux-gamevm end/d' "$q"
   printf '%s\n' "$block" >>"$q"
   say "Allowed QEMU to use the sound card $id (libvirt qemu.conf)"
-  if "${VIRSH[@]}" list --name | grep -q .; then
+  if "${VIRSH[@]}" list --name | grep . >/dev/null; then
     say "A VM is running: restart libvirt after it stops for the sound change to apply"
   elif [[ $(init_system) == systemd ]]; then systemctl restart libvirtd
   else sv restart libvirtd >/dev/null; sleep 2
@@ -466,7 +466,7 @@ cmd_create() {
   # A blank disk gets an empty GPT first; Windows Setup installs into it and keeps the GUID.
   ptuuid=$(lsblk -dno PTUUID "$dev")
   if [[ -z $ptuuid ]]; then
-    lsblk -no FSTYPE "$dev" | grep -q . && die "$disk has data but no partition table; use --wipe if it may be erased"
+    lsblk -no FSTYPE "$dev" | grep . >/dev/null && die "$disk has data but no partition table; use --wipe if it may be erased"
     printf 'label: gpt\n' | sfdisk -q "$dev" >/dev/null && udevadm settle
     ptuuid=$(lsblk -dno PTUUID "$dev")
   fi
@@ -816,7 +816,7 @@ blocks_of_usb() {  # USB device dir -> its block devices (sdX, srN)
   local b; for b in "$1"/*/host*/target*/*/block/*; do [[ -e $b ]] && basename "$b"; done
 }
 holds_system() {  # true if a block device (or its partitions) holds / /home /boot /var
-  lsblk -lno MOUNTPOINTS "/dev/$1" 2>/dev/null | grep -qxE '/|/home|/boot(/efi)?|/var|/usr'
+  lsblk -lno MOUNTPOINTS "/dev/$1" 2>/dev/null | grep -xE '/|/home|/boot(/efi)?|/var|/usr' >/dev/null
 }
 
 shared_xml() {  # one XML element per line for every drive to pass at this start
@@ -905,7 +905,7 @@ cmd_install() {
     "${VIRSH[@]}" start "$NAME-install"
     # A Windows ISO boots only after "Press any key to boot from CD": press it while the VM starts
     # (once Windows is on the disk this boots it instead, as the empty-disk check below shows).
-    if "${VIRSH[@]}" dumpxml "$NAME-install" | grep -q "<boot order='1'/>" && ! windows_installed; then
+    if "${VIRSH[@]}" dumpxml "$NAME-install" | grep "<boot order='1'/>" >/dev/null && ! windows_installed; then
       local i; for i in $(seq 12); do sleep 1; "${VIRSH[@]}" send-key "$NAME-install" KEY_ENTER >/dev/null 2>&1 || true; done
       # Single-edition media (LTSC) still show the edition list once even with an answer file;
       # Enter picks the only entry. Keep pressing while Setup loads (harmless on later screens).
@@ -984,7 +984,7 @@ GPU_MODE_FILE=/etc/tuxcraft/gamevm-gpu-mode GPU_OFF_DIR=/etc/tuxcraft/gamevm-off
 HYBRID_FILES="/etc/X11/xorg.conf.d/10-tux-gamevm-hybrid.conf /etc/wireplumber/wireplumber.conf.d/50-tux-gamevm-dgpu-audio.conf
               /etc/udev/rules.d/61-tux-gamevm-dgpu-seat.rules"
 gpu_mode_get() { cat "$GPU_MODE_FILE" 2>/dev/null || echo vm; }
-x_uses_dgpu() { fuser -v /dev/nvidia* 2>&1 | grep -qwE 'Xorg|X|sway|Xwayland'; }
+x_uses_dgpu() { fuser -v /dev/nvidia* 2>&1 | grep -wE 'Xorg|X|sway|Xwayland' >/dev/null; }
 
 cmd_gpu() {
   load_conf
@@ -1059,7 +1059,7 @@ svc() {  # svc stop|start NAME
   if [[ $(init_system) == systemd ]]; then systemctl "$1" "$2"; else sv "$1" "$2" >/dev/null; fi
 }
 gpu_driver_modules() {
-  if lsmod | grep -q '^nvidia'; then echo "nvidia_drm nvidia_uvm nvidia_modeset nvidia"; fi
+  if lsmod | grep '^nvidia' >/dev/null; then echo "nvidia_drm nvidia_uvm nvidia_modeset nvidia"; fi
 }
 
 SHARED=/run/tux-gamevm.shared NOTICE=/run/tux-gamevm.notice
@@ -1143,7 +1143,7 @@ hybrid_prepare() {
   shared_blocks <<<"${DOMXML:-}" | sort -u >"$SHARED"
   release_shared || return 1
   # X (or sway) holding the dGPU means the hybrid X config is not active: refuse, do not kill it.
-  if fuser -v /dev/nvidia* 2>&1 | grep -qwE 'Xorg|X|sway|Xwayland'; then
+  if fuser -v /dev/nvidia* 2>&1 | grep -wE 'Xorg|X|sway|Xwayland' >/dev/null; then
     echo "the desktop (X) uses the NVIDIA GPU: switch with 'tux-gamevm gpu vm' if needed, log out and in, then start again" | tee -a "$NOTICE"
     return 1
   fi

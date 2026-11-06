@@ -39,7 +39,7 @@ for f in "${found[@]}"; do
   fi
 done
 
-if ((${#added[@]})) && ! lpstat -d 2>/dev/null | grep -q 'system default destination:'; then
+if ((${#added[@]})) && ! lpstat -d 2>/dev/null | grep 'system default destination:' >/dev/null; then
   lpadmin -d "${added[0]}" 2>/dev/null || lpoptions -d "${added[0]}" >/dev/null
   say "Default printer: ${added[0]}"
 fi
