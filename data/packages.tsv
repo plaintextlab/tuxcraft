@@ -37,6 +37,8 @@ core	brightnessctl	brightnessctl	brightnessctl
 core	gammastep	gammastep	gammastep
 core	imagemagick	imagemagick	ImageMagick
 core	jq	jq	jq
+# fincore (tux-warm: which program files are already in RAM); part of util-linux on Arch/Void
+core	util-linux	util-linux-extra	util-linux
 core	python	python3	python3
 core	fontconfig	fontconfig	fontconfig
 core	noto-fonts noto-fonts-emoji noto-fonts-cjk ttf-dejavu ttf-liberation	fonts-noto-core fonts-noto-color-emoji fonts-noto-cjk fonts-dejavu fonts-liberation	noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf liberation-fonts-ttf

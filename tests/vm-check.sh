@@ -105,7 +105,7 @@ check "console palette written" test -f /etc/tuxcraft/vtrgb
 section "Desktop ($SESSION)"
 if [[ $SESSION == sway ]]; then apps=(sway waybar fuzzel swaylock swayidle swaybg grim slurp wl-copy cliphist)
 else apps=(i3 polybar rofi picom feh i3lock xss-lock maim xclip startx xsettingsd); fi
-apps+=(kitty tux-term dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
+apps+=(kitty tux-term tux-warm fincore dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
 for a in "${apps[@]}"; do command -v "$a" >/dev/null || bad "missing: $a"; done
 ok "session programs checked"
 # (for, not "grep | while": an exit inside the piped loop only leaves its subshell)
@@ -115,6 +115,7 @@ if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
   for p in dunst; do check "$p running" pgrep -x "$p"; done
   if [[ $SESSION == sway ]]; then check "waybar running" pgrep -x waybar; else check "polybar running" pgrep -x polybar; fi
   check "pipewire running" pgrep -x pipewire
+  check "fast app start running (tux-warm)" pgrep -u "$UID" -f "tux-warm daemon"
   check "audio server answers (pactl)" pactl info
 else
   wn "not in a graphical session: run this from a terminal on the desktop to check the live session too"

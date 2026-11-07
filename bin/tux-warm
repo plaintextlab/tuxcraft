@@ -1,0 +1,484 @@
+#!/usr/bin/env bash
+# tux-warm : faster starts for the apps you use most. Learns which apps you launch, keeps their
+# program files in the page cache (plain reads: reclaimable, never locked), and for a hot
+# terminal / Thunar keeps their light server mode running. Backs off when memory gets tight.
+#   tux-warm off | on | toggle  switch it all off (stays off after login) / back on
+#   tux-warm daemon [i3|sway]   run in the background (tux-autostart does this; one per user)
+#   tux-warm status             hot list, launch counts, how much of each app is in RAM, guard
+#   tux-warm now                one warm-up round now (still obeys the memory guard)
+#   tux-warm pin|unpin|never|allow APP   always / normally / never keep APP warm
+#   tux-warm forget APP         drop what was learned about APP
+#   tux-warm --edit             edit ~/.config/tuxcraft/warm.conf (written on first use)
+#   tux-warm note APP           count a launch (tux-term and tux-open call this)
+conf=${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/warm.conf
+st=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft/warm
+rt=${XDG_RUNTIME_DIR:-/tmp/tux-$UID}/tux-warm
+# Overridable for tests (fake low memory / pressure).
+MEMINFO=${TUX_WARM_MEMINFO:-/proc/meminfo} PSIFILE=${TUX_WARM_PSI:-/proc/pressure/memory}
+HELPER_APPS="kitty alacritty thunar"
+COOL=${TUX_WARM_COOL:-120}   # seconds the guard must stay clear before warming / helpers resume
+
+write_default() {
+  mkdir -p "${conf%/*}"
+  cat >"$conf" <<'EOF'
+# tuxcraft fast app start (tux-warm). Read again every few seconds: edits apply right away.
+# See what it does: tux-warm status        Pin from a shell: tux-warm pin firefox
+#
+# Apps are named after their program file: firefox, thunar, kitty, alacritty, gimp, ...
+ENABLED=1             # 0 = off (or: tux-warm off / system menu → Fast app start)
+TOP=6                 # learned apps kept warm (the most launched lately)
+MIN_LAUNCHES=2        # ... once launched at least this often (counts fade: half-life ~4 days)
+# Always warm, e.g. PIN="firefox thunar"
+PIN=""
+# Never warm, e.g. NEVER="gimp"
+NEVER=""
+HELPERS=1             # keep the kitty/alacritty/Thunar server mode running while they are hot
+HELPERS_MIN_RAM_GB=8  # ... only on machines with this much RAM (kitty's takes ~60-100 MB)
+
+# Memory guard. Warmed files are ordinary page cache: the kernel drops them first when a
+# program needs the RAM. Nothing is locked in memory. On top of that, warming pauses and idle
+# helpers are stopped while any of these is true:
+BUDGET_PCT=5          # (warm at most this share of RAM in total)
+MIN_AVAIL_PCT=25      # MemAvailable is below this share of RAM ...
+MIN_AVAIL_MB=2048     # ... or below this many MB
+PSI_MAX=0.50          # memory pressure (/proc/pressure/memory "some avg10", %) is above this
+HEAVY_RSS_PCT=20      # one process uses more than this share of RAM
+# a big program or game runs (process names as pgrep -x sees them: regex, max 15 chars)
+HEAVY="steam|steamwebhelper|gamescope.*|qemu-system-.*|resolve|blender|wineserver|wine64-preloade|obs|kdenlive"
+EOF
+}
+load_conf() {
+  [[ -f $conf ]] || write_default
+  ENABLED=1 TOP=6 MIN_LAUNCHES=2 PIN='' NEVER='' HELPERS=1 BUDGET_PCT=5 MIN_AVAIL_PCT=25
+  MIN_AVAIL_MB=2048 PSI_MAX=0.50 HEAVY_RSS_PCT=20 HELPERS_MIN_RAM_GB=8 HEAVY='steam|gamescope.*|qemu-system-.*|resolve'
+  # shellcheck source=/dev/null
+  . "$conf"
+}
+log() { mkdir -p "$st"; printf '%(%F %T)T %s\n' -1 "$*" >>"$st/log"; }
+centi() {   # centi VAR 1.23 -> VAR=123 (no subshell)
+  local i=${2%%.*} f=${2#*.}; [[ $2 == *.* ]] || f=0; f=${f}00
+  printf -v "$1" '%d' $(( 10#${i:-0} * 100 + 10#${f:0:2} ))
+}
+pct() { printf '%d.%02d' $(($1 / 100)) $(($1 % 100)); }
+
+# ---- memory guard ----------------------------------------------------------------------------
+# Sets mem_total avail floor (kB), psi (hundredths of %), why (empty = all clear).
+# Big programs: by process name (any user: the VM's qemu runs as root), by program file (some
+# rename their process: Resolve shows up as "GUI Thread"), or by size (HEAVY_RSS_PCT of RAM).
+# One awk pass over /proc/*/stat; the daemon passes the program files it just listed in $exes.
+guard() {
+  local k v _ heavy pmax e
+  mem_total=0 avail=0 psi=0 why=''
+  while read -r k v _; do
+    case $k in MemTotal:) mem_total=$v ;; MemAvailable:) avail=$v ;; esac
+  done <"$MEMINFO"
+  [[ -r $PSIFILE ]] && { read -r _ v _ <"$PSIFILE"; centi psi "${v#avg10=}"; }
+  centi pmax "$PSI_MAX"
+  floor=$(( mem_total * MIN_AVAIL_PCT / 100 )); (( floor < MIN_AVAIL_MB * 1024 )) && floor=$(( MIN_AVAIL_MB * 1024 ))
+  if (( avail < floor )); then why="low memory ($((avail / 1024)) MB available)"; return 1; fi
+  if (( psi > pmax )); then why="memory pressure ($(pct "$psi")%)"; return 1; fi
+  [[ -n ${exes+x} ]] || exes=$(find /proc -mindepth 2 -maxdepth 2 -name exe -user "$UID" -printf '%l\n' 2>/dev/null)
+  if heavy=$(grep -m1 -xE "(.*/)?($HEAVY)" <<<"$exes"); then why="big program running: ${heavy##*/}"; return 1; fi
+  heavy=$(awk -v re="^($HEAVY)\$" -v lim=$(( mem_total * HEAVY_RSS_PCT / 100 / PAGE_KB )) '
+    { o = index($0, "("); c = $0; while ((i = index(substr(c, o + 1), ")")) > 0) o += i  # last ")"
+      comm = substr($0, index($0, "(") + 1, o - index($0, "(") - 1)
+      n = split(substr($0, o + 2), f, " ")
+      if (comm ~ re) { print comm; exit }
+      if (n >= 22 && f[22] + 0 > lim) { split(FILENAME, a, "/"); print a[3] " " comm; exit } }' \
+    /proc/[0-9]*/stat 2>/dev/null)
+  if [[ -n $heavy ]]; then
+    if [[ $heavy == [0-9]*" "* ]]; then e=$(readlink "/proc/${heavy%% *}/exe" 2>/dev/null) || e=${heavy#* }; heavy=${e##*/}; fi
+    why="big program running: $heavy"; return 1
+  fi
+  return 0
+}
+
+# ---- learning --------------------------------------------------------------------------------
+# $st/scores: "name score last-launch exe". A launch adds 100; scores shrink 15% a day.
+declare -A score last exe_of
+dirty=0
+load_scores() {
+  local n s l e; score=() last=() exe_of=()
+  [[ -f $st/scores ]] || return 0
+  while read -r n s l e; do [[ -n $n ]] && { score[$n]=$s last[$n]=$l exe_of[$n]=$e; }; done <"$st/scores"
+}
+save_scores() {
+  local n; mkdir -p "$st"
+  for n in "${!score[@]}"; do printf '%s %s %s %s\n' "$n" "${score[$n]}" "${last[$n]:-0}" "${exe_of[$n]:--}"; done \
+    | sort -k2,2nr >"$st/scores.tmp" && mv "$st/scores.tmp" "$st/scores"
+  dirty=0
+}
+decay() {
+  local now=$EPOCHSECONDS t0 d n i
+  mkdir -p "$st"
+  [[ -f $st/decayed ]] || { echo "$now" >"$st/decayed"; return 0; }
+  t0=$(<"$st/decayed"); d=$(( (now - t0) / 86400 ))
+  (( d > 0 )) || return 0
+  echo $(( t0 + d * 86400 )) >"$st/decayed"; (( d > 30 )) && d=30
+  for n in "${!score[@]}"; do
+    for ((i = 0; i < d; i++)); do score[$n]=$(( score[$n] * 85 / 100 )); done
+    (( score[$n] < 10 )) && unset "score[$n]" "last[$n]" "exe_of[$n]"
+  done
+  save_scores
+}
+count() {   # count NAME [EXE]
+  [[ " $NEVER " == *" $1 "* ]] && return
+  score[$1]=$(( ${score[$1]:-0} + 100 )); last[$1]=$EPOCHSECONDS
+  [[ -n ${2:-} ]] && exe_of[$1]=$2
+  dirty=1; log "launch $1"
+}
+forget() {
+  unset "score[$1]" "last[$1]" "exe_of[$1]"; rm -f "$st/files/$1"; save_scores; log "forgot $1"
+}
+
+# Programs named by .desktop files (what people launch), resolved to the real executable.
+declare -A desktop_exe
+scan_desktop() {
+  local f e p d
+  desktop_exe=()
+  for d in "${XDG_DATA_HOME:-$HOME/.local/share}/applications" /usr/local/share/applications /usr/share/applications; do
+    for f in "$d"/*.desktop; do
+      [[ -f $f ]] || continue
+      e=$(sed -n 's/^Exec=//p' "$f" | head -1); e=${e%% *}; e=${e//\"/}
+      [[ -n $e && $e != env && $e != flatpak && $e != sh && $e != bash ]] || continue
+      p=$(command -v "$e" 2>/dev/null) || continue
+      p=$(readlink -f "$p") && desktop_exe[$p]=1
+    done
+  done
+}
+
+# One pass over our processes: count programs that newly started (desktop apps, not children of
+# themselves like Firefox's content processes) and learn the files of hot apps that are running.
+declare -A seen noted helper_pid learn_after
+sample() {   # sample [learn] — without "learn" only remembers what runs (first pass)
+  local pid exe line ppid name now=$EPOCHSECONDS
+  local -A cur=() pids=()
+  while read -r pid exe; do
+    pid=${pid#/proc/}; [[ -n $exe ]] && cur[$pid]=$exe
+  done < <(find /proc -mindepth 2 -maxdepth 2 -name exe -user "$UID" -printf '%h %l\n' 2>/dev/null)
+  printf -v exes '%s\n' "${cur[@]}"   # for guard()
+  for pid in "${!cur[@]}"; do
+    exe=${cur[$pid]}; name=${exe##*/}
+    [[ -n ${helper_pid[$pid]:-} ]] && continue
+    [[ -n ${hot[$name]:-} ]] && pids[$name]+=" $pid"
+    [[ ${1:-} == learn && -z ${seen[$pid]:-} && -n ${desktop_exe[$exe]:-} ]] || continue
+    read -r line <"/proc/$pid/stat" 2>/dev/null || continue
+    line=${line##*) }; ppid=${line#* }; ppid=${ppid%% *}
+    [[ ${cur[$ppid]:-} == "$exe" ]] && continue
+    (( now - ${noted[$name]:-0} < 60 )) && continue   # tux-term/tux-open noted it already
+    count "$name" "$exe"
+  done
+  seen=(); for pid in "${!cur[@]}"; do seen[$pid]=1; done
+  for name in "${!pids[@]}"; do
+    # shellcheck disable=SC2086
+    learn_files "$name" "${exe_of[$name]:-${cur[${pids[$name]%% *}]}}" ${pids[$name]}
+  done
+}
+# Files mapped by the app's processes (program, libraries, data) + files it has open under
+# /usr and /opt. Refreshed every 3 days while the app runs.
+learn_files() {
+  local name=$1 exe=$2 f=$st/files/$1 p ns; shift 2
+  (( EPOCHSECONDS < ${learn_after[$name]:-0} )) && return
+  [[ -f $f ]] && (( EPOCHSECONDS - $(stat -c %Y "$f") < 3 * 86400 )) && { learn_after[$name]=$(( $(stat -c %Y "$f") + 3 * 86400 )); return; }
+  learn_after[$name]=$(( EPOCHSECONDS + 60 ))   # not yet (too young, other namespace): retry in a minute
+  ns=$(readlink /proc/self/ns/mnt)
+  [[ $(readlink "/proc/$1/ns/mnt" 2>/dev/null) == "$ns" ]] || return   # Flatpak etc.: other paths
+  (( EPOCHSECONDS - $(stat -c %Y "/proc/$1" 2>/dev/null || echo "$EPOCHSECONDS") >= 30 )) || return
+  mkdir -p "$st/files"
+  {
+    [[ $exe == /* ]] && echo "$exe"
+    for p in "$@"; do
+      awk '$6 ~ /^\// && $0 !~ / \(deleted\)$/ {print $6}' "/proc/$p/maps" 2>/dev/null
+      find "/proc/$p/fd" -mindepth 1 -printf '%l\n' 2>/dev/null | grep -E '^/(usr|opt)/'
+    done
+  } | grep -vE '^/(dev|proc|sys|run|tmp)/' | sort -u | while read -r p; do [[ -f $p ]] && echo "$p"; done >"$f.tmp"
+  if [[ -s $f.tmp ]]; then mv "$f.tmp" "$f"; learn_after[$name]=$(( EPOCHSECONDS + 3 * 86400 )); log "learned $name ($(wc -l <"$f") files)"
+  else rm -f "$f.tmp"; fi
+}
+# No list yet (pinned, never seen running): the program and its libraries.
+bootstrap_files() {
+  local e=${exe_of[$1]:-}
+  [[ -n $e && $e != - && -x $e ]] || e=$(command -v "$1") || return 1
+  e=$(readlink -f "$e"); mkdir -p "$st/files"
+  { echo "$e"; ldd "$e" 2>/dev/null | awk '$3 ~ /^\// {print $3} $1 ~ /^\// {print $1}'; } | sort -u >"$st/files/$1"
+  touch -d '4 days ago' "$st/files/$1"   # stale on purpose: the real list replaces it once seen running
+}
+
+# ---- hot list --------------------------------------------------------------------------------
+declare -A hot
+hot_order=()
+pick_hot() {
+  local n s k=0
+  hot=() hot_order=()
+  for n in $PIN; do [[ -z ${hot[$n]:-} ]] && { hot[$n]=pin; hot_order+=("$n"); }; done
+  while read -r n s; do
+    [[ -n $n && -z ${hot[$n]:-} && " $NEVER " != *" $n "* ]] || continue
+    (( s >= MIN_LAUNCHES * 100 )) || continue
+    [[ $n =~ ^($HEAVY)$ ]] && continue
+    (( k++ < TOP )) || break
+    hot[$n]=learned; hot_order+=("$n")
+  done < <(for n in "${!score[@]}"; do echo "$n ${score[$n]}"; done | sort -k2,2nr)
+}
+
+# ---- warming ---------------------------------------------------------------------------------
+# "RES SIZE PATH" (bytes) for each file of a list. Without fincore (util-linux) nothing counts
+# as cached, so every file is read once per round.
+residency() {
+  local p
+  if command -v fincore >/dev/null; then
+    xargs -d '\n' -r fincore -nb -o RES,SIZE,FILE -- <"$1" 2>/dev/null
+  else
+    while read -r p; do [[ -f $p ]] && echo "0 $(stat -Lc %s "$p") $p"; done <"$1"
+  fi
+}
+# Reads only the files not already in the page cache, at idle I/O and CPU priority, in hot-list
+# order, until the budget (BUDGET_PCT of RAM, and never below the free-memory floor) is used up.
+# Checks the guard again before every app.
+warm_round() {
+  local name res size path total=0 budget app_kb todo n_read=0 b_read=0 skipped=''
+  (( ENABLED )) || return 0
+  guard || { log "warm skipped: $why"; return 1; }
+  budget=$(( mem_total * BUDGET_PCT / 100 ))
+  (( avail - floor < budget )) && budget=$(( avail - floor ))
+  local -A taken=()
+  pick_hot
+  for name in "${hot_order[@]}"; do
+    [[ -s $st/files/$name ]] || bootstrap_files "$name" || continue
+    app_kb=0 todo=()
+    while read -r res size path; do
+      [[ -n $path && -z ${taken[$path]:-} ]] || continue
+      (( size > 512 * 1048576 )) && continue
+      app_kb=$(( app_kb + size / 1024 ))
+      (( res < size * 9 / 10 )) && todo+=("$path")
+    done < <(residency "$st/files/$name")
+    if (( total + app_kb > budget )); then skipped+=" $name"; continue; fi
+    total=$(( total + app_kb ))
+    while read -r path; do taken[$path]=1; done <"$st/files/$name"
+    ((${#todo[@]})) || continue
+    guard || { log "warm stopped before $name: $why"; return 1; }
+    b_read=$(( b_read + $(du -cbL -- "${todo[@]}" 2>/dev/null | tail -1 | cut -f1) ))
+    ionice -c3 nice -n19 cat -- "${todo[@]}" >/dev/null 2>&1 9>&-
+    n_read=$(( n_read + ${#todo[@]} ))
+  done
+  log "warm: ${hot_order[*]:-nothing hot}; set $((total / 1024)) MB of $((budget / 1024)) MB budget, read $n_read files ($((b_read / 1048576)) MB)${skipped:+; over budget:$skipped}"
+}
+
+# ---- helpers (server modes) ------------------------------------------------------------------
+term_choice() {   # the terminal tux-term starts
+  local want='' l t
+  while read -r l; do [[ $l == TERMINAL=* ]] && want=${l#TERMINAL=}; done <"$HOME/.config/tuxcraft/state" 2>/dev/null
+  want=${want//[\"\']/}
+  for t in ${want:-kitty} kitty alacritty foot xterm; do command -v "$t" >/dev/null && { term=$t; return; }; done
+  term=xterm
+}
+wm_has() {   # wm_has REGEX : some window's class/app_id matches (case-insensitive)
+  local tree
+  if [[ -n ${SWAYSOCK:-} ]]; then tree=$(swaymsg -t get_tree 2>/dev/null); else tree=$(i3-msg -t get_tree 2>/dev/null); fi
+  [[ -n $tree ]] || return 0    # cannot tell: assume yes, never close someone's window
+  grep -qiE "\"(class|app_id)\": ?\"($1)\"" <<<"$tree"
+}
+helper_idle() {   # the helper holds none of your windows
+  local kids; kids=$(pgrep -cP "$2")
+  case $1 in
+    kitty) (( kids <= 1 )) ;;     # just the hidden window's "sleep"
+    alacritty) (( kids == 0 )) ;; # every window runs a shell
+    thunar) ! wm_has thunar ;;
+  esac
+}
+helper_alive() { [[ -f $rt/helper.$1 ]] && kill -0 "$(<"$rt/helper.$1")" 2>/dev/null; }
+helper_find() {   # PID of our running helper NAME (not the short-lived setsid parent)
+  local m v
+  case $1 in
+    kitty) m='--instance-group tuxcraft --start-as=hidden' ;;
+    alacritty) m="--daemon --socket $rt/alacritty.sock" ;;
+    thunar) m='^[^ ]*thunar --daemon' ;;
+  esac
+  for v in $(pgrep -u "$UID" -f -- "$m"); do [[ $(</proc/"$v"/comm) != setsid ]] 2>/dev/null && { echo "$v"; return 0; }; done
+  return 1
+}
+helper_start() {
+  local name=$1 pid v i
+  helper_alive "$name" && return
+  if ! pid=$(helper_find "$name"); then
+    case $name in
+      kitty)
+        # --start-as=hidden needs kitty 0.42+. Only while no kitty of ours runs: tux-term's
+        # windows already share that one (--single-instance), and it would get a hidden window.
+        v=$(kitty --version 2>/dev/null | awk '{print $2}')
+        [[ $(printf '%s\n0.42\n' "$v" | sort -V | head -1) == 0.42 ]] || return
+        pgrep -u "$UID" -x kitty >/dev/null && return
+        setsid -f kitty --single-instance --instance-group tuxcraft --start-as=hidden sleep infinity >/dev/null 2>&1 9>&- ;;
+      alacritty)
+        rm -f "$rt/alacritty.sock"
+        setsid -f alacritty --daemon --socket "$rt/alacritty.sock" >/dev/null 2>&1 9>&- ;;
+      thunar)
+        pgrep -u "$UID" -ix thunar >/dev/null && return    # runs already (daemon or window)
+        setsid -f thunar --daemon >/dev/null 2>&1 9>&- ;;
+      *) return ;;
+    esac
+    # setsid -f: own session, so it outlives a tux-warm restart (which adopts it again).
+    for ((i = 0; i < 20; i++)); do sleep 0.25; pid=$(helper_find "$name") && break; done
+    [[ -n $pid ]] || { log "helper $name did not start"; return; }
+  fi
+  helper_pid[$pid]=$name; seen[$pid]=1; echo "$pid" >"$rt/helper.$name"; log "helper started: $name ($pid)"
+}
+helper_stop() {   # helper_stop NAME [force]
+  local name=$1 pid
+  helper_alive "$name" || { rm -f "$rt/helper.$name"; return 0; }
+  pid=$(<"$rt/helper.$name")
+  [[ ${2:-} == force ]] || helper_idle "$name" "$pid" || return 0   # in use: try again later
+  case $name in
+    thunar) thunar -q 2>/dev/null || kill "$pid" 2>/dev/null ;;
+    kitty) pkill -P "$pid" 2>/dev/null; kill "$pid" 2>/dev/null ;;
+    *) kill "$pid" 2>/dev/null ;;
+  esac
+  rm -f "$rt/helper.$name"; [[ $name == alacritty ]] && rm -f "$rt/alacritty.sock"
+  unset "helper_pid[$pid]"; log "helper stopped: $name (${why:-no longer hot})"
+}
+helpers_update() {   # after guard; $why says whether memory is fine
+  local name t want=' '
+  if (( ENABLED && HELPERS && mem_total >= HELPERS_MIN_RAM_GB * 1048576 * 9 / 10 )) && [[ -z $why ]] &&
+     (( EPOCHSECONDS - bad_since >= COOL )); then
+    term_choice; t=$term
+    for name in $HELPER_APPS; do
+      [[ -n ${hot[$name]:-} && ( $name == thunar || $name == "$t" ) ]] && want+="$name "
+    done
+  fi
+  for name in $HELPER_APPS; do
+    # an alacritty daemon whose socket is gone (after "off") takes no new windows: replace it once idle
+    [[ $name == alacritty && ! -S $rt/alacritty.sock ]] && helper_alive alacritty && helper_stop alacritty
+    if [[ $want == *" $name "* ]]; then helper_start "$name"; else helper_stop "$name"; fi
+  done
+}
+
+# ---- daemon ----------------------------------------------------------------------------------
+read_notes() {   # launches reported by tux-term / tux-open, and commands from the CLI
+  local t n
+  [[ -s $rt/notes ]] && mv "$rt/notes" "$rt/notes.reading" 2>/dev/null || return 0
+  while read -r t n; do
+    [[ -n $n ]] || continue
+    if [[ $t == forget ]]; then forget "$n"; else count "$n"; noted[$n]=$t; fi
+  done <"$rt/notes.reading"
+  rm -f "$rt/notes.reading"
+}
+daemon() {
+  # TUX_WARM_TICK/ROUND/FIRST: seconds between samples / warm rounds / until the first round (tests)
+  local i wm=${1:-} tick=${TUX_WARM_TICK:-20} round=${TUX_WARM_ROUND:-600} next_round next_scan n
+  mkdir -p "$rt" "$st"
+  exec 9>"$rt/lock"; flock -n 9 || exit 0
+  # Stopped (killed, restarted): stop idle helpers only. Session over: stop them all.
+  trap 'why="tux-warm stopped"; for n in $HELPER_APPS; do helper_stop "$n"; done; exit 0' TERM INT HUP
+  load_conf; (( ENABLED )) || exit 0
+  load_scores; decay; scan_desktop; pick_hot
+  log "daemon started (${wm:-no session check})"
+  sample
+  next_round=$(( EPOCHSECONDS + ${TUX_WARM_FIRST:-90} )) next_scan=$(( EPOCHSECONDS + 3600 )) bad_since=0
+  # Runs as long as the session's window manager does.
+  local wm_pid=''; [[ -n $wm ]] && { wm_pid=$(pgrep -n -u "$UID" -x "$wm") || { log "no $wm running"; exit 0; }; }
+  while [[ -z $wm_pid ]] || kill -0 "$wm_pid" 2>/dev/null; do
+    sleep "$tick" 9>&- & wait $!
+    load_conf
+    if (( ! ENABLED )); then   # switched off: no more warming; wait for busy helpers, then quit
+      why="switched off"; n=''
+      for i in $HELPER_APPS; do helper_stop "$i"; helper_alive "$i" && n+=" $i"; done
+      [[ -n $n ]] && continue
+      break
+    fi
+    read_notes; pick_hot
+    sample learn
+    (( dirty )) && save_scores
+    guard || bad_since=$EPOCHSECONDS
+    helpers_update
+    if (( EPOCHSECONDS >= next_round )); then
+      (( EPOCHSECONDS - bad_since >= COOL )) && warm_round
+      decay; next_round=$(( EPOCHSECONDS + round ))
+      [[ -f $st/log ]] && (( $(wc -l <"$st/log") > 2000 )) && { tail -n 1000 "$st/log" >"$st/log.tmp"; mv "$st/log.tmp" "$st/log"; }
+    fi
+    (( EPOCHSECONDS >= next_scan )) && { scan_desktop; next_scan=$(( EPOCHSECONDS + 3600 )); }
+  done
+  if (( ENABLED )) || ! kill -0 "${wm_pid:-$$}" 2>/dev/null; then
+    why="session ended"; for n in $HELPER_APPS; do helper_stop "$n" force; done; log "daemon stopped: session ended"
+  else
+    log "daemon stopped: switched off"
+  fi
+}
+running() { [[ -f $rt/lock ]] && ! flock -n "$rt/lock" true; }
+switch() {   # switch 0|1
+  local n wm
+  load_conf
+  if grep -q '^ENABLED=' "$conf"; then sed -i "s/^ENABLED=[0-9]*/ENABLED=$1/" "$conf"; else echo "ENABLED=$1" >>"$conf"; fi
+  if (( $1 )); then
+    if running; then echo "tux-warm: on (already running)"; return; fi
+    if [[ -n ${SWAYSOCK:-} ]]; then wm=sway; elif pgrep -u "$UID" -x i3 >/dev/null; then wm=i3; fi
+    setsid -f tux-warm daemon ${wm:+"$wm"} >/dev/null 2>&1
+    echo "tux-warm: on"; notify-send -t 3000 "Fast app start" "On" 2>/dev/null
+  else
+    # Idle helpers close now. One that holds your windows gets no new ones (alacritty: socket
+    # removed) and is closed by the daemon once its last window is gone; then the daemon exits.
+    why="switched off"
+    for n in $HELPER_APPS; do helper_stop "$n"; done
+    local busy=''; for n in $HELPER_APPS; do helper_alive "$n" && busy+=" $n"; done
+    rm -f "$rt/alacritty.sock"
+    echo "tux-warm: off${busy:+ (still open, holding your windows:$busy; closed once those windows are)}"
+    notify-send -t 4000 "Fast app start" "Off${busy:+. Still open with your windows:$busy}" 2>/dev/null
+  fi
+  return 0
+}
+
+# ---- commands --------------------------------------------------------------------------------
+set_list() {   # set_list VAR add|del NAME — edit PIN= / NEVER= in the config
+  local var=$1 op=$2 n=$3 new=() x
+  load_conf
+  for x in ${!var}; do [[ $x != "$n" ]] && new+=("$x"); done
+  [[ $op == add ]] && new+=("$n")
+  if grep -q "^$var=" "$conf"; then sed -i "s|^$var=.*|$var=\"${new[*]}\"|" "$conf"
+  else echo "$var=\"${new[*]}\"" >>"$conf"; fi
+  echo "$var=\"${new[*]}\""
+}
+status() {
+  local name kb res size path set_kb in_kb s h
+  load_conf; load_scores; pick_hot
+  if running; then echo "tux-warm: running"; else echo "tux-warm: not running (tux-autostart starts it at login)"; fi
+  (( ENABLED )) || echo "  switched off: ENABLED=0 in $conf"
+  if guard; then echo "  memory guard: all clear"; else echo "  memory guard: paused — $why"; fi
+  printf '  RAM %d MB, available %d MB (floor %d MB), pressure %s%%, warm budget %d MB\n\n' \
+    $((mem_total / 1024)) $((avail / 1024)) $((floor / 1024)) "$(pct "$psi")" $((mem_total * BUDGET_PCT / 102400))
+  printf '  %-16s %-8s %8s %7s %7s  %s\n' APP WHY LAUNCHES SET_MB IN_RAM HELPER
+  for name in "${hot_order[@]}"; do
+    set_kb=0 in_kb=0
+    if [[ -s $st/files/$name ]]; then
+      while read -r res size path; do set_kb=$((set_kb + size / 1024)); in_kb=$((in_kb + res / 1024)); done < <(residency "$st/files/$name")
+    fi
+    s=${score[$name]:-0} h=-
+    helper_alive "$name" && h="running (pid $(<"$rt/helper.$name"))"
+    printf '  %-16s %-8s %6d.%d %7d %6d%%  %s\n' "$name" "${hot[$name]}" $((s / 100)) $(( s % 100 / 10 )) \
+      $((set_kb / 1024)) $(( set_kb ? in_kb * 100 / set_kb : 0 )) "$h"
+  done
+  ((${#hot_order[@]})) || echo "  (nothing hot yet: apps qualify after $MIN_LAUNCHES launches)"
+  echo; echo "  Also launched lately:"
+  for name in "${!score[@]}"; do [[ -z ${hot[$name]:-} ]] && echo "$name ${score[$name]}"; done | sort -k2,2nr | head -8 |
+    while read -r name s; do printf '    %-16s %d.%d\n' "$name" $((s / 100)) $(( s % 100 / 10 )); done
+  echo; echo "  Config: $conf"; echo "  Log:    $st/log"
+}
+
+PAGE_KB=$(( $(getconf PAGESIZE) / 1024 ))
+cmd=${1:-status}; shift || true
+case $cmd in
+  daemon) daemon "$@" ;;
+  status) status ;;
+  off) switch 0 ;;
+  on) switch 1 ;;
+  toggle) load_conf; if (( ENABLED )); then switch 0; else switch 1; fi ;;
+  now) load_conf; load_scores; warm_round; tail -n 1 "$st/log" ;;
+  note) mkdir -p "$rt"; printf '%s %s\n' "$EPOCHSECONDS" "${1:?app}" >>"$rt/notes" ;;
+  pin)   set_list NEVER del "${1:?app}" >/dev/null; set_list PIN add "$1" ;;
+  unpin) set_list PIN del "${1:?app}" ;;
+  never) set_list PIN del "${1:?app}" >/dev/null; set_list NEVER add "$1" ;;
+  allow) set_list NEVER del "${1:?app}" ;;
+  forget)
+    if running; then printf 'forget %s\n' "${1:?app}" >>"$rt/notes"
+    else load_scores; forget "${1:?app}"; fi ;;
+  --edit|edit) [[ -f $conf ]] || write_default; exec tux-term --class tux-float -e "${EDITOR:-nano}" "$conf" ;;
+  -h|--help|help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "tux-warm: unknown command $cmd (try --help)" >&2; exit 2 ;;
+esac
