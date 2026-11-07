@@ -6,7 +6,8 @@
 # Sources: MPRIS media players (browsers playing YouTube/Netflix/music sites, Spotify, mpv,
 # VLC, ...) and mpd (rmpc, ncmpcpp, mpc), which speaks no MPRIS and is asked through mpc.
 # Games do not register as players, so their sound is never shown.
-# A playing player wins over paused ones; nothing open = the module disappears.
+# A playing player wins over paused ones. Paused shows only for a player seen playing
+# (you paused it); nothing playing or paused that way = the module disappears.
 export LC_ALL=${LC_ALL:-C.UTF-8}   # scroll by characters, not bytes
 W=${1:-24}
 GAP='   •   '
@@ -25,17 +26,47 @@ mpd_line() {
   printf 'mpd|%s|%s|%s\n' "$state" "$artist" "$title"
 }
 
-# pick: the first Playing player, else the first Paused one. Prints name|status|text
-pick() {
-  local best='' name status artist title line
+# players: every open player with a title, as name|status|Artist – Title lines.
+players() {
+  local name status artist title
   # playerInstance is the full name (e.g. firefox.instance_1_96) that playerctl -p accepts.
   while IFS='|' read -r name status artist title; do
     [[ -z $name || -z $title ]] && continue
     [[ $name != mpd && $name =~ $IGNORE ]] && continue
-    line=${artist:+$artist – }$title
-    if [[ $status == Playing ]]; then printf '%s|%s|%s\n' "$name" "$status" "$line"; return; fi
-    [[ $status == Paused && -z $best ]] && best="$name|$status|$line"
+    [[ $status == Playing || $status == Paused ]] || continue
+    printf '%s|%s|%s\n' "$name" "$status" "${artist:+$artist – }$title"
   done < <(playerctl -a metadata --format '{{playerInstance}}|{{status}}|{{artist}}|{{title}}' 2>/dev/null; mpd_line)
+}
+
+# pick [only-played]: the first Playing player, else the first Paused one. Prints
+# name|status|text. With only-played, a Paused player counts only if it has been seen
+# playing: browsers report any page with a video as Paused, even one never started.
+PLAYED=${XDG_RUNTIME_DIR:-/tmp}/tux-nowplaying-played   # shared by the bars on every monitor
+pick() {
+  local best='' name status line seen='' rows now=''
+  mapfile -t rows < <(players)
+  [[ ${1:-} == only-played ]] && seen=$(cat "$PLAYED" 2>/dev/null)
+  for line in "${rows[@]}"; do
+    IFS='|' read -r name status _ <<<"$line"
+    [[ $status == Playing ]] && now+="$name"$'\n'
+  done
+  if [[ ${1:-} == only-played ]]; then
+    # Remember players seen playing; forget the ones that have closed.
+    local keep='' n
+    while IFS= read -r n; do
+      [[ -n $n ]] && printf '%s\n' "${rows[@]}" | grep -qF -- "$n|" && keep+="$n"$'\n'
+    done <<<"$seen"$'\n'"$now"
+    keep=$(sort -u <<<"$keep" | sed '/^$/d')
+    [[ $keep != "$seen" ]] && printf '%s\n' "$keep" >"$PLAYED"
+    seen=$keep
+  fi
+  for line in "${rows[@]}"; do
+    IFS='|' read -r name status _ <<<"$line"
+    if [[ $status == Playing ]]; then printf '%s\n' "$line"; return; fi
+    [[ -z $best ]] || continue
+    [[ ${1:-} != only-played ]] || grep -qxF -- "$name" <<<"$seen" || continue
+    best=$line
+  done
   [[ -n $best ]] && printf '%s\n' "$best"
 }
 
@@ -58,7 +89,7 @@ fi
 btn() { printf '%%{A1:tux-nowplaying ctl-%s %s:}%s%%{A}' "$1" "$2" "$3"; }
 last='' i=0
 while :; do
-  IFS='|' read -r player status text < <(pick)
+  IFS='|' read -r player status text < <(pick only-played)
   if [[ -z ${player:-} ]]; then
     [[ $last != none ]] && echo '' && last=none
     i=0; sleep 1; continue
