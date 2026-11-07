@@ -281,6 +281,7 @@ edit the colours, `tux-theme set <name>`.
 | Fallback kernel | Arch installs `linux` **and** `linux-lts` |
 | Debian | security updates install themselves; everything else waits for `sysup` |
 | Off-disk backups | `tux-backup` → incremental `btrfs send` to an external btrfs drive (rsync for other filesystems) |
+| Shutdown guard | logout / reboot / shutdown from the power menu first lists what would be lost (DaVinci Resolve, OBS recording, unsaved windows, file copies, package updates, VMs, downloads …) and asks; Cancel is the default. Edit the list: system menu → *Shutdown guard list*, or `~/.config/tuxcraft/power-guard.conf` |
 | `rm` | aliased to `trash-put` in the shell (`rmf` for the real thing) |
 
 Snapshots live on the same disk. They protect against bad updates and mistakes, **not** against a
@@ -323,6 +324,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
+| `tux-guard --list` / `--edit` | what would block a shutdown right now / edit the watch list |
 | `tux-warm status` / `off` / `on` / `pin` / `never` | fast app start: what is kept warm and why, switch it off/on, pin or exclude an app |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
@@ -396,6 +398,7 @@ Windows 11, set to the Linux screen's mode, e.g. 1080p @ 165 Hz). LTSC media nee
 
 - `~/.config/i3/local.d/*.conf`, `~/.config/sway/local.d/*.conf` — your WM tweaks, never overwritten
 - `~/.bashrc.local` — your shell additions
+- `~/.config/tuxcraft/power-guard.conf` — apps and tasks the shutdown guard watches, never overwritten
 - `~/.config/tuxcraft/warm.conf` — fast app start: pinned / excluded apps, memory limits, the big-program list
 - Re-running the installer moves any config it would overwrite to `~/.local/state/tuxcraft/backup-<date>/`
 

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Power menu (from debi3n rofi-powermenu.sh), works on X11 and Wayland, systemd and runit.
+# Logout, reboot and shutdown go through tux-guard first (warns about open work).
 ctl() { if command -v systemctl >/dev/null && [[ -d /run/systemd/system ]]; then systemctl "$@"; else loginctl "$@"; fi; }
 opts="󰌾  Lock\n󰍃  Logout\n󰤄  Suspend\n󰜉  Reboot\n󰐥  Shutdown"
 choice=$(echo -e "$opts" | tux-menu "power") || exit 0
 case $choice in
   *Lock)     tux-lock ;;
-  *Logout)   if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; else i3-msg exit; fi ;;
+  *Logout)   tux-guard Logout || exit 0
+             if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; else i3-msg exit; fi ;;
   *Suspend)  tux-lock & sleep 1; ctl suspend ;;
-  *Reboot)   ctl reboot ;;
-  *Shutdown) ctl poweroff ;;
+  *Reboot)   tux-guard Reboot && ctl reboot ;;
+  *Shutdown) tux-guard Shutdown && ctl poweroff ;;
 esac

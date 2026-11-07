@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# tux-guard [action] : before shutdown/reboot/logout, look for work that would be lost
+# (open editors, file copies, package updates, recordings, ...) and ask first.
+#   tux-guard Shutdown   exit 0 = go ahead (nothing found, or confirmed), 1 = cancelled
+#   tux-guard --list     print what is running now, exit 1 if anything is
+#   tux-guard --edit     open the list in a terminal editor
+# The list lives in ~/.config/tuxcraft/power-guard.conf (written on first use).
+conf=${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/power-guard.conf
+
+write_default() {
+  mkdir -p "${conf%/*}"
+  cat >"$conf" <<'EOF'
+# tuxcraft power guard: shutdown, reboot and logout (power menu, Super+Shift+L) warn
+# while anything below is running, list it, and ask before going ahead.
+# Edit freely; changes apply on the next shutdown. Test with: tux-guard --list
+#
+# One check per line:   <kind>  <label> = <pattern or command>
+#   proc   exact process name, as pgrep -x sees it (regex allowed, max 15 chars)
+#   cmd    regex on the full command line (pgrep -f), shows the matching command
+#   title  regex on window titles, on every workspace (i3 and sway)
+#   exec   shell command; warns when it exits 0, and shows what it prints
+# Put a # in front of a line to switch it off.
+
+# Editors and creative apps
+proc  DaVinci Resolve = resolve
+proc  OBS Studio = obs
+proc  Kdenlive = kdenlive
+proc  Blender = blender
+proc  GIMP = gimp.*
+proc  Inkscape = inkscape
+proc  Krita = krita
+proc  Audacity = audacity
+proc  Ardour = ardour.*
+proc  LibreOffice = soffice\.bin
+title Unsaved document = ^[*●•]|\*$| \(modified\)
+
+# Recording
+exec  OBS is recording = tux-obs status 2>/dev/null | grep -qx recording
+proc  Screen recording = wf-recorder|ffmpeg
+
+# Files being copied or moved
+cmd   Copying files = ^(/usr/bin/)?(cp|mv|rsync|dd|scp|sftp|rclone|tar|7z|zip|unzip|pv)( |$)
+title File transfer (file manager) = ^(Copying|Moving|Deleting|File Operation Progress|Transfer)
+exec  Data not yet written to disk = awk '/^(Dirty|Writeback):/{k+=$2} END{if(k<102400)exit 1; printf "%d MB", k/1024}' /proc/meminfo
+
+# System work
+cmd   Package update = ^(/usr/bin/)?(pacman|paru|yay|xbps-install|xbps-remove|apt|apt-get|dpkg|flatpak|sysup)( |$)
+cmd   Backup or snapshot = tux-backup|tux-snap|btrfs (send|receive|balance|scrub)|snapper|borg|restic
+proc  Virtual machine = qemu-system.*
+cmd   Compiling = ^(/usr/bin/)?(make|cmake|ninja|cargo|gcc|g\+\+|clang|rustc|makepkg)( |$)
+proc  Torrent = qbittorrent|transmission.*|deluge.*
+
+# Browser downloads in progress (Firefox/Chromium partial files)
+exec  Downloads in progress = ls ~/Downloads/*.part ~/Downloads/*.crdownload 2>/dev/null | sed 's|.*/||' | grep .
+
+# Others
+#exec  Someone else is logged in = who | awk -v me="$USER" '$1 != me' | grep .
+#cmd   SSH session to another machine = ^ssh
+#proc  Claude Code = claude
+EOF
+}
+
+# Window titles from every workspace, one per line.
+titles() {
+  local tree
+  if [[ -n ${SWAYSOCK:-} ]]; then tree=$(swaymsg -t get_tree 2>/dev/null)
+  elif command -v i3-msg >/dev/null; then tree=$(i3-msg -t get_tree 2>/dev/null)
+  fi
+  [[ -n $tree ]] || return 0
+  if command -v jq >/dev/null; then
+    jq -r '.. | objects | select(.window != null or .app_id != null) | .name // empty' <<<"$tree"
+  else
+    python3 -c 'import json,sys
+def walk(n):
+    if n.get("window") or n.get("app_id"):
+        if n.get("name"): print(n["name"])
+    for k in ("nodes","floating_nodes"):
+        for c in n.get(k, []): walk(c)
+walk(json.load(sys.stdin))' <<<"$tree"
+  fi
+}
+
+# Print one "• label (detail)" line per check that fires.
+scan() {
+  [[ -s $conf ]] || write_default
+  local kind rest label pat hit out wins='' wins_read=0
+  while IFS= read -r line; do
+    line=${line#"${line%%[![:space:]]*}"}
+    [[ -z $line || $line == \#* || $line != *" = "* ]] && continue
+    kind=${line%%[[:space:]]*}; rest=${line#"$kind"}
+    label=${rest%% = *}; pat=${rest#* = }
+    label=${label#"${label%%[![:space:]]*}"}; label=${label%"${label##*[![:space:]]}"}
+    hit=''
+    case $kind in
+      proc)  hit=$(pgrep -lx -- "$pat" 2>/dev/null | awk '{print $2}' | sort -u | paste -sd, -) ;;
+      cmd)   hit=$(pgrep -af -- "$pat" 2>/dev/null | grep -v -e "^$$ " -e 'tux-guard' | head -n1 | cut -d' ' -f2- | cut -c1-70) ;;
+      title) ((wins_read)) || { wins=$(titles); wins_read=1; }
+             hit=$(grep -E -- "$pat" <<<"$wins" | head -n1 | cut -c1-70) ;;
+      exec)  out=$(bash -c "$pat" 2>/dev/null) || continue
+             hit=$(head -n3 <<<"$out" | paste -sd' ' - | cut -c1-70); hit=${hit:-' '} ;;
+      *)     continue ;;
+    esac
+    [[ -n $hit ]] || continue
+    hit=${hit# }
+    if [[ -z $hit || $hit == "$label" || $kind == proc ]]; then echo "• $label"; else echo "• $label  ($hit)"; fi
+  done <"$conf"
+}
+
+edit() {
+  [[ -s $conf ]] || write_default
+  if [[ -t 0 ]]; then exec "${EDITOR:-nano}" "$conf"; fi
+  exec tux-term --class tux-float -e "${EDITOR:-nano}" "$conf"
+}
+
+case ${1:-} in
+  --list) found=$(scan); [[ -n $found ]] && { echo "$found"; exit 1; }; echo "Nothing running that the guard watches."; exit 0 ;;
+  --edit) edit ;;
+esac
+
+action=${1:-Shutdown}
+found=$(scan)
+[[ -z $found ]] && exit 0
+n=$(grep -c . <<<"$found")
+
+# Cancel is first so a stray Enter never powers off. The found items are listed too;
+# picking one of them (or Esc) also cancels.
+extra=(); [[ -z ${WAYLAND_DISPLAY:-} ]] && extra=(-mesg "$action would close these:")
+pick=$(printf '%s\n' "󰜺  Cancel" "󰐥  $action anyway" "󰏫  Edit this list" "$found" |
+  tux-menu "$n still running" -- "${extra[@]}") || exit 1
+case $pick in
+  *"$action anyway") exit 0 ;;
+  *"Edit this list") edit ;;
+  *) exit 1 ;;
+esac
