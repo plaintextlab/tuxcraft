@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# tuxcraft-live — starts on tty1 of the tuxcraft ISO: get online, then run the installer.
+#
+# Fully unattended installs: put answers.conf (and optionally post-hook.sh) on any USB stick or
+# disk partition labelled TUXCFG. It is mounted read-only and the install runs with --yes.
+# Other consoles (Alt+F2 ... F6) are ordinary root shells for doing things by hand.
+set -uo pipefail
+
+SRC=/usr/share/tuxcraft
+VERSION=$(cat /etc/tuxcraft-iso 2>/dev/null || echo dev)
+b=$'\e[1m' d=$'\e[2m' g=$'\e[32m' r=$'\e[31m' n=$'\e[0m'
+
+online() { curl -fsI --max-time 5 https://github.com >/dev/null 2>&1 || ping -c1 -W3 1.1.1.1 >/dev/null 2>&1; }
+
+clear
+printf '%stuxcraft %s%s  %sinstalls Arch, Debian or Void with a themed i3/sway desktop%s\n\n' "$b" "$VERSION" "$n" "$d" "$n"
+
+args=()
+cfg=/dev/disk/by-label/TUXCFG
+if [[ -b $cfg ]]; then
+  mkdir -p /run/tuxcfg
+  if mount -o ro "$cfg" /run/tuxcfg 2>/dev/null && [[ -f /run/tuxcfg/answers.conf ]]; then
+    printf '%sFound TUXCFG with answers.conf: unattended install.%s\n' "$g" "$n"
+    args=(--config /run/tuxcfg/answers.conf --yes)
+    [[ -f /run/tuxcfg/post-hook.sh ]] && export TUX_POST_HOOK=/run/tuxcfg/post-hook.sh
+  fi
+fi
+
+printf 'Checking the internet connection'
+for _ in $(seq 1 20); do online && break; printf '.'; sleep 1; done
+echo
+if ! online; then
+  if ((${#args[@]})); then
+    echo "No network (unattended install needs a cable, or Wi-Fi saved before boot)."
+  else
+    tux-wifi-live
+  fi
+fi
+online || { printf '%sStill offline.%s Fix it on another console (Alt+F2), then type: tuxcraft-live\n' "$r" "$n"; exit 1; }
+printf '%sOnline.%s\n' "$g" "$n"
+
+report=''
+[[ -r /run/tuxcfg/report-url ]] && report=$(head -n1 /run/tuxcfg/report-url)
+# Automated tests: upload the result, and stay down instead of rebooting so the host decides.
+((${#args[@]})) && [[ -n $report ]] && args+=(--no-reboot)
+
+bash "$SRC/install.sh" "${args[@]}"
+rc=$?
+if [[ -n $report ]]; then
+  # report-url on TUXCFG (testing): where to PUT the install log; then power off either way.
+  curl -fsS -T /var/log/tuxcraft.log "$report/install-$rc.log" || true
+  poweroff
+fi
+if ((rc)); then
+  printf '\n%sThe install stopped (exit %d).%s Log: /var/log/tuxcraft.log\n' "$r" "$rc" "$n"
+  echo "Run it again with: tuxcraft-live   (or look around on Alt+F2)"
+fi
+exit "$rc"

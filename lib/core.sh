@@ -16,13 +16,28 @@ detect_distro() {
   esac
   [[ $id == ubuntu || $like == *ubuntu* ]] && warn "Ubuntu-based systems are treated as Debian; package names may differ."
   DISTRO_ID=$id
+  # The system tuxcraft runs on. During a fresh install DISTRO becomes the one being installed
+  # (TUX_DISTRO), which can differ: the tuxcraft ISO is Arch-based and installs all three.
+  HOST_DISTRO=$DISTRO
+  [[ -f /etc/tuxcraft-iso ]] && IS_TUXISO=1 || IS_TUXISO=0
+}
+
+# Distros a fresh install can produce from this host. The first step of an install (base system
+# into /mnt) needs the target's bootstrap tool on the host: pacstrap only exists on Arch, while
+# debootstrap and a static xbps run anywhere.
+installable_distros() {
+  case $HOST_DISTRO in
+    arch)   echo arch debian void ;;
+    debian) echo debian void ;;
+    void)   echo void debian ;;
+  esac
 }
 
 # A live ISO runs from an overlay/squashfs root. An installed system does not.
 detect_live() {
   local fstype
   fstype=$(findmnt -no FSTYPE / 2>/dev/null || true)
-  if [[ -d /run/archiso || -d /run/live/medium || -d /run/initramfs/live ]] || [[ $fstype =~ ^(overlay|tmpfs|squashfs|rootfs|airootfs)$ ]]; then
+  if [[ -f /etc/tuxcraft-iso || -d /run/archiso || -d /run/live/medium || -d /run/initramfs/live ]] || [[ $fstype =~ ^(overlay|tmpfs|squashfs|rootfs|airootfs)$ ]]; then
     IS_LIVE=1
   else
     IS_LIVE=0
@@ -99,8 +114,10 @@ detect_printers() {
 
 detect_all() {
   detect_distro; detect_live; detect_firmware; detect_cpu; detect_gpu; detect_laptop; detect_bluetooth; detect_printers
-  if [[ -d /run/systemd/system ]] || [[ $DISTRO != void ]]; then INIT=systemd; else INIT=runit; fi
+  set_init
 }
+
+set_init() { if [[ -d /run/systemd/system ]] || [[ $DISTRO != void ]]; then INIT=systemd; else INIT=runit; fi; }
 
 # ---------------------------------------------------------------- services
 svc_enable() {
@@ -163,17 +180,6 @@ as_user() {
 }
 
 fetch() { run curl -fL --retry 3 --connect-timeout 15 --no-progress-meter -o "$2" "$1"; }
-
-# gh_latest_tag owner/repo -> v1.2.3 (follows the /releases/latest redirect, no API token needed).
-# Prints nothing and still succeeds when GitHub can't be reached: under set -e a failed lookup
-# would otherwise end the whole install, so callers check for an empty tag and skip instead.
-gh_latest_tag() {
-  local url
-  url=$(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
-          -o /dev/null -w '%{url_effective}' "https://github.com/$1/releases/latest" 2>>"$TUX_LOG") || true
-  [[ $url == */tag/* ]] && printf '%s\n' "${url##*/tag/}"
-  return 0
-}
 
 write_file() {  # write_file path mode <<content
   install -Dm"${2:-644}" /dev/stdin "$1"

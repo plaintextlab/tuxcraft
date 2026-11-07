@@ -24,6 +24,6 @@ on()  { touch "$STATE"; apply; notify-send -u low "Night light on"; }
 off() { rm -f "$STATE"; apply; notify-send -u low "Night light off"; }
 case ${1:-toggle} in
   on) on ;; off) off ;;
-  toggle) [[ -f $STATE ]] && off || on ;;
+  toggle) if [[ -f $STATE ]]; then off; else on; fi ;;
   apply) apply ;;
 esac

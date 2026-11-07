@@ -1,6 +1,10 @@
 # tuxcraft
 
-Boot a live ISO, connect to the internet, and run:
+**Easiest:** download `tuxcraft-*.iso` from the [latest release](https://github.com/plaintextlab/tuxcraft/releases/latest),
+write it to a USB stick, boot it. The installer starts by itself and asks which Linux you want:
+**Arch, Debian or Void**. See [The tuxcraft ISO](#the-tuxcraft-iso).
+
+**Or** boot any of the three distros' own live ISOs, connect to the internet, and run:
 
 ```sh
 curl -fsSL https://plaintextlab.org/tuxcraft | sh                 # Arch
@@ -34,7 +38,34 @@ The theme grid shows Catppuccin Mocha, Gruvbox, Nord and Catppuccin Latte. The b
 terminal, file manager, btop, menus and mouse cursor all switch together. Ten themes ship
 with tuxcraft (see `themes/`).
 
-## Quick start
+## The tuxcraft ISO
+
+One USB stick installs any of the three. It is Arch's official install ISO (same kernel,
+firmware and boot loaders) with tuxcraft added and started on the first console.
+
+1. Download `tuxcraft-<version>-x86_64.iso` and check it: `sha256sum -c tuxcraft-*.iso.sha256`.
+2. Write it: `sudo dd if=tuxcraft-*.iso of=/dev/sdX bs=4M status=progress oflag=sync` (or Ventoy, Rufus in DD mode).
+3. **Turn Secure Boot off** in the firmware settings. The ISO is not signed with Microsoft's key.
+4. Boot it. With a network cable it is online at once; otherwise it lists Wi-Fi networks to pick from.
+5. Answer the questions: **Arch / Debian / Void**, where to install, encryption, user, desktop.
+   Everything else is automatic, then it reboots into your new desktop.
+
+Other consoles (Alt+F2 … F6) are root shells if you want to look around. How the three get
+installed from one Arch-based ISO: Arch with `pacstrap`, Debian with `debootstrap` (checked
+against Debian's archive key), Void with Void's static `xbps` (checked against Void's signing
+keys). After that first step everything runs inside the new system with its own package manager,
+exactly as when you start from that distro's own ISO.
+
+**No questions at all:** put an `answers.conf` (see [What it asks](#what-it-asks); the keys are
+listed in `./install.sh --help`) on a USB stick or partition labelled `TUXCFG`, optionally with a
+`post-hook.sh` that runs as root in the new system at the end. Boot the ISO with it plugged in and
+the install runs unattended.
+
+Build it yourself on Arch: `sudo pacman -S archiso && sudo iso/build.sh`.
+
+## Quick start (the distro's own live ISO)
+
+The script keeps working on its own, for when you already booted a live ISO by hand.
 
 Boot the live ISO of the distro you want, connect to the internet, and run **one command**.
 It downloads tuxcraft, asks its questions (disk, user, password, desktop, extras…), installs
@@ -113,12 +144,21 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
 
 ## What it asks
 
-1. **Disk** to erase (live ISO only), computer name, user, password, timezone, keyboard
-2. **X11 + i3** or **Wayland + sway** — same keys, same look either way
-3. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
-4. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
-5. **Font** (previews below) and size
-6. **Browser** and **optional extras** (firewall, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
+1. **Which distro** (live ISO only): the tuxcraft ISO offers Arch, Debian and Void; a Debian or
+   Void live ISO offers its own distro and the other of those two (Arch needs an Arch host)
+2. **Where:** erase a whole disk, use **free space** next to Windows or another system, or replace
+   **one partition** (dual boot, UEFI only: the existing EFI partition is shared, never formatted,
+   and os-prober adds the other system to the GRUB menu)
+3. **Encryption** (default on): LUKS2 over the whole btrfs root including `/boot`. GRUB asks for the
+   passphrase once at power-on (US keyboard layout at that prompt); a key file inside the
+   encrypted disk spares you a second prompt. Snapshots and rollback work the same.
+4. Computer name, user, password, timezone, keyboard. The timezone is **not** looked up online
+   unless you say yes (that sends your IP address to ipapi.co).
+5. **X11 + i3** or **Wayland + sway** — same keys, same look either way
+6. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
+7. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
+8. **Font** (previews below) and size
+9. **Browser** and **optional extras** (firewall, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
    *Music* (on by default) = **rmpc** + mpd with album art and a **cava** visualizer: **Super+M** opens it
    (`8` = full-screen visualizer), **Super+Shift+M** opens cava on its own. Pick the music folder with
    **System menu → Music folder** or `tux-music folder ~/path` — no mpd.conf editing.
@@ -130,9 +170,9 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    (mDNS) and USB (ipp-usb) discovery and driverless IPP printing; printers found at install time
    get their vendor driver (hplip, escpr, brlaser, splix). At the first login, printers on the
    network are added automatically; later, **System menu → Printers** or `tux-printer`.
-7. Extra packages to **add**, packages to **leave out**
+10. Extra packages to **add**, packages to **leave out**
 
-Answers are saved to `/etc/tuxcraft/answers.conf` (without the password); reuse them for an
+Answers are saved to `/etc/tuxcraft/answers.conf` (without either password); reuse them for an
 identical machine with `sudo ./install.sh --config answers.conf --yes`.
 
 ## Fonts
@@ -402,7 +442,25 @@ Windows 11, set to the Linux screen's mode, e.g. 1080p @ 165 Hz). LTSC media nee
 - `~/.config/tuxcraft/warm.conf` — fast app start: pinned / excluded apps, memory limits, the big-program list
 - Re-running the installer moves any config it would overwrite to `~/.local/state/tuxcraft/backup-<date>/`
 
+## Trust: what runs as root
+
+- **Releases are pinned.** `https://plaintextlab.org/tuxcraft` serves the `install.sh` of the
+  latest GitHub release, which downloads that release's tarball and refuses it unless its SHA-256
+  matches. The `install.sh` on the `main` branch follows `main` unverified: the development channel.
+- **Every upstream download is pinned.** Tools no distro packages (yazi, Neovim, starship, lazygit,
+  Nerd Fonts, …) have a fixed version and SHA-256 in `data/downloads.tsv`; a file that does not
+  match is refused. `scripts/update-pins.sh` bumps them; CI runs it weekly and opens a pull request.
+- **Your password** reaches the new system through a root-only file on its `/run` (RAM), never
+  its disk, and is not saved in `answers.conf`.
+
 ## Testing in a VM
+
+**CI** (`.github/workflows/ci.yml`) builds the ISO and installs from it in QEMU/KVM on every push to
+`main`: Arch, Debian and Void, each with i3 and with sway, encrypted and not, one BIOS install
+and one dual-boot (free space) install. The installed system boots, runs `tests/vm-check.sh` and
+the job fails on any FAIL. Locally the same: `tests/ci-vm.sh out/tuxcraft-*.iso debian --luks`.
+
+By hand, with the distros' own ISOs:
 
 Before trusting it on a real disk, run a throwaway install in QEMU from your checkout:
 
@@ -427,10 +485,13 @@ Host needs `qemu`, OVMF/edk2 for UEFI, and KVM for usable speed.
 
 ## Honest limitations
 
-- **Tested so far:** every script passes shellcheck; all ten themes are rendered and every generated
+- **Tested so far:** every script passes shellcheck (no warnings); all ten themes are rendered and every generated
   TOML/INI/XML/Qt palette is parsed; the Void package names were checked against void-packages.
-  **Not yet tested:** a full install on real hardware or a VM for each distro — `tests/vm-test.sh` exists to do exactly that. Treat the first runs
-  as beta and keep the log (`/var/log/tuxcraft.log`).
-- No disk encryption (LUKS) yet, and the installer always uses the whole disk (no dual-boot partitioning).
+  Full installs are covered by the CI matrix above; until it has passed on real hardware for
+  each distro, treat the first runs as beta and keep the log (`/var/log/tuxcraft.log`).
+- The tuxcraft ISO needs **Secure Boot off**.
+- Dual boot needs UEFI and a GPT disk. BIOS installs always use a whole disk.
+- Encrypted installs: GRUB unlocks the disk slowly (PBKDF2, about 5–15 s) and always with a US
+  keyboard layout. No TPM unlock, no hibernation.
 - x86_64 only. Arch + NVIDIA Pascal or older needs the AUR `nvidia-580xx` driver (the script tells you).
 - A missing package never stops the install: it is skipped and listed at the end.

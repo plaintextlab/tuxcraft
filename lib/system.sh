@@ -105,11 +105,86 @@ sys_user() {
   chmod 440 /etc/sudoers.d/10-wheel
 }
 
+# Disk facts from the live stage (lib/disk.sh write_disk_conf).
+load_disk_conf() {
+  TUX_LUKS_UUID='' TUX_DUALBOOT=0 TUX_ROOT_PART=''
+  # shellcheck source=/dev/null
+  [[ -r $TUX_ETC/disk.conf ]] && . "$TUX_ETC/disk.conf"
+  return 0
+}
+
+# set_grub KEY VALUE : set (or add) one /etc/default/grub variable.
+set_grub() {
+  local f=/etc/default/grub
+  [[ -f $f ]] || return 0
+  if grep -qE "^#?\s*$1=" "$f"; then sed -i -E "s|^#?\s*$1=.*|$1=$2|" "$f"; else echo "$1=$2" >>"$f"; fi
+}
+
+# Encrypted root: the initramfs opens it with the key file (GRUB already asked for the passphrase).
+sys_crypt() {
+  [[ -n $TUX_LUKS_UUID ]] || return 0
+  step "Disk encryption: initramfs unlock with the key file"
+  local kf=/etc/cryptsetup-keys.d/cryptroot.key
+  [[ -r $kf ]] || die "Key file $kf missing"
+  chmod 700 /etc/cryptsetup-keys.d; chmod 600 "$kf"
+  case $DISTRO in
+    arch)
+      command -v cryptsetup >/dev/null || pkg_install cryptsetup
+      local conf=/etc/mkinitcpio.conf
+      if grep -qE '^HOOKS=.*\bsystemd\b' "$conf"; then
+        # systemd-based initramfs (Arch's default): sd-encrypt reads crypttab.initramfs.
+        grep -qE '^HOOKS=.*\bsd-encrypt\b' "$conf" || sed -i -E 's/^(HOOKS=.*)\bfilesystems\b/\1sd-encrypt filesystems/' "$conf"
+        echo "cryptroot UUID=$TUX_LUKS_UUID $kf luks,discard" >/etc/crypttab.initramfs
+      else
+        grep -qE '^HOOKS=.*\bencrypt\b' "$conf" || sed -i -E 's/^(HOOKS=.*)\bfilesystems\b/\1encrypt filesystems/' "$conf"
+        GRUB_CRYPT_CMDLINE="cryptdevice=UUID=$TUX_LUKS_UUID:cryptroot:allow-discards cryptkey=rootfs:$kf"
+      fi
+      grep -qE '^HOOKS=.*\bkeyboard\b' "$conf" || warn "mkinitcpio HOOKS has no keyboard hook; a passphrase fallback prompt would get no input"
+      if grep -q '^FILES=' "$conf"; then
+        grep -qF "$kf" "$conf" || sed -i -E "s|^FILES=\((.*)\)|FILES=(\1 $kf)|" "$conf"
+      else
+        echo "FILES=($kf)" >>"$conf"
+      fi
+      ;;
+    debian)
+      command -v cryptsetup >/dev/null || pkg_install cryptsetup cryptsetup-initramfs
+      echo "cryptroot UUID=$TUX_LUKS_UUID $kf luks,discard,key-slot=1" >/etc/crypttab
+      mkdir -p /etc/cryptsetup-initramfs
+      grep -qs '^KEYFILE_PATTERN=' /etc/cryptsetup-initramfs/conf-hook ||
+        echo 'KEYFILE_PATTERN="/etc/cryptsetup-keys.d/*.key"' >>/etc/cryptsetup-initramfs/conf-hook
+      # The key file is inside the initramfs: nobody but root may read the image.
+      grep -qs '^UMASK=0077' /etc/initramfs-tools/initramfs.conf || echo 'UMASK=0077' >>/etc/initramfs-tools/initramfs.conf
+      ;;
+    void)
+      command -v cryptsetup >/dev/null || pkg_install cryptsetup
+      echo "cryptroot UUID=$TUX_LUKS_UUID $kf luks,discard" >/etc/crypttab
+      mkdir -p /etc/dracut.conf.d
+      cat >/etc/dracut.conf.d/10-tuxcraft-crypt.conf <<EOF
+# tuxcraft: unlock the encrypted root with the key file (GRUB already asked for the passphrase)
+add_dracutmodules+=" crypt btrfs "
+install_items+=" $kf /etc/crypttab "
+EOF
+      GRUB_CRYPT_CMDLINE="rd.luks.uuid=$TUX_LUKS_UUID rd.luks.allow-discards"
+      ;;
+  esac
+  set_grub GRUB_ENABLE_CRYPTODISK y
+}
+
 sys_bootloader() {
   step "Installing GRUB ($BOOT_MODE)"
   local cmdline='loglevel=3 quiet'
   [[ ${TUX_NVIDIA:-no} == yes ]] && cmdline+=' nvidia-drm.modeset=1'
+  GRUB_CRYPT_CMDLINE=''
+  load_disk_conf
+  sys_crypt
   if [[ -f /etc/default/grub ]]; then
+    # Crypt parameters go in GRUB_CMDLINE_LINUX so the recovery entries have them too.
+    [[ -n $GRUB_CRYPT_CMDLINE ]] && set_grub GRUB_CMDLINE_LINUX "\"$GRUB_CRYPT_CMDLINE\""
+    if ((TUX_DUALBOOT)); then
+      command -v os-prober >/dev/null || pkg_install os-prober || warn "os-prober not installed: add other systems to GRUB by hand"
+      set_grub GRUB_DISABLE_OS_PROBER false
+      sed -i 's|^#\?GRUB_TIMEOUT_STYLE=.*|GRUB_TIMEOUT_STYLE=menu|' /etc/default/grub
+    fi
     sed -i "s|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT=\"$cmdline\"|" /etc/default/grub
     sed -i 's|^#\?GRUB_TIMEOUT=.*|GRUB_TIMEOUT=3|' /etc/default/grub
     # Always boot the first entry. No GRUB_SAVEDEFAULT: /boot sits on btrfs, where GRUB cannot
@@ -121,12 +196,15 @@ sys_bootloader() {
   if [[ $BOOT_MODE == uefi ]]; then
     run grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=tuxcraft --recheck \
       || die "grub-install failed"
-    # Fallback path for firmware that forgets NVRAM entries.
-    run grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable || true
+    # Fallback path for firmware that forgets NVRAM entries. Not on a shared EFI partition:
+    # EFI/BOOT/BOOTX64.EFI there belongs to the other system (usually Windows).
+    ((TUX_DUALBOOT)) || run grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable || true
   else
     run grub-install --target=i386-pc "$TUX_DISK" || die "grub-install failed"
   fi
   sys_initramfs
+  # The initramfs of an encrypted system holds the key file.
+  if [[ -n $TUX_LUKS_UUID ]]; then chmod 600 /boot/initr* 2>/dev/null || true; fi
   run grub-mkconfig -o /boot/grub/grub.cfg || die "grub-mkconfig failed"
 }
 

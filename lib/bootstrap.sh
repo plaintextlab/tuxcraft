@@ -42,14 +42,35 @@ bootstrap_arch() {
       zram-generator vim man-db bash-completion || die "pacstrap failed (see $TUX_LOG)"
 }
 
+DEBIAN_KEYRING=/usr/share/keyrings/debian-archive-keyring.gpg
+
+# debootstrap verifies every package against Debian's archive key. A Debian host has it; on
+# other hosts it comes from the distro (Arch packages it) or from the pinned keyring .deb.
+debian_keyring() {
+  [[ -s $DEBIAN_KEYRING ]] && { echo "$DEBIAN_KEYRING"; return; }
+  local t=/tmp/tuxcraft-debkeyring
+  if [[ ! -s $t/keyring.gpg ]]; then
+    rm -rf "$t"; mkdir -p "$t"
+    run pin_get debian-keyring "$t/k.deb" || die "Could not download the Debian archive keyring"
+    (cd "$t" && bsdtar -xf k.deb && bsdtar -xf data.tar.* ./usr/share/keyrings/debian-archive-keyring.gpg) ||
+      die "Could not unpack the Debian archive keyring (bsdtar missing?)"
+    mv "$t/usr/share/keyrings/debian-archive-keyring.gpg" "$t/keyring.gpg"
+  fi
+  echo "$t/keyring.gpg"
+}
+
 bootstrap_debian() {
-  local suite mirror=http://deb.debian.org/debian
-  # shellcheck disable=SC1091
-  suite=$(. /etc/os-release; echo "${VERSION_CODENAME:-trixie}")
-  [[ $suite =~ ^(sid|unstable)$ ]] && warn "Live system is $suite; installing that suite."
+  local suite mirror=http://deb.debian.org/debian keyring
+  suite=${TUX_DEBIAN_SUITE:-}
+  if [[ -z $suite && $HOST_DISTRO == debian ]]; then
+    # shellcheck disable=SC1091
+    suite=$(. /etc/os-release; echo "${VERSION_CODENAME:-}")
+    [[ $suite =~ ^(sid|unstable)$ ]] && warn "Live system is $suite; installing that suite."
+  fi
+  suite=${suite:-trixie}
   step "Installing Debian $suite base (debootstrap)"
-  command -v debootstrap >/dev/null || { run apt-get update; run apt-get install -y debootstrap; }
-  run debootstrap --arch=amd64 --components=main,contrib,non-free,non-free-firmware \
+  keyring=$(debian_keyring)
+  run debootstrap --arch=amd64 --keyring="$keyring" --components=main,contrib,non-free,non-free-firmware \
       --include=locales,ca-certificates,curl,git,sudo,dbus,console-setup,keyboard-configuration \
       "$suite" "$TARGET" "$mirror" || die "debootstrap failed (see $TUX_LOG)"
   rm -f "$TARGET/etc/apt/sources.list"
@@ -67,32 +88,55 @@ Components: main contrib non-free non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
   chroot_setup
+  local crypt=''
+  [[ ${TUX_ENCRYPT:-no} == yes ]] && crypt='cryptsetup cryptsetup-initramfs'
   # shellcheck disable=SC2046
   DEBIAN_FRONTEND=noninteractive run chroot "$TARGET" sh -c "apt-get update && apt-get install -y \
       linux-image-amd64 linux-headers-amd64 firmware-linux firmware-linux-nonfree firmware-misc-nonfree \
       $(ucode_pkg) $(grub_pkgs) btrfs-progs dosfstools initramfs-tools network-manager pciutils \
-      systemd-timesyncd systemd-zram-generator bash-completion man-db" || die "Debian base packages failed (see $TUX_LOG)"
+      systemd-timesyncd systemd-zram-generator bash-completion man-db $crypt" || die "Debian base packages failed (see $TUX_LOG)"
+}
+
+# On a Void host the system xbps; anywhere else the static build from Void (pinned + verified),
+# which also brings Void's repository signing keys: packages stay signature-checked.
+XBPS=xbps-install XBPS_KEYS=/var/db/xbps/keys
+void_xbps() {
+  [[ $HOST_DISTRO == void ]] && return 0
+  local t=/tmp/tuxcraft-xbps
+  if [[ ! -x $t/usr/bin/xbps-install.static ]]; then
+    rm -rf "$t"; mkdir -p "$t"
+    run pin_get xbps-static "$t/x.txz" || die "Could not download the static xbps"
+    tar -xJf "$t/x.txz" -C "$t" || die "Could not unpack the static xbps"
+  fi
+  XBPS=$t/usr/bin/xbps-install.static XBPS_KEYS=$t/var/db/xbps/keys
+  compgen -G "$XBPS_KEYS/*.plist" >/dev/null || die "The static xbps came without Void's signing keys"
+  # Hosts without xbps have no xbps config: tell it where its own files are.
+  mkdir -p "$t/etc/xbps.d"
 }
 
 bootstrap_void() {
   local mirror repo arch
-  arch=$(uname -m)
+  arch=x86_64
+  void_xbps
   step "Picking the fastest Void mirror"
   mirror=$(bash "$TUX_SRC/bin/tux-mirror" --best) || warn "No mirror answered the speed test; using the default"
+  mirror=${mirror:-https://repo-default.voidlinux.org}
   info "Mirror: $mirror"
   repo=$mirror/current
-  if ldd --version 2>&1 | grep -i musl >/dev/null; then repo+=/musl; arch+=-musl; fi
+  # Only a musl Void host installs musl Void; everything else installs glibc.
+  # (grep >/dev/null, not -q: under pipefail an early-quitting grep can turn a match into failure)
+  if [[ $HOST_DISTRO == void ]] && ldd --version 2>&1 | grep -i musl >/dev/null; then repo+=/musl; arch+=-musl; fi
   step "Installing Void Linux base (xbps, $arch)"
-  run xbps-install -Syu -R "$repo" xbps || true
+  [[ $HOST_DISTRO == void ]] && { run xbps-install -Syu -R "$repo" xbps || true; }
   mkdir -p "$TARGET/var/db/xbps/keys"
-  cp -a /var/db/xbps/keys/. "$TARGET/var/db/xbps/keys/"
+  cp -a "$XBPS_KEYS"/. "$TARGET/var/db/xbps/keys/"
   # shellcheck disable=SC2046
-  XBPS_ARCH=$arch run xbps-install -Sy -r "$TARGET" -R "$repo" base-system void-repo-nonfree \
+  XBPS_ARCH=$arch run "$XBPS" -Sy -r "$TARGET" -R "$repo" base-system void-repo-nonfree \
       $(grub_pkgs) btrfs-progs dosfstools sudo NetworkManager pciutils curl git bash-completion \
-      zramen dbus elogind || die "xbps base install failed (see $TUX_LOG)"
+      zramen dbus elogind cryptsetup || die "xbps base install failed (see $TUX_LOG)"
   # Microcode for Intel lives in the nonfree repo, which only exists after void-repo-nonfree.
   local uc; uc=$(ucode_pkg)
-  [[ -n $uc ]] && XBPS_ARCH=$arch run xbps-install -Sy -r "$TARGET" -R "$repo" -R "$repo/nonfree" "$uc" || true
+  if [[ -n $uc ]]; then XBPS_ARCH=$arch run "$XBPS" -Sy -r "$TARGET" -R "$repo" -R "$repo/nonfree" "$uc" || true; fi
   # Every repository file (main, nonfree, later multilib) on the same mirror; remembered for later.
   run bash "$TUX_SRC/bin/tux-mirror" -r "$TARGET" "$mirror" ||
     { mkdir -p "$TARGET/etc/xbps.d"; echo "repository=$repo" >"$TARGET/etc/xbps.d/00-repository-main.conf"; }
@@ -100,15 +144,36 @@ bootstrap_void() {
 
 live_prereqs() {
   step "Preparing live environment"
-  case $DISTRO in
-    arch)   command -v mkfs.btrfs >/dev/null || run pacman -Sy --noconfirm btrfs-progs ;;
-    debian) run apt-get update; run apt-get install -y debootstrap btrfs-progs dosfstools parted ;;
-    void)   run xbps-install -Sy xbps || true; run xbps-install -y btrfs-progs dosfstools parted || true ;;
+  ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Wi-Fi: see 'Connecting to the internet' in the README) and re-run."
+  # Host tools: partitioning, btrfs, LUKS, and the bootstrap tool of the distro being installed.
+  # The tuxcraft ISO ships all of them; the distros' own live ISOs get what they lack.
+  local -a need=(btrfs-progs dosfstools cryptsetup)
+  [[ $DISTRO == debian && $HOST_DISTRO != debian ]] && need+=(debootstrap)
+  case $HOST_DISTRO in
+    arch)
+      [[ $DISTRO == debian ]] && need+=(debootstrap debian-archive-keyring)
+      ((IS_TUXISO)) || run pacman -Sy --needed --noconfirm "${need[@]}" ;;
+    debian)
+      run apt-get update
+      run apt-get install -y debootstrap "${need[@]}" parted ;;
+    void)
+      run xbps-install -Sy xbps || true
+      [[ $DISTRO == debian ]] && need+=(bsdtar)
+      run xbps-install -y "${need[@]}" parted || true ;;
   esac
-  for t in sfdisk mkfs.btrfs mkfs.fat wipefs blkid findmnt; do
+  for t in sfdisk mkfs.btrfs mkfs.fat wipefs blkid findmnt cryptsetup; do
     command -v "$t" >/dev/null || [[ $t == mkfs.fat && $BOOT_MODE == bios ]] || die "Missing tool on live system: $t"
   done
-  ping -c1 -W3 1.1.1.1 >/dev/null 2>&1 || curl -fsI https://github.com >/dev/null 2>&1 || die "No internet. Connect first (Wi-Fi: see 'Connecting to the internet' in the README) and re-run."
+  [[ $DISTRO == debian ]] && { command -v debootstrap >/dev/null || die "Missing tool on live system: debootstrap"; }
+  return 0
+}
+
+# Unmount the new system and lock the encrypted disk again.
+target_release() {
+  sync
+  umount -R "$TARGET" 2>/dev/null || warn "Could not unmount $TARGET cleanly"
+  if [[ -e /dev/mapper/$CRYPT_NAME ]]; then cryptsetup close "$CRYPT_NAME" 2>/dev/null || warn "Could not close $CRYPT_NAME"; fi
+  return 0
 }
 
 # A NetworkManager Wi-Fi profile: write_nm_wifi FILE SSID PSK

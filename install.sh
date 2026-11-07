@@ -15,7 +15,14 @@
 # Void. No git needed: the repository comes as a tarball, with whatever download tool the live
 # ISO has (curl on Arch, wget on Debian live, xbps-fetch on Void). sh reads a piped script one
 # command at a time, so the bash-only code below is never parsed by it.
+#
+# Release builds of this file (the install.sh attached to each GitHub release, which is what
+# https://plaintextlab.org/tuxcraft serves) have the two lines below rewritten by
+# .github/workflows/release.yml to that release's tarball and its SHA-256, so what runs as root
+# is exactly the tagged release. This copy on the main branch follows main, unverified: the
+# development channel.
 TUX_REPO_TARBALL=${TUX_REPO_TARBALL:-https://github.com/plaintextlab/tuxcraft/archive/refs/heads/main.tar.gz}
+TUX_REPO_SHA256=${TUX_REPO_SHA256:-}
 TUX_SRC=
 [ -f "$0" ] && TUX_SRC=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 if [ ! -f "$TUX_SRC/lib/ui.sh" ]; then
@@ -27,6 +34,10 @@ if [ ! -f "$TUX_SRC/lib/ui.sh" ]; then
   elif command -v xbps-fetch >/dev/null; then xbps-fetch -o "$dl.tar.gz" "$TUX_REPO_TARBALL" >/dev/null
   else echo "Need curl, wget or xbps-fetch to download tuxcraft" >&2; exit 1; fi || {
     echo "Download failed. Connected to the internet? Wi-Fi: see 'Connecting to the internet' in the README" >&2; exit 1; }
+  if [ -n "$TUX_REPO_SHA256" ]; then
+    echo "$TUX_REPO_SHA256  $dl.tar.gz" | sha256sum -c - >/dev/null 2>&1 || {
+      echo "CHECKSUM MISMATCH: the downloaded tuxcraft is not the published release. Stopping." >&2; exit 1; }
+  fi
   tar -xzf "$dl.tar.gz" -C "$dl" --strip-components=1 || { echo "Download was not a tuxcraft archive" >&2; exit 1; }
   command -v bash >/dev/null || { echo "tuxcraft needs bash" >&2; exit 1; }
   # stdin is the download pipe: answer the questions from the keyboard instead.
@@ -50,9 +61,10 @@ Usage: sudo ./install.sh [options]
   --update        already set up: keep every saved answer, just bring tuxcraft up to date
   -h, --help      this help
 
-Answer keys (see README): TUX_DISK TUX_HOSTNAME TUX_USER TUX_PASSWORD TUX_TIMEZONE TUX_LOCALE
-TUX_KEYMAP TUX_SESSION TUX_NVIDIA TUX_THEME TUX_FONT TUX_FONT_SIZE TUX_BROWSER TUX_BUNDLES
-TUX_EXTRA TUX_EXCLUDE
+Answer keys (see README): TUX_DISTRO TUX_TARGET TUX_DISK TUX_PART TUX_ENCRYPT TUX_LUKS_PASSWORD
+TUX_HOSTNAME TUX_USER TUX_PASSWORD TUX_TIMEZONE TUX_GEOIP TUX_LOCALE TUX_KEYMAP TUX_SESSION
+TUX_NVIDIA TUX_THEME TUX_FONT TUX_FONT_SIZE TUX_BROWSER TUX_BUNDLES TUX_EXTRA TUX_EXCLUDE
+TUX_DEBIAN_SUITE TUX_POST_HOOK
 EOF
 }
 
@@ -85,7 +97,7 @@ if ! command -v curl >/dev/null; then
   fi || { echo "Could not install curl (network?)" >&2; exit 1; }
 fi
 
-for f in ui core pkg disk bootstrap system gpu hwfix extras fonts desktop snapshots; do
+for f in ui core pins pkg disk bootstrap system gpu hwfix extras fonts desktop snapshots; do
   # shellcheck source=/dev/null
   . "$TUX_SRC/lib/$f.sh"
 done
@@ -111,10 +123,10 @@ mkdir -p "$(dirname "$TUX_LOG")"
 # shellcheck source=/dev/null
 [[ -n $CONFIG ]] && . "$CONFIG"
 
-ANSWER_KEYS=(TUX_MODE TUX_DISK TUX_HOSTNAME TUX_USER TUX_TIMEZONE TUX_LOCALE TUX_KEYMAP TUX_SESSION
+ANSWER_KEYS=(TUX_MODE TUX_DISTRO TUX_TARGET TUX_DISK TUX_PART TUX_ENCRYPT TUX_DEBIAN_SUITE TUX_HOSTNAME TUX_USER TUX_TIMEZONE TUX_LOCALE TUX_KEYMAP TUX_SESSION
              TUX_NVIDIA TUX_THEME TUX_FONT TUX_FONT_SIZE TUX_BROWSER TUX_BUNDLES TUX_EXTRA TUX_EXCLUDE BOOT_MODE)
 
-save_answers() {  # never stores the password
+save_answers() {  # never stores the passwords
   local k
   mkdir -p "$(dirname "$1")"
   { echo "# tuxcraft answers — reuse with: sudo ./install.sh --config this-file"
@@ -126,9 +138,11 @@ save_answers() {  # never stores the password
   chmod 600 "$1"
 }
 
+# Offline by default: the live system's own timezone. Looking it up online sends your IP address
+# to ipapi.co, so that only happens when asked (TUX_GEOIP=yes, or "y" in the wizard).
 guess_timezone() {
-  local tz
-  tz=$(curl -fsS --max-time 4 https://ipapi.co/timezone 2>/dev/null || true)
+  local tz=''
+  [[ ${TUX_GEOIP:-no} == yes ]] && tz=$(curl -fsS --max-time 4 https://ipapi.co/timezone 2>/dev/null || true)
   # The live ISO may have no /etc/localtime symlink; readlink failing must not trip the ERR trap.
   [[ $tz =~ ^[A-Za-z_]+/[A-Za-z_/+-]+$ ]] || tz=$({ readlink /etc/localtime || true; } 2>/dev/null | sed 's#.*/zoneinfo/##')
   echo "${tz:-UTC}"
@@ -216,9 +230,11 @@ wizard() {
   offer_update
 
   if [[ -z ${TUX_MODE:-} ]]; then
-    if ((IS_LIVE)) && ((!FORCE_DESKTOP)); then
+    if ((IS_TUXISO)) && ((!FORCE_DESKTOP)); then
+      TUX_MODE=install
+    elif ((IS_LIVE)) && ((!FORCE_DESKTOP)); then
       choose TUX_MODE "You are on a live system. What should tuxcraft do?" install \
-        "install|Install to a disk|erase a disk, install $DISTRO + desktop" \
+        "install|Install to a disk|$(installable_distros | sed 's/ /, /g') + desktop" \
         "desktop|Set up this system|only if this is NOT the live ISO"
     else
       TUX_MODE=desktop
@@ -226,7 +242,19 @@ wizard() {
   fi
 
   if [[ $TUX_MODE == install ]]; then
-    pick_disk
+    local -a dopts=() d
+    for d in $(installable_distros); do
+      case $d in
+        arch)   dopts+=("arch|Arch Linux|rolling, newest everything, AUR") ;;
+        debian) dopts+=("debian|Debian ${TUX_DEBIAN_SUITE:-13 (trixie)}|stable, changes slowly") ;;
+        void)   dopts+=("void|Void Linux|rolling, runit instead of systemd, very light") ;;
+      esac
+    done
+    choose TUX_DISTRO "Which Linux should tuxcraft install?" "$HOST_DISTRO" "${dopts[@]}"
+    has_word "$(installable_distros)" "$TUX_DISTRO" || die "This live system cannot install '$TUX_DISTRO' (it can: $(installable_distros)). The tuxcraft ISO installs all three."
+    DISTRO=$TUX_DISTRO
+    pick_target
+    pick_encryption
     ask TUX_HOSTNAME "Computer name" tuxbox
     ask TUX_USER "Your username" "${SUDO_USER:-user}"
     [[ $TUX_USER =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid username '$TUX_USER'"
@@ -234,7 +262,12 @@ wizard() {
       [[ -n ${TUX_YES:-} ]] && die "TUX_PASSWORD must be set for unattended installs"
       ask_secret TUX_PASSWORD "Password for $TUX_USER (also used for sudo)"
     fi
-    [[ -n ${TUX_TIMEZONE:-} ]] || ask TUX_TIMEZONE "Timezone" "$(guess_timezone)"
+    if [[ -z ${TUX_TIMEZONE:-} ]]; then
+      if [[ -z ${TUX_GEOIP:-} && -z ${TUX_YES:-} ]]; then
+        confirm "Detect your timezone online? (sends your IP address to ipapi.co)" n && TUX_GEOIP=yes || TUX_GEOIP=no
+      fi
+      ask TUX_TIMEZONE "Timezone (Region/City, e.g. Asia/Kolkata)" "$(guess_timezone)"
+    fi
     ask TUX_LOCALE "Locale" en_US.UTF-8
     ask TUX_KEYMAP "Keyboard layout (xkb: us, de, gb, fr, ...)" us
   else
@@ -302,7 +335,8 @@ wizard() {
   printf '  %-12s %s\n' Mode "$TUX_MODE${TUX_UPDATE:+ (update, saved choices)}" Distro "$DISTRO" User "$TUX_USER" Session "$TUX_SESSION" \
     NVIDIA "$TUX_NVIDIA" Theme "$TUX_THEME" Font "$(font_field "$TUX_FONT" 2) $TUX_FONT_SIZE" \
     Browser "$TUX_BROWSER" Extras "${TUX_BUNDLES:-none}"
-  [[ $TUX_MODE == install ]] && printf '  %-12s %s\n' Disk "$TUX_DISK (ERASED, btrfs + snapshots)" Host "$TUX_HOSTNAME" \
+  [[ $TUX_MODE == install ]] && printf '  %-12s %s\n' Disk "$(target_summary), btrfs + snapshots" \
+    Encryption "$([[ ${TUX_ENCRYPT:-no} == yes ]] && echo 'LUKS2 (passphrase at power-on)' || echo none)" Host "$TUX_HOSTNAME" \
     Timezone "$TUX_TIMEZONE" Locale "$TUX_LOCALE" Keyboard "$TUX_KEYMAP"
   [[ -n $TUX_EXTRA ]] && printf '  %-12s %s\n' "+ packages" "$TUX_EXTRA"
   [[ -n $TUX_EXCLUDE ]] && printf '  %-12s %s\n' "- packages" "$TUX_EXCLUDE"
@@ -313,6 +347,23 @@ wizard() {
 }
 
 # Runs on the final system: inside the chroot for fresh installs, directly otherwise.
+# The password reaches the chroot through a root-only file on the new system's /run, a tmpfs:
+# never on its disk, and not in the environment (/proc/*/environ) of every process in the chroot.
+TUX_SECRET=/run/tuxcraft/secret
+read_secret() {
+  [[ -r $TUX_SECRET ]] || return 0
+  TUX_PASSWORD=$(<"$TUX_SECRET")
+  rm -f "$TUX_SECRET"
+}
+
+# TUX_POST_HOOK: your own script, run as root at the very end inside the new system.
+run_post_hook() {
+  local h=$TUX_ETC/post-hook
+  [[ -f $h ]] || return 0
+  step "Running your post-install hook"
+  run bash "$h" || warn "Post-install hook failed (see $TUX_LOG)"
+}
+
 target_stage() {
   export TUX_USER
   if [[ $TUX_MODE == install ]]; then
@@ -339,6 +390,7 @@ target_stage() {
   if [[ -n ${PKG_MISSING// } ]]; then
     warn "Not available on $DISTRO and skipped:${PKG_MISSING}"
   fi
+  run_post_hook
 }
 
 main() {
@@ -346,6 +398,7 @@ main() {
   if [[ $STAGE == target ]]; then
     # shellcheck source=/dev/null
     . "$TUX_ETC/answers.conf"
+    read_secret
     target_stage
     exit 0
   fi
@@ -360,11 +413,17 @@ main() {
     mkdir -p "$TARGET$TUX_SHARE" "$TARGET$TUX_ETC"
     cp -a "$TUX_SRC"/. "$TARGET$TUX_SHARE"/
     save_answers "$TARGET$TUX_ETC/answers.conf"
-    chroot "$TARGET" /usr/bin/env TUX_PASSWORD="$TUX_PASSWORD" TUX_LOG=/var/log/tuxcraft.log \
+    if [[ -n ${TUX_POST_HOOK:-} ]]; then
+      [[ -f $TUX_POST_HOOK ]] || die "TUX_POST_HOOK: $TUX_POST_HOOK not found"
+      install -m700 "$TUX_POST_HOOK" "$TARGET$TUX_ETC/post-hook"
+    fi
+    mountpoint -q "$TARGET/run" || mount -t tmpfs tmpfs "$TARGET/run"
+    (umask 077; mkdir -p "$TARGET${TUX_SECRET%/*}"; printf '%s' "$TUX_PASSWORD" >"$TARGET$TUX_SECRET")
+    chroot "$TARGET" /usr/bin/env TUX_LOG=/var/log/tuxcraft.log \
       TUX_YES="${TUX_YES:-}" bash "$TUX_SHARE/install.sh" --stage target || die "Setup inside the new system failed. Log: $TARGET/var/log/tuxcraft.log"
+    rm -f "$TARGET$TUX_SECRET"
     cat "$TUX_LOG" >>"$TARGET/var/log/tuxcraft-live.log" 2>/dev/null || true
-    sync
-    umount -R "$TARGET" 2>/dev/null || warn "Could not unmount $TARGET cleanly"
+    target_release
   else
     TUX_SRC=$TUX_SRC target_stage
   fi
