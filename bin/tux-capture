@@ -87,18 +87,19 @@ record() {  # record screen|mic
 # GPU Screen Recorder's recorder process (not its GUI, gpu-screen-recorder-gtk).
 gsr_pid() { pgrep -u "$UID" -f '(^|/)gpu-screen-recorder( |$)' | head -n1; }
 
-# OBS Studio (Flatpak or native) is recording: it has a video file open for writing.
-# Reading its fds is free; asking it over the WebSocket every 2 s would flood its log,
-# so that is only the fallback when /proc cannot be read.
+# OBS Studio (Flatpak or native) is recording. OBS writes "==== Recording Start/Stop"
+# to its log, which works even for Flatpak OBS, whose open files cannot be inspected and
+# whose WebSocket may be off. Asking over the WebSocket every 2 s would also flood the log.
+# Only logs written since the oldest running OBS started count (not an old crash's log).
+OBS_LOGS=("$HOME/.var/app/com.obsproject.Studio/config/obs-studio/logs" "${XDG_CONFIG_HOME:-$HOME/.config}/obs-studio/logs")
 obs_recording() {
-  local p fd flags
-  p=$(pgrep -u "$UID" -x obs | head -n1); [[ -n $p ]] || return 1
-  if ! ls "/proc/$p/fd" >/dev/null 2>&1; then [[ $(tux-obs status 2>/dev/null) == recording ]]; return; fi
-  for fd in "/proc/$p/fd/"*; do
-    [[ $(readlink "$fd" 2>/dev/null) =~ \.(mkv|mp4|mov|flv|ts|m3u8|webm)$ ]] || continue
-    flags=$(awk '/^flags:/{print $2}' "/proc/$p/fdinfo/${fd##*/}" 2>/dev/null)
-    (( 8#${flags:-0} & 3 )) && return 0   # O_WRONLY/O_RDWR: a recording, not a media source
-  done
+  local p start d log
+  p=$(pgrep -u "$UID" -xo obs) || return 1
+  start=$(stat -c %Y "/proc/$p" 2>/dev/null) || return 1
+  for d in "${OBS_LOGS[@]}"; do for log in "$d"/*.txt; do
+    [[ -f $log ]] && (( $(stat -c %Y "$log") >= start - 5 )) || continue
+    [[ $(grep -aoE '==== Recording (Start|Stop)' "$log" | tail -n1) == *Start ]] && return 0
+  done; done
   return 1
 }
 
@@ -119,8 +120,17 @@ stop() {
     # SIGINT is how GPU Screen Recorder stops and saves.
     if g=$(gsr_pid) && [[ -n $g ]]; then kill -INT "$g"; notify-send -a capture "GPU Screen Recorder stopped"; exit 0; fi
     if obs_recording; then
-      if err=$(tux-obs stop 2>&1); then notify-send -a capture "OBS recording saved"
-      else notify-send -u critical -a capture "Could not stop OBS" "$err"; fi
+      if tux-obs stop >/dev/null 2>&1; then notify-send -a capture "OBS recording saved"; exit 0; fi
+      # No WebSocket (off, or switched on after this OBS started): quit OBS cleanly instead.
+      # SIGINT is OBS's normal shutdown, which stops the recording and finalises the file.
+      pkill -INT -u "$UID" -x obs
+      for _ in $(seq 60); do pgrep -u "$UID" -x obs >/dev/null || break; sleep 0.25; done
+      if pgrep -u "$UID" -x obs >/dev/null; then
+        notify-send -u critical -a capture "OBS is still closing" "The recording is not saved yet"
+      else
+        notify-send -a capture "OBS recording saved" \
+          "OBS was closed to stop it: enable Tools → WebSocket Server Settings, then restart OBS"
+      fi
       exit 0
     fi
     notify-send "Nothing is recording"; exit 0
