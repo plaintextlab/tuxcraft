@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tux-capture region|screen|menu|stop|status — screenshots and recordings (from debi3n
+# tux-capture region|screen|menu|stop|status|obs — screenshots and recordings (from debi3n
 # rofi-screen-capture.sh), for X11 (maim/slop/xclip) and Wayland (grim/slurp/wl-copy).
 SHOTS="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Screenshots"
 VIDS="$(xdg-user-dir VIDEOS 2>/dev/null || echo "$HOME/Videos")/Screen Captures"
@@ -87,12 +87,42 @@ record() {  # record screen|mic
 # GPU Screen Recorder's recorder process (not its GUI, gpu-screen-recorder-gtk).
 gsr_pid() { pgrep -u "$UID" -f '(^|/)gpu-screen-recorder( |$)' | head -n1; }
 
+# OBS Studio (Flatpak or native) is recording: it has a video file open for writing.
+# Reading its fds is free; asking it over the WebSocket every 2 s would flood its log,
+# so that is only the fallback when /proc cannot be read.
+obs_recording() {
+  local p fd flags
+  p=$(pgrep -u "$UID" -x obs | head -n1); [[ -n $p ]] || return 1
+  if ! ls "/proc/$p/fd" >/dev/null 2>&1; then [[ $(tux-obs status 2>/dev/null) == recording ]]; return; fi
+  for fd in "/proc/$p/fd/"*; do
+    [[ $(readlink "$fd" 2>/dev/null) =~ \.(mkv|mp4|mov|flv|ts|m3u8|webm)$ ]] || continue
+    flags=$(awk '/^flags:/{print $2}' "/proc/$p/fdinfo/${fd##*/}" 2>/dev/null)
+    (( 8#${flags:-0} & 3 )) && return 0   # O_WRONLY/O_RDWR: a recording, not a media source
+  done
+  return 1
+}
+
+# Start recording in OBS with its own settings (profile, encoder, format, folder).
+obs_record() {
+  local err
+  if err=$(tux-obs start 2>&1); then
+    notify-send -a capture "● OBS recording" "Super+Shift+Print to stop"
+  else
+    notify-send -u critical -a capture "OBS did not start recording" "${err:-Is OBS Studio installed?}"
+  fi
+}
+
 stop() {
-  local p f g
+  local p f g err
   if ! p=$(recorder_pid); then
     rm -f "$PID" "$INFO"
     # SIGINT is how GPU Screen Recorder stops and saves.
     if g=$(gsr_pid) && [[ -n $g ]]; then kill -INT "$g"; notify-send -a capture "GPU Screen Recorder stopped"; exit 0; fi
+    if obs_recording; then
+      if err=$(tux-obs stop 2>&1); then notify-send -a capture "OBS recording saved"
+      else notify-send -u critical -a capture "Could not stop OBS" "$err"; fi
+      exit 0
+    fi
     notify-send "Nothing is recording"; exit 0
   fi
   f=$(cat "$INFO" 2>/dev/null)
@@ -110,12 +140,14 @@ stop() {
 case ${1:-menu} in
   region|screen) shot "$1" ;;
   stop) stop ;;
-  status)  # for the bar: "REC" while tux-capture or GPU Screen Recorder records, else nothing
-    if recorder_pid >/dev/null || [[ -n $(gsr_pid) ]]; then echo "󰑊 REC"; else echo ""; fi ;;
+  status)  # for the bar: "REC" while tux-capture or GPU Screen Recorder records, "REC OBS" for OBS
+    if recorder_pid >/dev/null || [[ -n $(gsr_pid) ]]; then echo "󰑊 REC"
+    elif obs_recording; then echo "󰑊 REC OBS"; else echo ""; fi ;;
+  obs) obs_record ;;
   menu)
-    c=$(printf '󰩭  Region screenshot\n󰹑  Full screenshot\n󰕧  Record screen\n󰍬  Record microphone\n󰓛  Stop recording\n' | tux-menu capture) || exit 0
+    c=$(printf '󰩭  Region screenshot\n󰹑  Full screenshot\n󰕧  Record screen\n󰍬  Record microphone\n󰕧  Record with OBS\n󰓛  Stop recording\n' | tux-menu capture) || exit 0
     case $c in
       *Region*) sleep 0.2; shot region ;; *Full*) shot screen ;;
-      *screen) record screen ;; *microphone) record mic ;; *Stop*) stop ;;
+      *screen) record screen ;; *microphone) record mic ;; *OBS) obs_record ;; *Stop*) stop ;;
     esac ;;
 esac
