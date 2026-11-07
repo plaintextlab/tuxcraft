@@ -105,7 +105,7 @@ check "console palette written" test -f /etc/tuxcraft/vtrgb
 section "Desktop ($SESSION)"
 if [[ $SESSION == sway ]]; then apps=(sway waybar fuzzel swaylock swayidle swaybg grim slurp wl-copy cliphist)
 else apps=(i3 polybar rofi picom feh i3lock xss-lock maim xclip startx xsettingsd); fi
-apps+=(kitty tux-term tux-warm fincore dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
+apps+=(kitty tux-term tux-warm dunst nm-applet udiskie imv mpv playerctl gammastep pactl wpctl)
 for a in "${apps[@]}"; do command -v "$a" >/dev/null || bad "missing: $a"; done
 ok "session programs checked"
 # (for, not "grep | while": an exit inside the piped loop only leaves its subshell)

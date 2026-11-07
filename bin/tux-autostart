@@ -45,7 +45,7 @@ tux-theme-gsettings 2>/dev/null || true
 # Firefox profiles made since the last theme change (e.g. the first start) get the theme too.
 command -v tux-firefox >/dev/null && { tux-firefox apply & }
 tux-wallpaper restore &
-# Fast start for the apps used most (learns them; backs off when memory is tight or a game runs).
+# Fast start for browser, terminal and file manager (backs off when memory is tight or a game runs).
 tux-warm daemon "$session" &   # exits at once if one is already running
 
 idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))

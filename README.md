@@ -244,44 +244,33 @@ Everything else: press **Space** and wait, a menu of every command appears.
 **Mouse cursor:** coloured like the scheme (Catppuccin cursors in the shade closest to the accent,
 picked and downloaded by `tux-theme`); `CURSOR=Adwaita` in the state file keeps the plain one.
 
-**Fast app start (`tux-warm`):** the apps you start most often open faster, and it learns
-them by itself. Every 20 s it notes which desktop programs were started (whichever way: launcher,
-keys, terminal, file manager), and `tux-term` / `tux-open` report their launches too. Counts fade by
-15% a day, so the list follows your habits. Every 10 minutes the top apps (6 by default, from two
-launches on) get their program, libraries and data files read into the page cache. Only files not
-already there are read, at idle disk priority. For a hot terminal or Thunar it also keeps the app's
-light server mode running: `alacritty --daemon`, a hidden `kitty` instance (0.42+) or `thunar --daemon`.
-A new window from those appears in well under 100 ms. Measured on a SATA SSD as time to the first window,
-cold (app files not in RAM) vs. after a `tux-warm` round (software-rendered X, so GPU apps are slower than usual):
+**Fast app start (`tux-warm`):** the browser, the terminal and the file manager open faster. Every
+10 minutes their programs, libraries and app folders, plus what every desktop app loads (the
+graphics driver, font and icon caches), are read into the page cache at idle disk priority. The
+terminal's and Thunar's light server modes also stay running (`alacritty --daemon`, a hidden kitty
+instance, `thunar --daemon`), so a new window appears at once. Time to the first window, cold vs. warm
+(SATA SSD, software-rendered X, so GPU apps are slower than usual):
 
-| App | cold | warmed | window from its server mode |
+| App | cold | warmed | from its server mode |
 |---|---|---|---|
-| Alacritty | ~540 ms | ~150 ms | ~85 ms (`alacritty --daemon`) |
-| Thunar | ~750 ms | ~450 ms | ~90 ms (`thunar --daemon`) |
-| Firefox | ~1.7 s | ~1.15 s | – |
-| kitty | – | ~770 ms | ~60 ms (hidden instance) |
+| Alacritty | ~540 ms | ~190 ms | ~85 ms |
+| Thunar | ~810 ms | ~520 ms | ~90 ms |
+| Firefox | ~1.7 s | ~1.25 s | – |
+| kitty | – | ~770 ms | ~60 ms |
 
 It never makes memory tight. Warmed files are ordinary page cache, which the kernel hands to any
-program that needs RAM. Nothing is locked (no `mlock`, no RAM disk), and the total is capped at 5% of
-RAM. Warming pauses, and idle helpers are stopped, while any of these holds:
-
-- MemAvailable is under 25% of RAM (or under 2 GB);
-- memory pressure (`/proc/pressure/memory`) is above 0.5%;
-- one process holds more than 20% of RAM;
-- a big program or game is running: Steam, gamescope, the gaming VM (qemu), DaVinci Resolve,
-  Blender, Wine/Proton, OBS, Kdenlive.
-
-They resume 2 minutes after the coast is clear. A helper that holds one of your windows is never
-closed under you; it is stopped once that window is gone. `tux-warm status` shows the hot list,
-how much of each app is in RAM and the guard's state. Pin or exclude apps with
-`tux-warm pin firefox` / `tux-warm never gimp`, or edit `~/.config/tuxcraft/warm.conf`. That file
-is written on first start and is never overwritten. Server modes run only on machines with 8 GB of
-RAM or more (kitty's takes 60–100 MB). Flatpak apps are counted but not warmed (their files live in the sandbox).
+program that needs RAM. Nothing is locked (no `mlock`, no RAM disk), and the total is capped at 10%
+of RAM. Server modes run only with 8 GB of RAM or more. Warming pauses, and idle server modes stop,
+while MemAvailable is under 25% of RAM (or 2 GB), memory pressure is above 0.5%, or a big program or
+game runs (Steam, gamescope, the gaming VM, DaVinci Resolve, Blender, Wine/Proton, OBS, Kdenlive).
+They come back 2 minutes after that ends. A server mode holding one of your windows is never closed
+under you. Which apps, the limits and the big-program list: `~/.config/tuxcraft/warm.conf`
+(`tux-warm --edit`; written on first start, never overwritten). `tux-warm status` shows what is
+warm and how much of it is in RAM.
 
 **Off switch:** system menu (Super+Escape) → *Fast app start: switch off*, or `tux-warm off`.
-It stays off after the next login, and `tux-warm on` turns it back on. Off takes effect at once:
-no more warming, idle helpers close. A helper that still holds one of your terminal or Thunar
-windows closes as soon as that window does.
+It stays off after the next login; `tux-warm on` turns it back on. Idle server modes close at once;
+one that still holds a terminal or Thunar window closes with that window.
 
 **Files:** Thunar (right-click → Open Terminal Here), yazi in the terminal.
 **TUI apps:** yazi (files), btop, lazygit, wifitui (Wi-Fi; nmtui for wired/VPN), bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
@@ -365,7 +354,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
 | `tux-guard --list` / `--edit` | what would block a shutdown right now / edit the watch list |
-| `tux-warm status` / `off` / `on` / `pin` / `never` | fast app start: what is kept warm and why, switch it off/on, pin or exclude an app |
+| `tux-warm status` / `off` / `on` / `--edit` | fast app start: what is kept warm, switch it off/on, choose the apps |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
 
@@ -439,7 +428,7 @@ Windows 11, set to the Linux screen's mode, e.g. 1080p @ 165 Hz). LTSC media nee
 - `~/.config/i3/local.d/*.conf`, `~/.config/sway/local.d/*.conf` — your WM tweaks, never overwritten
 - `~/.bashrc.local` — your shell additions
 - `~/.config/tuxcraft/power-guard.conf` — apps and tasks the shutdown guard watches, never overwritten
-- `~/.config/tuxcraft/warm.conf` — fast app start: pinned / excluded apps, memory limits, the big-program list
+- `~/.config/tuxcraft/warm.conf` — fast app start: which apps, memory limits, the big-program list
 - Re-running the installer moves any config it would overwrite to `~/.local/state/tuxcraft/backup-<date>/`
 
 ## Trust: what runs as root

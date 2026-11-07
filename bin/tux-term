@@ -17,9 +17,7 @@ while (($#)); do
 done
 
 for t in ${want:-kitty} kitty alacritty foot xterm; do command -v "$t" >/dev/null && break; done
-# Count the launch for tux-warm (fast start for often-used apps); a plain append, no delay.
-[[ -d ${XDG_RUNTIME_DIR:-/nonexistent}/tux-warm ]] && echo "$EPOCHSECONDS $t" >>"$XDG_RUNTIME_DIR/tux-warm/notes"
-# tux-warm keeps `alacritty --daemon` running while alacritty is hot: a window from it opens
+# tux-warm (fast app start) keeps `alacritty --daemon` running: a window from it opens
 # at once. Falls through to a normal start if that daemon is not there.
 sock=${XDG_RUNTIME_DIR:-/nonexistent}/tux-warm/alacritty.sock
 if [[ $t == alacritty && -S $sock ]] &&
