@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""tux-winslot [--debug] — keep tiled apps in their slot when they hide and re-show their window.
+
+Some apps unmap their main window and map it again later. DaVinci Resolve does this for the
+Cinema Viewer (Ctrl+F). The window manager (i3 or sway) treats the returning window as a new
+one and gives it an even share of the split. Resolve then re-lays out every panel for the
+smaller size, so the workspace looks reset.
+
+This watcher remembers where each tracked window sat: workspace, neighbour, share of the
+split. When the window comes back it is put into the same slot at the same size.
+Started by tux-autostart. Standard library only; talks to the WM's IPC socket directly.
+Log: ~/.local/state/tuxcraft/winslot.log (more detail with --debug).
+"""
+import glob, json, os, re, select, socket, struct, sys, time
+
+# (X11 class regex, main-window title regex, program name as in argv[0]). Only the main window is tracked;
+# popups, dialogs and the Cinema Viewer window are left alone. A hidden window's slot is
+# forgotten once the process is gone (the app quit rather than hid its window).
+TRACK = [
+    (re.compile(r"^resolve$"), re.compile(r"^DaVinci Resolve"), "resolve"),
+]
+POLL = 1.0          # seconds between layout snapshots while a tracked window exists
+KEEP = 4 * 3600     # forget a hidden window's slot after this long
+DEBUG = "--debug" in sys.argv
+LOG = os.path.expanduser("~/.local/state/tuxcraft/winslot.log")
+MAGIC = b"i3-ipc"
+COMMAND, SUBSCRIBE, GET_TREE = 0, 2, 4
+
+
+def log(*a):
+    try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a") as f:
+            print(time.strftime("%F %T"), *a, file=f)
+    except OSError:
+        pass
+
+
+def sockpath():
+    for var in ("SWAYSOCK", "I3SOCK"):
+        if os.environ.get(var) and os.path.exists(os.environ[var]):
+            return os.environ[var]
+    run = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    for pat in (f"{run}/i3/ipc-socket.*", f"{run}/sway-ipc.*.sock"):
+        hits = sorted(glob.glob(pat), key=os.path.getmtime)
+        if hits:
+            return hits[-1]
+    sys.exit("tux-winslot: no i3/sway IPC socket found")
+
+
+class IPC:
+    def __init__(self, path):
+        self.s = socket.socket(socket.AF_UNIX)
+        self.s.connect(path)
+
+    def _recv(self, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = self.s.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("WM closed the IPC socket")
+            buf += chunk
+        return buf
+
+    def send(self, kind, payload=""):
+        data = payload.encode()
+        self.s.sendall(MAGIC + struct.pack("<II", len(data), kind) + data)
+
+    def read(self):
+        head = self._recv(14)
+        n, kind = struct.unpack("<II", head[6:])
+        return kind, json.loads(self._recv(n))
+
+    def call(self, kind, payload=""):
+        self.send(kind, payload)
+        return self.read()[1]
+
+
+def tracked(con):
+    props = con.get("window_properties") or {}
+    cls, title = props.get("class") or "", con.get("name") or ""
+    for c, t, _ in TRACK:
+        if c.search(cls):
+            return "main" if t.search(title) else "other"
+    return None
+
+
+def walk(node, parent=None, ws=None):
+    if node.get("type") == "workspace":
+        ws = node.get("name")
+    yield node, parent, ws
+    for child in node.get("nodes", []) + node.get("floating_nodes", []):
+        yield from walk(child, node, ws)
+
+
+def running(cls):
+    """Is the process of the app with this X class still alive?"""
+    names = {p for c, _, p in TRACK if c.search(cls or "")}
+    # Match the program name in argv[0]: Resolve renames its main thread ("GUI Thread").
+    for f in glob.glob("/proc/[0-9]*/cmdline"):
+        try:
+            with open(f, "rb") as fh:
+                argv0 = fh.read().split(b"\0", 1)[0].decode(errors="replace")
+        except OSError:
+            continue
+        if os.path.basename(argv0) in names:
+            return True
+    return False
+
+
+def snapshot(tree):
+    """Slots of the tracked main windows that are tiled now, keyed by X window id."""
+    slots = {}
+    for con, parent, ws in walk(tree):
+        if tracked(con) != "main" or not parent or con.get("type") != "con" or not ws or ws.startswith("__"):
+            continue
+        sibs = parent.get("nodes", [])
+        if con not in sibs:          # floating: nothing to restore
+            continue
+        i = sibs.index(con)
+        slots[con["window"]] = {
+            "ws": ws,
+            "layout": parent.get("layout"),
+            "percent": con.get("percent"),
+            "left": sibs[i - 1]["id"] if i > 0 else None,
+            "right": sibs[i + 1]["id"] if i + 1 < len(sibs) else None,
+            "class": (con.get("window_properties") or {}).get("class"),
+        }
+    return slots
+
+
+def con_ids(tree):
+    return {con["id"] for con, _, _ in walk(tree)}
+
+
+def restore(cmd, tree, con, slot):
+    cid, ids = con["id"], con_ids(tree)
+    steps = [f'[con_id={cid}] move container to workspace "{slot["ws"]}"']
+    if slot["left"] in ids:
+        steps += [f"[con_id={slot['left']}] mark --add _tuxslot",
+                  f"[con_id={cid}] move container to mark _tuxslot",
+                  f"[con_id={slot['left']}] unmark _tuxslot"]
+    elif slot["right"] in ids:
+        back = "up" if slot["layout"] == "splitv" else "left"
+        steps += [f"[con_id={slot['right']}] mark --add _tuxslot",
+                  f"[con_id={cid}] move container to mark _tuxslot",
+                  f"[con_id={slot['right']}] unmark _tuxslot",
+                  f"[con_id={cid}] move {back}"]
+    if slot["percent"] and slot["layout"] in ("splith", "splitv"):
+        dim = "width" if slot["layout"] == "splith" else "height"
+        steps.append(f"[con_id={cid}] resize set {dim} {round(slot['percent'] * 100)} ppt")
+    steps.append(f"[con_id={cid}] focus")
+    for s in steps:
+        res = cmd(s)
+        if DEBUG or not all(r.get("success") for r in res):
+            log("  ", s, "->", res)
+    log("restored", slot["class"], "to workspace", slot["ws"], f"at {round((slot['percent'] or 0) * 100)}%")
+
+
+def main():
+    path = sockpath()
+    events, cmds = IPC(path), IPC(path)
+    if not events.call(SUBSCRIBE, '["window"]').get("success"):
+        sys.exit("tux-winslot: subscribe failed")
+    get_tree = lambda: cmds.call(GET_TREE)
+    cmd = lambda s: cmds.call(COMMAND, s)
+    log("started on", path)
+
+    slots, pending = snapshot(get_tree()), {}   # pending: x window id -> (slot, time hidden)
+    next_poll = 0.0
+    while True:
+        ready, _, _ = select.select([events.s], [], [], POLL)
+        now = time.time()
+        event = events.read()[1] if ready else None
+        # Poll only while something is tracked; otherwise just wait for window events.
+        if not event and (now < next_poll or not (slots or pending)):
+            continue
+        next_poll = now + POLL
+        change = event.get("change") if event else None
+        con = event.get("container", {}) if event else {}
+        tree = get_tree()
+        current = snapshot(tree)
+
+        if change == "close" and con.get("window") in slots:
+            wid = con["window"]
+            pending[wid] = (slots[wid], now)
+            log("hidden", slots[wid]["class"], "from workspace", slots[wid]["ws"],
+                f"at {round((slots[wid]['percent'] or 0) * 100)}%")
+
+        if change in ("new", "title") and tracked(con) == "main":
+            wid = con.get("window")
+            # Same X window coming back; otherwise any hidden window of the same app.
+            key = wid if wid in pending else next(
+                (k for k, (s, _) in pending.items()
+                 if s["class"] == (con.get("window_properties") or {}).get("class")), None)
+            if key is not None:
+                slot, _ = pending.pop(key)
+                restore(cmd, tree, con, slot)
+                current = snapshot(get_tree())
+
+        # Learn the layout only while the window is mapped, and keep the last good slot otherwise:
+        # events lag the tree, so the window is often already gone before its close event arrives.
+        slots.update(current)
+        for wid in [w for w, s in slots.items() if w not in current and not running(s["class"])]:
+            del slots[wid]
+        for wid in [w for w, (s, t) in pending.items() if now - t > KEEP or not running(s["class"])]:
+            log("forgetting", pending[wid][0]["class"], "slot (app quit)")
+            del pending[wid]
+        if DEBUG and change and (tracked(con) or change == "close"):
+            log("event", change, con.get("window"), repr(con.get("name")), "slots", slots, "pending", list(pending))
+
+
+if __name__ == "__main__":
+    # Reconnect across a WM restart ($mod+Shift+r); give up once the session is gone.
+    fails = 0
+    while fails < 15:
+        try:
+            started = time.time()
+            main()
+        except (ConnectionError, OSError) as e:
+            fails = 0 if time.time() - started > 60 else fails + 1
+            log("ipc lost:", e)
+            time.sleep(2)
+        except KeyboardInterrupt:
+            break
+    log("exit")

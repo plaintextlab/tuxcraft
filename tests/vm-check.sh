@@ -116,6 +116,7 @@ if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]]; then
   if [[ $SESSION == sway ]]; then check "waybar running" pgrep -x waybar; else check "polybar running" pgrep -x polybar; fi
   check "pipewire running" pgrep -x pipewire
   check "fast app start running (tux-warm)" pgrep -u "$UID" -f "tux-warm daemon"
+  check "window slot keeper running (tux-winslot)" pgrep -u "$UID" -f "^python3 .*/tux-winslot"
   check "audio server answers (pactl)" pactl info
 else
   wn "not in a graphical session: run this from a terminal on the desktop to check the live session too"

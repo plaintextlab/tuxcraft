@@ -33,6 +33,8 @@ rm -f "${XDG_RUNTIME_DIR:-/tmp}/tux-dim" "${XDG_RUNTIME_DIR:-/tmp}/tux-nightligh
 [[ -s /run/tux-gamevm.notice ]] && { sleep 3; notify-send -u critical "Gaming VM" "$(cat /run/tux-gamevm.notice)"; } &
 # Volume popup for changes made anywhere (bar scroll, mixers), not only the volume keys.
 pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
+# Put apps that hide and re-show their main window (Resolve's Cinema Viewer) back in their tiling slot.
+pgrep -u "$UID" -f '^python3 .*/tux-winslot' >/dev/null || { tux-winslot & }
 # Thumbnails for the workspace overview (Super+O).
 tux-overview watch &   # exits at once if one is already running
 # Music daemon for rmpc (folder: tux-music folder).

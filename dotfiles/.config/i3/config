@@ -37,9 +37,6 @@ for_window [class="^webapp-.*"] floating enable, resize set 1280 720, move posit
 for_window [title=".*\.exe$"] floating enable, move position center
 for_window [title="Webcam Preview"] floating enable, sticky enable, border pixel 1
 for_window [class="KeePassXC"] floating enable
-# DaVinci Resolve hides its main window for Cinema Viewer (Ctrl+F); i3 re-tiles it on return at a
-# different size and Resolve re-lays out every panel. Keeping it fullscreen holds the size constant.
-for_window [class="^resolve$" title="^DaVinci Resolve"] fullscreen enable
 
 # ---- workspace assignments (from debi3n)
 assign [class="(?i)firefox|chromium|brave"] workspace number 2
