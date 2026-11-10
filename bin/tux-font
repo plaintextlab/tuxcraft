@@ -21,16 +21,61 @@ command -v pin_get >/dev/null || pin_get() { echo "tux-font: $SHARE/lib/pins.sh 
 field() { awk -F'\t' -v k="$1" -v c="$2" '$1==k {print $c}' "$TABLE"; }
 state_set() { touch "$STATE"; grep -q "^$1=" "$STATE" && sed -i "s|^$1=.*|$1=\"$2\"|" "$STATE" || echo "$1=\"$2\"" >>"$STATE"; }
 
+mb() { awk -v b="$1" 'BEGIN { printf "%.1f", b / 1048576 }'; }
+
+# progress TITLE TEXT [PERCENT] [critical|finished]: one notification that updates in place (dunst
+# replaces notifications with the same stack tag; the value hint draws its progress bar).
+# Without a desktop it prints to the terminal instead.
+progress() {
+  local title=$1 text=$2 pct=${3:-} kind=${4:-}
+  local -a args=(-a tux-font -h string:x-dunst-stack-tag:tux-font-download)
+  if [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} ]] && command -v notify-send >/dev/null; then
+    [[ -n $pct ]] && args+=(-h "int:value:$pct")
+    case $kind in
+      critical) args+=(-u critical) ;;
+      finished) args+=(-u low -t 4000) ;;
+      *) args+=(-u low -t 20000) ;;
+    esac
+    notify-send "${args[@]}" "$title" "$text" 2>/dev/null && return 0
+  fi
+  printf '\r\033[K%s: %s%s' "$title" "$text" "${pct:+ ($pct%)}" >&2
+  [[ -z $kind ]] || echo >&2
+}
+
 ensure() {
   local fam src; fam=$(field "$1" 2); src=$(field "$1" 3)
   fc-list : family | grep -xF "$fam" >/dev/null && return 0
   case $src in
     nerd:*)
-      notify-send -u low "Downloading ${src#nerd:} Nerd Font…" 2>/dev/null || echo "Downloading ${src#nerd:}…"
-      local t; t=$(mktemp -d)
-      pin_get "$src" "$t/f.txz" || { rm -rf "$t"; echo "Download of ${src#nerd:} failed" >&2; return 1; }
+      local name="${src#nerd:} Nerd Font" t pid total=0 got pct rc=0
+      t=$(mktemp -d)
+      progress "$name" "Starting download…"
+      # Size for the progress bar (GitHub redirects; the last Content-Length is the file's).
+      total=$(curl -sIL --connect-timeout 10 "$(pin_url "$src" 2>/dev/null)" 2>/dev/null |
+              tr -d '\r' | awk 'tolower($1)=="content-length:" {n=$2} END {print n+0}') || total=0
+      pin_get "$src" "$t/f.txz" 2>"$t/err" & pid=$!
+      while kill -0 "$pid" 2>/dev/null; do
+        got=$(stat -c %s "$t/f.txz.part" 2>/dev/null || echo 0)
+        if ((total > 0)); then
+          pct=$(( got * 100 / total )); ((pct > 100)) && pct=100
+          progress "$name" "Downloading: $(mb "$got") of $(mb "$total") MB" "$pct"
+        else
+          progress "$name" "Downloading: $(mb "$got") MB"
+        fi
+        sleep 0.5
+      done
+      wait "$pid" || rc=$?
+      if ((rc != 0)); then
+        local why; why=$(sed -n '1s/^pins: //p' "$t/err"); rm -rf "$t"
+        progress "$name" "Download failed: ${why:-no connection?}. Font not changed." '' critical
+        echo "Download of $name failed${why:+: $why}" >&2; return 1
+      fi
+      progress "$name" "Installing…" 100
       mkdir -p "$UFONTS/${src#nerd:}"
-      tar -xJf "$t/f.txz" -C "$UFONTS/${src#nerd:}"; rm -rf "$t" ;;
+      tar -xJf "$t/f.txz" -C "$UFONTS/${src#nerd:}"; rm -rf "$t"
+      fc-cache -f "$UFONTS" >/dev/null
+      progress "$name" "Installed" '' finished
+      return 0 ;;
     bundled:*) install -Dm644 "$SHARE/assets/fonts/${src#bundled:}" "$UFONTS/bundled/${src#bundled:}" ;;
   esac
   fc-cache -f "$UFONTS" >/dev/null
