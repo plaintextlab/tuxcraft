@@ -7,30 +7,94 @@
 #           fixed                   only change by hand (then the script refreshes the hash)
 #   url:    {v} = version as tagged, {V} = version without a leading "v"
 #           several URLs separated by " | ": the script keeps the first that exists
-yazi	latest:sxyazi/yazi		https://github.com/sxyazi/yazi/releases/download/{v}/yazi-x86_64-unknown-linux-gnu.zip
-rmpc	latest:mierak/rmpc		https://github.com/mierak/rmpc/releases/download/{v}/rmpc-{v}-x86_64-unknown-linux-musl.tar.gz
-blesh	fixed	v0.4.0-devel3	https://github.com/akinomyoga/ble.sh/releases/download/{v}/ble-{V}.tar.xz
-wifitui	latest:shazow/wifitui		https://github.com/shazow/wifitui/releases/download/{v}/wifitui-{V}-linux-x86_64.tar.gz
-neovim	latest:neovim/neovim		https://github.com/neovim/neovim/releases/download/{v}/nvim-linux-x86_64.tar.gz
-tree-sitter	latest:tree-sitter/tree-sitter		https://github.com/tree-sitter/tree-sitter/releases/download/{v}/tree-sitter-cli-linux-x64.zip
-starship	latest:starship/starship		https://github.com/starship/starship/releases/download/{v}/starship-x86_64-unknown-linux-musl.tar.gz
-bluetui	latest:pythops/bluetui		https://github.com/pythops/bluetui/releases/download/{v}/bluetui-x86_64-linux-musl
-lazygit	latest:jesseduffield/lazygit		https://github.com/jesseduffield/lazygit/releases/download/{v}/lazygit_{V}_linux_x86_64.tar.gz | https://github.com/jesseduffield/lazygit/releases/download/{v}/lazygit_{V}_Linux_x86_64.tar.gz
-adw-gtk3	latest:lassekongo83/adw-gtk3		https://github.com/lassekongo83/adw-gtk3/releases/download/{v}/adw-gtk3{v}.tar.xz
-papirus-folders	commit:PapirusDevelopmentTeam/papirus-folders@master		https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/{v}/papirus-folders
-distrobox	fixed	1.8.2.5	https://github.com/89luca89/distrobox/archive/refs/tags/{v}.tar.gz
-nerd:NerdFontsSymbolsOnly	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/NerdFontsSymbolsOnly.tar.xz
-nerd:JetBrainsMono	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/JetBrainsMono.tar.xz
-nerd:Iosevka	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Iosevka.tar.xz
-nerd:FiraCode	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/FiraCode.tar.xz
-nerd:CascadiaCode	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/CascadiaCode.tar.xz
-nerd:IBMPlexMono	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/IBMPlexMono.tar.xz
-nerd:Hack	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Hack.tar.xz
-nerd:0xProto	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/0xProto.tar.xz
-nerd:Terminus	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Terminus.tar.xz
-nerd:DepartureMono	latest:ryanoasis/nerd-fonts		https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/DepartureMono.tar.xz
+yazi	latest:sxyazi/yazi	v26.9.1	https://github.com/sxyazi/yazi/releases/download/{v}/yazi-x86_64-unknown-linux-gnu.zip	a02fe91d3304294048c681f010f1100856872a4e98ecf6927328e888d40a6ad2
+rmpc	latest:mierak/rmpc	v0.11.0	https://github.com/mierak/rmpc/releases/download/{v}/rmpc-{v}-x86_64-unknown-linux-musl.tar.gz	9cef6597d14ae58336ab465056da9e313d3b3bb3986c67691ee6ae13b7bf5a74
+blesh	fixed	v0.4.0-devel3	https://github.com/akinomyoga/ble.sh/releases/download/{v}/ble-{V}.tar.xz	c8612ee612bc6b10dbfd6e85c6cbdfd7caf152a12d1f9de22ea0a9d735b3080c
+wifitui	latest:shazow/wifitui	v0.13.0	https://github.com/shazow/wifitui/releases/download/{v}/wifitui-{V}-linux-x86_64.tar.gz	4c82bb3d68388507bc414f0d4fc5833066115e00cbb6d2683eac827602535cf2
+neovim	latest:neovim/neovim	v0.12.6	https://github.com/neovim/neovim/releases/download/{v}/nvim-linux-x86_64.tar.gz	474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87
+tree-sitter	latest:tree-sitter/tree-sitter	v0.27.2	https://github.com/tree-sitter/tree-sitter/releases/download/{v}/tree-sitter-cli-linux-x64.zip	b4233ecc4f0e648d6d8ccc4bac96c00c712ca1a5eb1e0ca7197d29b750bffa6d
+starship	latest:starship/starship	v1.27.0	https://github.com/starship/starship/releases/download/{v}/starship-x86_64-unknown-linux-musl.tar.gz	10c8eb4cb3b761d9bf59ea828444c2dab36c900b7d69a69e08814b286969df89
+bluetui	latest:pythops/bluetui	v0.8.2	https://github.com/pythops/bluetui/releases/download/{v}/bluetui-x86_64-linux-musl	b476ee473cb4f7a48cd75d440e991bedc835ff5ac704aac1f1992f8e826222fd
+lazygit	latest:jesseduffield/lazygit	v0.66.3	https://github.com/jesseduffield/lazygit/releases/download/{v}/lazygit_{V}_linux_x86_64.tar.gz	0a23f429a95f0d09db298b3c291536d818de066aa5a85c255806f0490ff6656b
+adw-gtk3	latest:lassekongo83/adw-gtk3	v6.5	https://github.com/lassekongo83/adw-gtk3/releases/download/{v}/adw-gtk3{v}.tar.xz	a81780fadfc432be0fc3d89c4ebb41aa28e4f032d42c36f9789c57dd10cfa41c
+papirus-folders	commit:PapirusDevelopmentTeam/papirus-folders@master	0f838ee5679229e3a3e97e3b333c222c9e9615b4	https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/{v}/papirus-folders	b30a6848a00690302accffc050549218b0b114d3178b28bd3a16891817821b06
+distrobox	fixed	1.8.2.5	https://github.com/89luca89/distrobox/archive/refs/tags/{v}.tar.gz	0c3bc4785ee3be3b89f93abb7cc0a9f60e56989e81319af140a4b60403b18f80
+nerd:NerdFontsSymbolsOnly	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/NerdFontsSymbolsOnly.tar.xz	01172f37db8543edb102e5cb5c64101c9f4686630804d49b419aa07b23a69996
+nerd:JetBrainsMono	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/JetBrainsMono.tar.xz	04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf
+nerd:Iosevka	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Iosevka.tar.xz	3b94ea1dc3955756762f977b7677bca671947dd56bc755a6f8465a8e83b5f257
+nerd:FiraCode	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/FiraCode.tar.xz	68e3bd6164864b8b514605bc34e3a87ac401c8c48682fcce6478c70263340207
+nerd:CascadiaCode	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/CascadiaCode.tar.xz	ae598e9401e2846aa3ee364513715de0490b844a4b54f0768991f45f23aa8369
+nerd:IBMPlexMono	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/IBMPlexMono.tar.xz	3d226683be9fc35f98683837568497f300307bc9b7aefc1617a368f190ef963a
+nerd:Hack	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Hack.tar.xz	cdd389472e10e2261520140ff1b382b4f8a226af5fd0b2735b975d31151d9c3c
+nerd:0xProto	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/0xProto.tar.xz	3f2d36e4fa8b3af2f97b14b57c5b0f57f4c1bda5a59533fb913a9ff3344db7ce
+nerd:Terminus	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/Terminus.tar.xz	80c6431f5789a72dc7464ecce3ee820cdc0f0123585befada87b13876d2fda90
+nerd:DepartureMono	latest:ryanoasis/nerd-fonts	v3.5.1	https://github.com/ryanoasis/nerd-fonts/releases/download/{v}/DepartureMono.tar.xz	7d2d86db20730e26ee4fc926e3c64429d6f9da6fce91e74c325fe1c5ee74d9ee
 # Catppuccin cursor sets (tux-cursor): one row per .zip of the release, added by the script.
 cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/tag/{v}	-
+cursor:catppuccin-frappe-blue-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-blue-cursors.zip	6133983b33e07b3dc50b3a833a2a2f9fb45af4fb16b39ad13c8b78381f7c9e9c
+cursor:catppuccin-frappe-dark-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-dark-cursors.zip	a3eaea75b6c8fd6908716b5e8bc769da581f2246a39a7d1a1f9d5c1ee4d72608
+cursor:catppuccin-frappe-flamingo-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-flamingo-cursors.zip	57890702ffc137e88efc18ba5c53a6a40b4b096b346cbcbc35c34a532bc78382
+cursor:catppuccin-frappe-green-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-green-cursors.zip	5df660a8e6758ec0d6834c02ee196d3c6be20b1396c9e5ca21bccc8a1650f0ad
+cursor:catppuccin-frappe-lavender-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-lavender-cursors.zip	291623213f96a1b2bfabb5314d6136ab3807793621438b141aaf9a22e5ac919f
+cursor:catppuccin-frappe-light-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-light-cursors.zip	c0df379cb2413c38451b0f990a42879489ef85dac2e108498802f7032d2bfd7e
+cursor:catppuccin-frappe-maroon-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-maroon-cursors.zip	c0f2d4e1191eb4b09a7667b3d7932a0c5fb01b69c730d6a35866f669a4d5f99a
+cursor:catppuccin-frappe-mauve-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-mauve-cursors.zip	f901e7e6cdd95ff4d9990373f96208527ef1d9fc8f864004d634c2b8723b1e73
+cursor:catppuccin-frappe-peach-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-peach-cursors.zip	623bddd35efc2c8aa4ef69df81bb4360a464bdd5b54d418416ddf5817eceb762
+cursor:catppuccin-frappe-pink-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-pink-cursors.zip	ebf5272b4bfadf65cd2330a0cad30797ca222f216ba88282867a0e2cf458f85e
+cursor:catppuccin-frappe-red-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-red-cursors.zip	e1f743b315e5dbd71d410f9b4274d148acfe5591b7532be951cfa67b0e6caa95
+cursor:catppuccin-frappe-rosewater-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-rosewater-cursors.zip	93d9e8d9625e732e95890f48ba2635e446dd1d9fe01277c40c0c7fc15809ddea
+cursor:catppuccin-frappe-sapphire-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-sapphire-cursors.zip	9aad5b714cacfaf397d325f909fe1b628c6d2f9a592e54480bb65f68b8ce2cd8
+cursor:catppuccin-frappe-sky-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-sky-cursors.zip	4a2dd61441ebf8d746623521334680af58a5896b812d455fd2e8a6a94a9663d5
+cursor:catppuccin-frappe-teal-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-teal-cursors.zip	07b3fb248bebbfbfabc1259d4b318739b3adf25696eb76dd7302616d32de76c0
+cursor:catppuccin-frappe-yellow-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-frappe-yellow-cursors.zip	164c8e8c19e7e296be808a5b3cf89d0bb3cf100e5739ffd41a98539f6777b4de
+cursor:catppuccin-latte-blue-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-blue-cursors.zip	9216822b1570c99b6ad3fd40b3912cbd5681e7cd671c7c6b0f2810d55f9a17a6
+cursor:catppuccin-latte-dark-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-dark-cursors.zip	0b39cfc2d367cdde6b876a1afb649da8cc56c1d8ddd7b50abbe9ef53dc5f9699
+cursor:catppuccin-latte-flamingo-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-flamingo-cursors.zip	104073b7629217e7b94a9bc8515a6cc502a0fb5dc7c30d01c67f5bee4e906b50
+cursor:catppuccin-latte-green-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-green-cursors.zip	d7e8587ac7035bb72bf6bfbca6cab11a08bd6dcebac64bb68fbb92481f990ead
+cursor:catppuccin-latte-lavender-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-lavender-cursors.zip	aafeaf85253e561b3ce7d00f8b846c80aca99b4f13fdfc7a2eda242a2cc2cbdb
+cursor:catppuccin-latte-light-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-light-cursors.zip	4c0752cfa2da6c4cbcfe9539ca92585144b34651f22acf6cecf18850cb938880
+cursor:catppuccin-latte-maroon-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-maroon-cursors.zip	d14406ea4fd3ef99bda5881a76c080b1d94da14e0231e35353578b49e396a7d7
+cursor:catppuccin-latte-mauve-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-mauve-cursors.zip	a7fc7dc57c7121bd8f1873dbfd5ce35ab317c6b472fcf69681b3a17d2649220e
+cursor:catppuccin-latte-peach-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-peach-cursors.zip	9cd63616d56ad111ef5f35fc92ca481fffe61a97f29a17248d52c9de7651db48
+cursor:catppuccin-latte-pink-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-pink-cursors.zip	ddd89d8fe90202f8041445f0a404c9bed09401be01f742fd7028f328d9f47d1e
+cursor:catppuccin-latte-red-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-red-cursors.zip	1a203d7029f7770aa71e1f65833acdef3d709cdabe079459eddd32a1f115e89e
+cursor:catppuccin-latte-rosewater-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-rosewater-cursors.zip	0221caa3bb5787745254bdee4a039fdd3c86ee827933f9c1e2c4b8e530c04d0f
+cursor:catppuccin-latte-sapphire-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-sapphire-cursors.zip	f320e10db1ac1f652979e37412d042a47c605d9e4a927c1557efff7448cf99d2
+cursor:catppuccin-latte-sky-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-sky-cursors.zip	a4bfdbbb7c8133cae057de81ec640ee47100b237ffc47134bebe5ed5207aad01
+cursor:catppuccin-latte-teal-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-teal-cursors.zip	d491a44af4ffffd907945028df90328f9c1a6cb70578f336141e87fb58ffd52a
+cursor:catppuccin-latte-yellow-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-latte-yellow-cursors.zip	e8fa51fb0256b6a19ac1a590240453b29df99d4f9f399693216856b0458c5342
+cursor:catppuccin-macchiato-blue-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-blue-cursors.zip	4c66fba0272661f03dee2e5ffefd1829e1a94625781237804bc791ca5a781c42
+cursor:catppuccin-macchiato-dark-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-dark-cursors.zip	206ea3995f859baef5f4f7bd2669ecd16a60d70d9d4241b7eea7a89b0dde7572
+cursor:catppuccin-macchiato-flamingo-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-flamingo-cursors.zip	a51490a997e95572c7e00ba128435296e0285e013cdf6db7a600488fff2df7e3
+cursor:catppuccin-macchiato-green-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-green-cursors.zip	c79852bcbd8a82402ef2d8fdffd54ef959eeb6d3e0675512985bf0f22a6832bc
+cursor:catppuccin-macchiato-lavender-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-lavender-cursors.zip	6f5a5f71ab0ca9ed088dca1167b7fd8b4921c16234fc073d15fce1c54965eeae
+cursor:catppuccin-macchiato-light-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-light-cursors.zip	a1d55b07dddfca4678cb300b5b75618de66d730cc22cedaba1ed6f2952a7db1c
+cursor:catppuccin-macchiato-maroon-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-maroon-cursors.zip	a0349e9ef2ee46afd245026bc520849b5bd36b7618b38c1a5fe807b8563a62ed
+cursor:catppuccin-macchiato-mauve-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-mauve-cursors.zip	e7388debd7694c0da59aaa1d4f37d98517ff9cf231d15b9540e941db3543c1d9
+cursor:catppuccin-macchiato-peach-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-peach-cursors.zip	ba60a5cf8829267585b46fa82594384f231af258eee4d541972d14887ee7b88a
+cursor:catppuccin-macchiato-pink-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-pink-cursors.zip	47e452cbc8f7d6cb40249eef8d442960aefef2ac0b977352e03065397e8e8444
+cursor:catppuccin-macchiato-red-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-red-cursors.zip	1a35badf6a2c35408a632007ddebdf00db45b54edbe7a4928b99e643ad838b7e
+cursor:catppuccin-macchiato-rosewater-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-rosewater-cursors.zip	7dad1841a8585f95ecf79f977eb64642ca8c422efdd770d66ec74fab23d655d8
+cursor:catppuccin-macchiato-sapphire-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-sapphire-cursors.zip	34e3bfee2421c9d87ef63a96deb574d2a38bd905553f90aedf725059811a00a8
+cursor:catppuccin-macchiato-sky-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-sky-cursors.zip	c04cb5dcc5672a23b4099fddb71a79927e0d9bb07c4ac965fb30433df12ad8c1
+cursor:catppuccin-macchiato-teal-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-teal-cursors.zip	b4a1ef760769503a0b31a3fedd6c8928c7cc3eed3274006a0be6b2b533c7e8ec
+cursor:catppuccin-macchiato-yellow-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-macchiato-yellow-cursors.zip	c354b397797df5b4fd0868b53e7d4e8f64899ef8ca41a264a9dc64ed6a975e8f
+cursor:catppuccin-mocha-blue-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-blue-cursors.zip	b498834df15c5c84a8a31ab7bd3f8e8d31e88b38f0d847759ec20943d016c66d
+cursor:catppuccin-mocha-dark-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-dark-cursors.zip	a4d976491bdb1b1311b2de88327cad3f1c66c2d9da896e0c56362a660c802585
+cursor:catppuccin-mocha-flamingo-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-flamingo-cursors.zip	06a5a3178a82591fc1a7ce8375e1d22845638e24409cb4375f6323f1c4027711
+cursor:catppuccin-mocha-green-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-green-cursors.zip	376a59f36b190ecb6ee0bcbdf73c7f4f30a339f80d641a59f2b5f9b557ddc753
+cursor:catppuccin-mocha-lavender-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-lavender-cursors.zip	9e8c67efd4c8ff75f09196fa8579ca366c5a4ea204f541edd7b49ab0cb44d9cf
+cursor:catppuccin-mocha-light-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-light-cursors.zip	29e530a7e228396c9e4e35fc4b457fb4e77d2872e0ba88cd1ac4bce3099414e3
+cursor:catppuccin-mocha-maroon-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-maroon-cursors.zip	20efcd020dd37468a0407c8775105f500a47141f53f30a009ccc8e9535cc517c
+cursor:catppuccin-mocha-mauve-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-mauve-cursors.zip	971e113a49de65529b3b706ce8529c1c80f22b2828b9c2f4732b3363fb69fcbb
+cursor:catppuccin-mocha-peach-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-peach-cursors.zip	bc78aedb7a63371bbefc2673a5444df4d8b5bdcd9bde2f4fc55b54a863c29eb9
+cursor:catppuccin-mocha-pink-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-pink-cursors.zip	095c4e3d645a6717a055c72d7104d713cc0db1df2d8829dd9615d55118879247
+cursor:catppuccin-mocha-red-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-red-cursors.zip	28d1471278fd623abec42ec672b0c9de61f8f0f84b44db1f180f3b1b034995c4
+cursor:catppuccin-mocha-rosewater-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-rosewater-cursors.zip	22ed9d3c7aeee8fa77d20b781afc290642ed2eead396631370a92a2581e5c3e9
+cursor:catppuccin-mocha-sapphire-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-sapphire-cursors.zip	33f47ba605bde24b5f5369bfa9575e06d507cc09db77bdefb06f873519cd011a
+cursor:catppuccin-mocha-sky-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-sky-cursors.zip	c258d171686b4ab233af1a4d1b78e8615745e36fcdaed48f2e6e0de4ec814198
+cursor:catppuccin-mocha-teal-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-teal-cursors.zip	b0fa20a235b7d5a2dc1c96c6966129366f549972e64228a20de6b362a367100d
+cursor:catppuccin-mocha-yellow-cursors	fixed	v2.0.0	https://github.com/catppuccin/cursors/releases/download/{v}/catppuccin-mocha-yellow-cursors.zip	00a688658f24abdd5a788180d66043e460b02c9417a4588c5af404426fe1bb2c
 # Bootstrap of Debian / Void from a host that is not Debian / Void (the tuxcraft ISO, for one).
-debian-keyring	debian:trixie/debian-archive-keyring		https://deb.debian.org/debian/{v}	
-xbps-static	void-static		https://repo-default.voidlinux.org/static/xbps-static-static-{v}.x86_64-musl.tar.xz	
+debian-keyring	debian:trixie/debian-archive-keyring	pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb	https://deb.debian.org/debian/{v}	9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac
+xbps-static	void-static	0.60.4_1	https://repo-default.voidlinux.org/static/xbps-static-static-{v}.x86_64-musl.tar.xz	603b3c55e9cabd5af79b461b929b14e1556a443c97b5714d188681c2172d9e28

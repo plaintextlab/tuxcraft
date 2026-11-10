@@ -19,15 +19,19 @@ case ${1:-} in
   *) echo "Unknown option $1" >&2; exit 1 ;;
 esac
 
+# Rows have empty columns (no version or hash yet). Tab is whitespace to `read`, so runs of
+# tabs would collapse and shift the columns: split on \x1f instead.
+us_split() { tr '\t' '\037'; }
+
 if ((CHECK)); then
   bad=0
-  while IFS=$'\t' read -r key track ver url sum; do
+  while IFS=$'\x1f' read -r key track ver url sum; do
     [[ -z $key || $key == \#* || $key == cursors ]] && continue
     [[ -n $ver ]] || { echo "no version: $key" >&2; bad=1; }
     [[ $sum =~ ^[0-9a-f]{64}$ ]] || { echo "no sha256: $key" >&2; bad=1; }
     [[ $track == latest:* || $track == commit:* || $track == fixed || $track == debian:* || $track == void-static ]] ||
       { echo "unknown track '$track': $key" >&2; bad=1; }
-  done <"$TABLE"
+  done < <(us_split <"$TABLE")
   grep -q $'^cursor:' "$TABLE" || { echo "no cursor:* rows (run without --check)" >&2; bad=1; }
   ((bad)) && exit 1
   echo "pins OK: $(grep -cv '^#' "$TABLE") rows"
@@ -95,13 +99,13 @@ cursor_rows() {  # version -> one row per .zip of the catppuccin/cursors release
 
 out=$TMP/new.tsv fail=0 changed=0
 declare -A OLD_CURSOR=()
-while IFS=$'\t' read -r key _ ver _ sum; do
+while IFS=$'\x1f' read -r key _ ver _ sum; do
   [[ $key == cursor:* ]] && OLD_CURSOR[$key]="$ver $sum"
-done <"$TABLE"
+done < <(us_split <"$TABLE")
 
 while IFS= read -r line; do
   if [[ -z $line || $line == \#* ]]; then echo "$line" >>"$out"; continue; fi
-  IFS=$'\t' read -r key track ver url sum <<<"$line"
+  IFS=$'\x1f' read -r key track ver url sum <<<"${line//$'\t'/$'\x1f'}"
   [[ $key == cursor:* ]] && continue   # regenerated below the "cursors" row
   if [[ $key == cursors ]]; then
     echo "$line" >>"$out"
