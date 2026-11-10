@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
 # tux-theme-system <theme> — the root-owned half of theming:
 # console (TTY) palette, the tuigreet login screen, Papirus folder colours.
+# tux-theme-system --console-font FILE   the login screen/TTY font (see below)
 # wheel users may run it via sudo without a password (see /etc/sudoers.d/20-tuxcraft-theme).
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+# tux-theme-system --console-font FILE: the login screen/TTY font (a PSF2 file made by tux-psf
+# from the desktop font). Installed as /etc/tuxcraft/console.psf, which tux-console loads at boot.
+if [[ ${1:-} == --console-font ]]; then
+  f=${2:-}
+  [[ -f $f && ! -L $f ]] || { echo "tux-theme-system: no font file '$f'" >&2; exit 1; }
+  (( $(stat -c %s "$f") < 262144 )) || { echo "tux-theme-system: $f is too big for a console font" >&2; exit 1; }
+  [[ $(head -c4 "$f" | od -An -tx1 | tr -d ' \n') == 72b54a86 ]] || { echo "tux-theme-system: $f is not a PSF2 font" >&2; exit 1; }
+  mkdir -p /etc/tuxcraft
+  install -m644 "$f" /etc/tuxcraft/console.psf.new && mv /etc/tuxcraft/console.psf.new /etc/tuxcraft/console.psf
+  conf=/etc/tuxcraft/console.conf
+  touch "$conf"
+  sed -i '/^TUX_CONSOLE_FONT=/d' "$conf"
+  echo 'TUX_CONSOLE_FONT=/etc/tuxcraft/console.psf   # set by tux-font (the desktop font)' >>"$conf"
+  # Text consoles change now; the one under the running desktop is in graphics mode and refuses
+  # (it gets the font at the next boot).
+  if command -v setfont >/dev/null; then
+    for t in /dev/tty{1..7}; do setfont -C "$t" /etc/tuxcraft/console.psf 2>/dev/null || true; done
+  fi
+  exit 0
+fi
 
 name=${1:-}
 [[ $name =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system <theme>" >&2; exit 1; }

@@ -5,6 +5,8 @@
 #   tux-font size <n>          change size only
 #   tux-font list
 # Fonts not yet installed are downloaded to ~/.local/share/fonts (no root needed).
+# The login screen (tuigreet on the text console) follows: the font is rendered as a console
+# font by tux-psf and installed by tux-theme-system (sudoers rule, no password).
 set -euo pipefail
 SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
 TABLE="$SHARE/data/fonts.tsv"
@@ -40,6 +42,43 @@ apply() {  # apply key [size]
   if [[ $key == noto ]]; then state_set TERM_FONT "$(field jetbrains 2)"; ensure jetbrains; else state_set TERM_FONT "$fam"; fi
   [[ -n ${2:-} ]] && { state_set FONT_SIZE "$2"; state_set TERM_FONT_SIZE "$(( $2 + 1 ))"; }
   tux-theme apply
+  login_font
+}
+
+# Login screen: the terminal font as a console (PSF) font, scaled like the desktop text.
+# 11 pt on a 1080p screen gives 24 px rows, the size tux-console picked before.
+login_font() {
+  command -v python3 >/dev/null && command -v tux-psf >/dev/null || return 0
+  local FONT='' TERM_FONT='' FONT_SIZE=11 fam file fbh px out
+  # shellcheck source=/dev/null
+  [[ -f $STATE ]] && . "$STATE"
+  fam=${TERM_FONT:-$FONT}; [[ -n $fam ]] || return 0
+  # Only the real font: fontconfig would hand back a fallback (DejaVu) for one not installed yet.
+  [[ $(fc-match -f '%{family}' "$fam") == *"$fam"* ]] || return 0
+  file=$(fc-match -f '%{file}' "$fam") || return 0
+  fbh=$(cut -d, -f2 /sys/class/graphics/fb0/virtual_size 2>/dev/null) || fbh=1080
+  [[ $fbh =~ ^[0-9]+$ ]] && ((fbh > 0)) || fbh=1080
+  px=$(( (${FONT_SIZE%.*} * 22 * fbh + 5400) / 10800 ))
+  ((px < 12)) && px=12; ((px > 32)) && px=32
+  out=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tux-console-XXXXXX.psf")
+  if tux-psf "$file" "$px" "$out" >/dev/null 2>&1; then
+    sudo -n /usr/local/bin/tux-theme-system --console-font "$out" >/dev/null 2>&1 || true
+  fi
+  rm -f "$out"
+}
+
+size_menu() {
+  local cur=11 FONT_SIZE='' pick s
+  # shellcheck source=/dev/null
+  [[ -f $STATE ]] && . "$STATE"; cur=${FONT_SIZE:-11}
+  pick=$(for s in 8 9 10 11 12 13 14 15 16 17 18 20; do
+           [[ $s == "$cur" ]] && echo "$s  (current)" || echo "$s"; done | tux-menu "font size") || return 0
+  set_size "${pick%% *}"
+}
+
+set_size() {
+  [[ $1 =~ ^[0-9]+$ ]] || { echo "Size must be a whole number" >&2; exit 1; }
+  state_set FONT_SIZE "$1"; state_set TERM_FONT_SIZE "$(( $1 + 1 ))"; tux-theme apply; login_font
 }
 
 # Side by side, centred together: the preview image on the left (floating, scaled to the screen
@@ -80,17 +119,25 @@ menu() {
       fi
     fi
   fi
-  local pick
-  pick=$(awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE" | tux-menu font -- "${margs[@]}") || true
+  local pick FONT_SIZE=11
+  # shellcheck source=/dev/null
+  [[ -f $STATE ]] && . "$STATE"
+  pick=$({ printf '%-10s %-26s %s\n' size "Size: ${FONT_SIZE:-11}" "change the size (desktop, terminal and login screen)"
+           awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE"; } | tux-menu font -- "${margs[@]}") || true
   [[ -n $pid ]] && kill "$pid" 2>/dev/null
-  [[ -n ${pick:-} ]] && apply "${pick%% *}"
+  case ${pick%% *} in
+    '') ;;
+    size) size_menu ;;
+    *) apply "${pick%% *}" ;;
+  esac
 }
 
 case ${1:-} in
   set) apply "${2:?font key}" "${3:-}" ;;
-  size) state_set FONT_SIZE "${2:?size}"; state_set TERM_FONT_SIZE "$(( $2 + 1 ))"; tux-theme apply ;;
+  size) set_size "${2:?size}" ;;
+  login) login_font ;;
   list) awk -F'\t' '!/^#/ && NF>=4 {printf "%-10s %-26s %s\n", $1, $2, $4}' "$TABLE" ;;
   ""|--menu) menu ;;
-  -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) apply "$1" "${2:-}" ;;
 esac

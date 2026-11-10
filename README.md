@@ -180,7 +180,9 @@ identical machine with `sudo ./install.sh --config answers.conf --yes`.
 ![font previews](assets/font-previews/all.png)
 
 Every choice gets Nerd Font icons through a fallback, so the bar and launcher look right even
-with the DOS font. Change any time with **Super+Ctrl+F** or `tux-font set dos 13`.
+with the DOS font. Change any time with **Super+Ctrl+F** or `tux-font set dos 13`; the size is the
+first entry of that menu (or `tux-font size 13`). The login screen follows both: the font is
+rendered as a console font (`tux-psf`) and scaled to the screen, so tuigreet uses the same letters.
 
 ## What you get
 
@@ -205,7 +207,8 @@ still being written (or the unmount does). Internal disks keep the normal large 
 
 **Login screen:** greetd + **tuigreet** — a TUI login that fits a keyboard-driven setup, works with
 X11 and Wayland, systemd and runit, and is coloured by the system theme (the console palette is
-themed too). LightDM is used only if tuigreet is not packaged.
+themed too) and drawn in the desktop font at a matching size. LightDM is used only if tuigreet is
+not packaged.
 
 **Terminal and images:** kitty is the default because it shows real images (kitty graphics
 protocol, X11 and Wayland): album art in rmpc, image previews in yazi, and `img photo.jpg` for any

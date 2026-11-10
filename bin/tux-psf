@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""tux-psf FONTFILE PX OUT.psf — render a TrueType/OpenType font as a PSF2 console font.
+
+The Linux console (and tuigreet on it) only draws bitmap PSF fonts, so tux-font uses this to
+give the login screen the desktop's font. PX is the cell height in pixels (12-32). Covers
+ASCII, Latin-1, box drawing and blocks (tuigreet's borders) and a little punctuation.
+"""
+import struct
+import sys
+
+from PIL import Image, ImageDraw, ImageFont
+
+RANGES = [(0x20, 0x7E), (0xA0, 0xFF), (0x2500, 0x259F)]
+EXTRA = "‘’“”•…–—€←↑→↓✓✗▲▶▼◀●○◆"
+THRESHOLD = 96       # antialiased coverage (0-255) that counts as an "on" pixel
+
+
+def codepoints():
+    cps = [0]  # glyph 0 stays blank: the console shows it for anything not in the table
+    for lo, hi in RANGES:
+        cps.extend(range(lo, hi + 1))
+    cps.extend(ord(c) for c in EXTRA if ord(c) not in cps)
+    return cps
+
+
+def fit(path, px):
+    """Font object whose ascent+descent fills PX rows."""
+    size = px
+    for _ in range(6):
+        font = ImageFont.truetype(path, size)
+        asc, desc = font.getmetrics()
+        if asc + desc == px:
+            break
+        size = max(4, round(size * px / (asc + desc)))
+    font = ImageFont.truetype(path, size)
+    return font, font.getmetrics()[0]
+
+
+def render(path, px):
+    font, ascent = fit(path, px)
+    width = max(4, min(32, round(font.getlength("M"))))
+    rowbytes = (width + 7) // 8
+    glyphs, table = [], []
+    for cp in codepoints():
+        img = Image.new("L", (width, px), 0)
+        if cp:
+            ImageDraw.Draw(img).text((0, ascent), chr(cp), font=font, fill=255, anchor="ls")
+        data = bytearray()
+        pix = img.load()
+        for y in range(px):
+            row = 0
+            for x in range(width):
+                if pix[x, y] >= THRESHOLD:
+                    row |= 0x80 >> (x % 8) << (8 * (rowbytes - 1 - x // 8))
+            data += row.to_bytes(rowbytes, "big")
+        glyphs.append(bytes(data))
+        table.append((chr(cp).encode() if cp else b"") + b"\xff")
+    header = struct.pack("<8I", 0x864AB572, 0, 32, 1, len(glyphs), px * rowbytes, px, width)
+    return header + b"".join(glyphs) + b"".join(table), width
+
+
+def main():
+    if len(sys.argv) != 4:
+        sys.exit(__doc__.strip().splitlines()[0])
+    path, px, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+    if not 12 <= px <= 32:
+        sys.exit("tux-psf: PX must be 12-32")
+    blob, width = render(path, px)
+    with open(out, "wb") as f:
+        f.write(blob)
+    print(f"{out}: {width}x{px}, {len(codepoints())} glyphs")
+
+
+if __name__ == "__main__":
+    main()

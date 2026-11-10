@@ -263,6 +263,8 @@ theme_stage() {
   step "Applying theme '$TUX_THEME' system-wide"
   /usr/local/bin/tux-theme-system "$TUX_THEME" || warn "System theme step failed"
   as_user /usr/local/bin/tux-theme apply || warn "tux-theme apply failed (see $TUX_LOG)"
+  # Login screen in the desktop font (best effort: needs python3-pillow and the font installed).
+  as_user /usr/local/bin/tux-font login >/dev/null 2>&1 || true
 }
 
 # LazyVim: install the plugins now, so the first `nvim` opens ready (needs the theme file above).
