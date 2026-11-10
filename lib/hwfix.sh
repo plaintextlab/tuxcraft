@@ -17,7 +17,8 @@ hda_card_pci() {
 }
 
 # HP OMEN 16-n0xxx (AMD, board 8A44, Realtek ALC245):
-#   * mute-key LED: the kernel has no quirk for 8A44, so borrow its sibling 8A36's
+#   * mute-key LED: the kernel has no quirk for 8A44, so borrow the one of HP board 8A25
+#     (Victus 16-d1xxx, ALC245_FIXUP_HP_MUTE_LED_COEFBIT, in kernels 6.6 and later)
 #     (Realtek coef 0x0b bit 3 follows the mute state; it changes nothing else)
 #   * built-in speakers are quieter than on Windows, which adds HP/DTS processing: a look-ahead
 #     limiter in front of the speaker output only (+6 dB, peaks held at -1 dBFS)
@@ -28,12 +29,13 @@ hwfix_hp_omen_8a44() {
 0x10ec0245 0x103c8a44 0
 
 [model]
-103c:8a36
+103c:8a25
 EOF
   local fw=tuxcraft/hda-hp-8a44.fw
   write_file /etc/modprobe.d/tuxcraft-hp-omen-audio.conf <<EOF
 # tuxcraft: HP OMEN 16-n0xxx (board 8A44) mute-key LED. The kernel has no quirk for this board;
-# borrow the one of its sibling 8A36 (fixup: mute LED on Realtek coef 0x0b bit 3, nothing else).
+# borrow the one of HP board 8A25 (ALC245_FIXUP_HP_MUTE_LED_COEFBIT: mute LED on Realtek coef 0x0b
+# bit 3, nothing else; kernel 6.6+). 8A36, used before, has no quirk in any kernel.
 # The patch file only applies to the codec it names, so listing it for every card is safe.
 options snd-hda-intel patch=$fw,$fw,$fw,$fw
 EOF
