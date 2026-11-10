@@ -44,6 +44,9 @@ EOF
   # Let wheel users re-theme the login screen/TTY without a password prompt.
   echo '%wheel ALL=(root) NOPASSWD: /usr/local/bin/tux-theme-system' >/etc/sudoers.d/20-tuxcraft-theme
   chmod 440 /etc/sudoers.d/20-tuxcraft-theme
+  # …and pick which internal drives mount at boot (tux-drives checks every argument itself).
+  echo '%wheel ALL=(root) NOPASSWD: /usr/local/bin/tux-drives internal *' >/etc/sudoers.d/21-tuxcraft-drives
+  chmod 440 /etc/sudoers.d/21-tuxcraft-drives
 }
 
 void_pipewire() {

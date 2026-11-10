@@ -34,7 +34,7 @@ section "tuxcraft"
 check "session.conf present (${DISTRO:-?}, $SESSION)" test -f /etc/tuxcraft/session.conf
 check "answers.conf saved" $SUDO test -f /etc/tuxcraft/answers.conf
 check "user state file (theme ${THEME:-?}, font ${FONT:-?})" test -f "$HOME/.config/tuxcraft/state"
-for c in tux-theme tux-theme-system tux-font tux-session tux-autostart tux-snap tux-backup sysup tux-menu tux-lock tux-control; do
+for c in tux-theme tux-theme-system tux-font tux-session tux-autostart tux-snap tux-backup tux-drives sysup tux-menu tux-lock tux-control; do
   command -v "$c" >/dev/null || bad "command $c missing"
 done
 ok "tux-* commands checked"

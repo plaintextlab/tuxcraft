@@ -1,0 +1,262 @@
+#!/usr/bin/env bash
+# tux-drives — pick which drives mount by themselves.
+#
+#   tux-drives [--menu]            toggle drives in a menu (System menu → Drives)
+#   tux-drives list                show every drive and whether it automounts
+#   tux-drives on|off NAME|UUID    switch one drive (label, /dev/sdXN or UUID)
+#
+# Internal drives get an /etc/fstab entry (nofail: a missing or broken disk never stops the
+# boot) and are mounted at boot, before login, under /media/<label>. Thunar still shows them.
+# External drives (USB, hot-plug) are mounted by udiskie when plugged in or at login; switching
+# one off adds it to ~/.config/udiskie/config.yml so udiskie leaves it alone.
+# System partitions (root, EFI, swap, Windows recovery/reserved, LUKS, gaming-VM disks) are
+# never listed.
+set -euo pipefail
+
+UDISKIE_CONF="$HOME/.config/udiskie/config.yml"
+FSTAB=/etc/fstab
+TAG=x-tuxdrives            # fstab option marking our entries (x-* never reaches the kernel)
+FSTYPES=" ext2 ext3 ext4 btrfs xfs f2fs ntfs exfat vfat "
+# GPT types never worth mounting: EFI system, MS reserved, Windows recovery, BIOS boot.
+SKIP_PARTTYPES=" c12a7328-f81f-11d2-ba4b-00a0c93ec93b e3c9e316-0b5c-4db8-817d-f92df00215ae de94bba4-06d1-4d40-a16a-bfd50179d6ac 21686148-6449-6e6f-744e-656564454649 "
+SYSTEM_MOUNTS=" / /home /boot /boot/efi /efi /.snapshots /var/log /var/cache /var/tmp /usr /var "
+
+say() { printf ':: %s\n' "$*"; }
+die() { printf 'tux-drives: %s\n' "$*" >&2; exit 1; }
+gui() { [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} && ! -t 0 ]]; }
+note() { if gui; then notify-send "Drives" "$*"; else say "$*"; fi; }
+
+# --- scanning -----------------------------------------------------------------------------
+
+# UUIDs of the system's own filesystems (live mounts and fstab entries at system paths).
+system_uuids() {
+  local m s
+  for m in $SYSTEM_MOUNTS; do
+    findmnt -rno UUID "$m" 2>/dev/null || true
+    s=$(findmnt --fstab -rno SOURCE "$m" 2>/dev/null) || true
+    [[ $s == UUID=* ]] && { s=${s#UUID=}; echo "${s//\"/}"; }
+  done
+  [[ -f /etc/tuxcraft/disk.conf ]] && sed -n 's/^TUX_LUKS_UUID=//p' /etc/tuxcraft/disk.conf
+  return 0
+}
+
+# One line per candidate partition: uuid|dev|fstype|label|size|kind(int/ext)
+scan() {
+  local sys line NAME UUID FSTYPE LABEL SIZE HOTPLUG RM PARTTYPE MOUNTPOINT TYPE
+  sys=" $(system_uuids | tr '\n' ' ') "
+  while IFS= read -r line; do
+    NAME='' UUID='' FSTYPE='' LABEL='' SIZE='' HOTPLUG='' RM='' PARTTYPE='' MOUNTPOINT='' TYPE=''
+    eval "$line"
+    [[ $TYPE == part || $TYPE == disk ]] || continue
+    [[ -n $UUID && $FSTYPES == *" $FSTYPE "* ]] || continue
+    [[ $sys == *" $UUID "* ]] && continue
+    [[ -n $PARTTYPE && $SKIP_PARTTYPES == *" ${PARTTYPE,,} "* ]] && continue
+    [[ -n $MOUNTPOINT && $SYSTEM_MOUNTS == *" $MOUNTPOINT "* ]] && continue
+    # Gaming VM disks and anything else udev tells udisks to leave alone.
+    udevadm info -q property -n "$NAME" 2>/dev/null | grep -qx 'UDISKS_IGNORE=1' && continue
+    local kind=int; [[ $HOTPLUG == 1 || $RM == 1 ]] && kind=ext
+    printf '%s|%s|%s|%b|%s|%s\n' "$UUID" "$NAME" "$FSTYPE" "${LABEL//|/_}" "$SIZE" "$kind"
+  done < <(lsblk -Ppno NAME,UUID,FSTYPE,LABEL,SIZE,HOTPLUG,RM,PARTTYPE,MOUNTPOINT,TYPE)
+}
+
+fstab_target() {  # uuid -> its mountpoint in fstab
+  awk -v u="$1" '$1=="UUID="u || $1=="UUID=\""u"\"" {print $2; exit}' "$FSTAB"
+}
+
+# fstab line for this UUID: "ours", "user" (someone else's entry) or empty.
+fstab_state() {
+  local l
+  l=$(grep -E "^[[:space:]]*UUID=\"?$1\"?[[:space:]]" "$FSTAB" 2>/dev/null | head -1) || true
+  [[ -z $l ]] && return 0
+  [[ $l == *"$TAG"* ]] && echo ours || echo user
+}
+
+udiskie_off() {  # is this UUID switched off for udiskie?
+  [[ -f $UDISKIE_CONF ]] && grep -qE "^- id_uuid: '?$1'?$" "$UDISKIE_CONF"
+}
+
+is_on() {  # uuid kind -> 0 when it automounts
+  if [[ $2 == int ]]; then [[ -n $(fstab_state "$1") ]]; elif udiskie_off "$1"; then return 1; fi
+}
+
+describe() {  # uuid dev fs label size kind -> menu line
+  local u=$1 d=$2 fs=$3 l=${4:-${2##*/}} sz=$5 k=$6 box where mp
+  if is_on "$u" "$k"; then box='[on] '; else box='[off]'; fi
+  if [[ $k == int ]]; then
+    where=internal; [[ $box == '[on] ' ]] && where="internal, mounts at boot"
+    [[ $(fstab_state "$u") == user ]] && where="internal, your own fstab entry"
+  else where=external; [[ $box == '[on] ' ]] && where="external, mounts when plugged in"; fi
+  mp=$(findmnt -rno TARGET -S "UUID=$u" 2>/dev/null | head -1) || true
+  printf '%s  %s %s — %s %s, %s%s   ‹%s›\n' "$([[ $k == int ]] && echo 󰋊 || echo 󰕓)" "$box" "$l" "$sz" "$fs" \
+    "$where" "${mp:+  → $mp}" "$u"
+}
+
+find_drive() {  # NAME|UUID|/dev/x -> scan line
+  local q=$1 r
+  r=$(scan | awk -F'|' -v q="$q" '$1==q || $2==q || $4==q' | head -1)
+  [[ -n $r ]] || die "no automountable drive matches '$q' (see: tux-drives list)"
+  echo "$r"
+}
+
+# --- internal: /etc/fstab (root) ----------------------------------------------------------
+
+mount_dir() {  # uuid label -> free /media/<name>
+  local u=$1 n=${2:-}
+  n=$(printf '%s' "$n" | tr -c 'A-Za-z0-9._-' '_'); n=${n##.}
+  [[ -n $n ]] || n="disk-${u:0:8}"
+  local d="/media/$n"
+  if findmnt -rn --fstab "$d" >/dev/null 2>&1 || { [[ -d $d ]] && ! findmnt -rn "$d" >/dev/null && [[ -n $(ls -A "$d" 2>/dev/null) ]]; }; then
+    d="/media/$n-${u:0:8}"
+  fi
+  echo "$d"
+}
+
+fs_opts() {  # fstype -> "type options"
+  local uid=${SUDO_UID:-${PKEXEC_UID:-1000}} gid
+  gid=${SUDO_GID:-$(id -g "$uid" 2>/dev/null || echo "$uid")}
+  local own="uid=$uid,gid=$gid,umask=022"
+  local sd=''; command -v systemctl >/dev/null && sd=',x-systemd.device-timeout=10s'
+  case $1 in
+    ntfs)
+      if grep -qw ntfs3 /proc/filesystems 2>/dev/null || modinfo ntfs3 >/dev/null 2>&1; then
+        echo "ntfs3 $own,noatime,nofail$sd,x-gvfs-show,$TAG"
+      elif command -v ntfs-3g >/dev/null; then
+        echo "ntfs-3g $own,noatime,nofail$sd,x-gvfs-show,$TAG"
+      else die "no NTFS driver (kernel ntfs3 or ntfs-3g) found"; fi ;;
+    exfat|vfat) echo "$1 $own,noatime,nofail$sd,x-gvfs-show,$TAG" ;;
+    *) echo "$1 defaults,noatime,nofail$sd,x-gvfs-show,$TAG" ;;
+  esac
+}
+
+write_fstab() {  # new contents on stdin; checked before it replaces /etc/fstab
+  local tmp; tmp=$(mktemp "${FSTAB%/*}/.fstab.tux-drives.XXXXXX")
+  cat >"$tmp"
+  # Unplugged nofail drives already count as errors for --verify, so only refuse when the new
+  # file has more errors than the current one.
+  if findmnt --help 2>&1 | grep -q -- --verify; then
+    local before after
+    before=$(findmnt --verify --tab-file "$FSTAB" 2>&1 | grep -c '\[E\]') || true
+    after=$(findmnt --verify --tab-file "$tmp" 2>&1 | grep -c '\[E\]') || true
+    if (( after > before )); then
+      findmnt --verify --tab-file "$tmp" >&2 || true; rm -f "$tmp"; die "new fstab did not verify; nothing changed"
+    fi
+  fi
+  [[ -f $FSTAB.pre-tux-drives ]] || cp -a "$FSTAB" "$FSTAB.pre-tux-drives"
+  chmod 644 "$tmp"; mv "$tmp" "$FSTAB"
+}
+
+internal_on() {
+  local u=$1 r dev fs label sz kind dir tf opts cur
+  r=$(find_drive "$u"); IFS='|' read -r u dev fs label sz kind <<<"$r"
+  [[ $kind == int ]] || die "$dev is an external drive (udiskie handles it)"
+  [[ -z $(fstab_state "$u") ]] && {
+    dir=$(mount_dir "$u" "$label"); read -r tf opts < <(fs_opts "$fs"); mkdir -p "$dir"
+    { cat "$FSTAB"; printf 'UUID=%s  %s  %s  %s  0 0\n' "$u" "$dir" "$tf" "$opts"; } | write_fstab
+    command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] && systemctl daemon-reload
+  }
+  dir=$(fstab_target "$u"); [[ -n $dir ]] || die "no fstab entry for $u"
+  mkdir -p "$dir"
+  findmnt -rn "$dir" >/dev/null && { say "$label: at boot, mounted at $dir"; return; }
+  # Mounted somewhere else (by udisks)? Move it.
+  for cur in $(findmnt -rno TARGET -S "UUID=$u" 2>/dev/null); do umount "$cur" 2>/dev/null || {
+    say "$label: mounts at $dir from the next boot ($cur is in use now)"; return; }; done
+  if mount "$dir" 2>/dev/null; then say "$label: at boot, mounted at $dir"
+  elif [[ $fs == ntfs ]] && mount -o ro "$dir" 2>/dev/null; then
+    say "$label: mounted READ-ONLY at $dir — Windows left it unclean (Fast Startup). Shut Windows down fully (powercfg /h off)."
+  else say "$label: added for boot, but mounting $dir failed now (see dmesg)"; fi
+}
+
+internal_off() {
+  local u=$1 st dir
+  st=$(fstab_state "$u")
+  [[ $st == user ]] && die "UUID=$u is an /etc/fstab entry you made; edit /etc/fstab yourself"
+  [[ $st == ours ]] || { say "not mounted at boot already"; return; }
+  dir=$(fstab_target "$u")
+  findmnt -rn "$dir" >/dev/null && { umount "$dir" 2>/dev/null || say "$dir is busy: it stays mounted until reboot"; }
+  grep -vE "^[[:space:]]*UUID=\"?$u\"?[[:space:]].*$TAG" "$FSTAB" | write_fstab
+  command -v systemctl >/dev/null && [[ -d /run/systemd/system ]] && systemctl daemon-reload
+  rmdir "$dir" 2>/dev/null || true
+  say "no longer mounted at boot (udiskie can still mount it on request)"
+}
+
+cmd_internal() {  # root-only entry point: tux-drives internal on|off UUID
+  [[ $EUID -eq 0 ]] || die "internal: needs root"
+  [[ ${2:-} =~ ^[0-9A-Fa-f-]{4,36}$ ]] || die "internal: expected a filesystem UUID"
+  case ${1:-} in on) internal_on "$2" ;; off) internal_off "$2" ;; *) die "internal on|off UUID" ;; esac
+}
+
+# --- external: udiskie config (user) ------------------------------------------------------
+
+udiskie_write() {  # list of UUIDs to keep off, one per line, on stdin
+  local ids; ids=$(sort -u | grep . || true)
+  if [[ -f $UDISKIE_CONF ]] && ! grep -q '^# tux-drives' "$UDISKIE_CONF"; then
+    die "$UDISKIE_CONF is your own; add 'device_config: [{id_uuid: UUID, automount: false}]' there"
+  fi
+  mkdir -p "${UDISKIE_CONF%/*}"
+  {
+    echo "# tux-drives: external drives udiskie must not mount by itself (change via tux-drives)."
+    if [[ -n $ids ]]; then
+      echo "device_config:"
+      while read -r u; do printf -- "- id_uuid: '%s'\n  automount: false\n" "$u"; done <<<"$ids"
+    fi
+  } >"$UDISKIE_CONF"
+  if pgrep -u "$UID" -x udiskie >/dev/null; then
+    pkill -u "$UID" -x udiskie; sleep 0.3
+    setsid -f udiskie --smart-tray --notify >/dev/null 2>&1
+  fi
+}
+
+udiskie_ids() { [[ -f $UDISKIE_CONF ]] || return 0; sed -n "s/^- id_uuid: '\{0,1\}\([^']*\)'\{0,1\}$/\1/p" "$UDISKIE_CONF"; }
+
+external_set() {  # uuid on|off
+  if [[ $2 == on ]]; then udiskie_ids | grep -vx "$1" | udiskie_write
+  else { udiskie_ids; echo "$1"; } | udiskie_write; fi
+}
+
+# --- user-facing --------------------------------------------------------------------------
+
+as_root() {  # run "tux-drives internal …" as root: passwordless sudo rule, else a terminal
+  local self=/usr/local/bin/tux-drives; [[ -x $self ]] || self=$(readlink -f "$0")
+  if [[ $EUID -eq 0 ]]; then "$self" internal "$@"
+  elif out=$(sudo -n "$self" internal "$@" 2>&1); then note "${out//:: /}"
+  elif gui; then tux-term --class tux-float -e bash -c "sudo '$self' internal $1 $2; read -rsn1 -p 'Press a key'"
+  else sudo "$self" internal "$@"; fi
+}
+
+set_drive() {  # uuid kind on|off
+  if [[ $2 == int ]]; then as_root "$3" "$1"; else external_set "$1" "$3"; note "external drive: automount $3"; fi
+}
+
+cmd_set() {
+  local want=$1 r u dev fs label sz kind; r=$(find_drive "$2")
+  IFS='|' read -r u dev fs label sz kind <<<"$r"
+  set_drive "$u" "$kind" "$want"
+}
+
+cmd_list() {
+  local u dev fs label sz kind any=0
+  while IFS='|' read -r u dev fs label sz kind; do any=1; describe "$u" "$dev" "$fs" "$label" "$sz" "$kind"; done < <(scan)
+  ((any)) || say "no data drives found"
+}
+
+cmd_menu() {
+  local lines pick u kind
+  while :; do
+    lines=$(cmd_list)
+    [[ $lines == ::* ]] && { note "No data drives found"; return; }
+    pick=$(printf '%s\n' "$lines" | tux-menu "Automount (pick to toggle)") || return 0
+    u=${pick##*‹}; u=${u%›*}
+    kind=ext; [[ $pick == 󰋊* ]] && kind=int
+    if [[ $pick == *"your own fstab entry"* ]]; then note "That drive has an /etc/fstab line you wrote; edit it there."
+    elif [[ $pick == *'[on] '* ]]; then set_drive "$u" "$kind" off; else set_drive "$u" "$kind" on; fi
+  done
+}
+
+case ${1:---menu} in
+  --menu|menu) cmd_menu ;;
+  list) cmd_list ;;
+  on|off) [[ $# -eq 2 ]] || die "usage: tux-drives $1 NAME|UUID"; cmd_set "$1" "$2" ;;
+  internal) shift; cmd_internal "$@" ;;
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$1' (try --help)" ;;
+esac
