@@ -7,8 +7,11 @@ add_newline = true
 command_timeout = 1000
 scan_timeout = 250   # ms; cold caches right after login can take >30 ms to list a dir
 
-# Two-line prompt with all the good stuff
+# Two-line prompt in a frame: everything on the first line, the cursor on the second.
+#   ┌─  ~/gitrepos/tuxcraft  on  main ⇡1
+#   └─❯
 format = """
+[┌─](fg:frame_color)\
 $container\
 $os\
 $username\
@@ -28,12 +31,12 @@ $kubernetes\
 $aws\
 $cmd_duration\
 $line_break\
-$character"""
+[└─](fg:frame_color)$character"""
 
 # ── OS icon ──────────────────────────────────────────────
 [os]
 disabled = false
-format = "[$symbol](bold fg:os_color) "
+format = "[ $symbol ](bold fg:os_color) "
 
 [os.symbols]
 Ubuntu = "󰕈"
@@ -47,7 +50,7 @@ Linux = "󰌽"
 
 # ── Container badge (distrobox / podman / docker / toolbox) ─
 [container]
-format = "[ 󰆧 $name ]($style) "
+format = " [ 󰆧 $name ]($style)"
 style = "bold fg:container_fg bg:container_color"
 
 # ── Username ──────────────────────────────────────────────
@@ -65,21 +68,17 @@ style = "bold fg:host_color"
 
 # ── Directory ─────────────────────────────────────────────
 [directory]
+# The whole path: parent folders dimmed, the folder you are in (or the repo root) bright.
 format = "[$path]($style)[$read_only]($read_only_style) "
+repo_root_format = "[$before_root_path]($before_repo_root_style)[$repo_root]($repo_root_style)[$path]($style)[$read_only]($read_only_style) "
 style = "bold fg:dir_color"
+before_repo_root_style = "fg:dir_dim"
+repo_root_style = "bold fg:dir_color"
 read_only = " 󰌾"
 read_only_style = "red"
-truncation_length = 4
-truncate_to_repo = true
-home_symbol = "󰜥 ~"
-
-[directory.substitutions]
-"Documents" = "󰈙"
-"Downloads" = ""
-"Music" = "󰝚"
-"Pictures" = ""
-"Projects" = "󰲋"
-"Desktop" = ""
+truncation_length = 0
+truncate_to_repo = false
+home_symbol = "~"
 
 # ── Git ───────────────────────────────────────────────────
 [git_branch]
@@ -196,3 +195,5 @@ prompt_err       = "{{red}}"
 prompt_vim       = "{{yellow}}"
 container_color  = "{{orange}}"
 container_fg     = "{{bg}}"
+frame_color      = "{{muted}}"
+dir_dim          = "{{fg_dim}}"
