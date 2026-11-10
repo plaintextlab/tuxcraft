@@ -21,6 +21,8 @@ include ~/.config/tuxcraft/wm/common.conf
 tiling_drag enable
 xwayland enable
 bindsym $mod+Shift+r reload
+#: Alt+Tab                Back to the last workspace
+bindsym $alt+Tab workspace back_and_forth
 
 # ---- window rules (native Wayland app_id + XWayland class)
 # Every window gets the border, also apps that ask for none (Electron, CSD); rules below may still override.
