@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# tux-update — bring tuxcraft itself up to date (tools, configs, fixes), keeping every saved
+# choice. The same as: curl -fsSL https://plaintextlab.org/tuxcraft | sh -s -- --update
+# Packages are not touched: that is sysup.
+#   --pause   wait for a key at the end (used by the System menu)
+set -uo pipefail
+URL=${TUX_UPDATE_URL:-https://plaintextlab.org/tuxcraft}
+PAUSE=0; [[ ${1:-} == --pause ]] && PAUSE=1
+finish() { ((PAUSE)) && read -n1 -rsp $'\nPress any key to close…'; exit "${1:-0}"; }
+
+dir=$(mktemp -d "${TMPDIR:-/tmp}/tux-update.XXXXXX") || finish 1
+trap 'rm -rf "$dir"' EXIT
+if command -v curl >/dev/null; then curl -fsSL -o "$dir/launcher" "$URL"
+elif command -v wget >/dev/null; then wget -qO "$dir/launcher" "$URL"
+else xbps-fetch -o "$dir/launcher" "$URL" >/dev/null; fi || { echo "tux-update: could not download $URL (online?)" >&2; finish 1; }
+head -1 "$dir/launcher" | grep -q '^#!.*sh' || { echo "tux-update: $URL did not return the tuxcraft launcher" >&2; finish 1; }
+
+sh "$dir/launcher" --update
+rc=$?
+((rc == 0)) && echo ":: tuxcraft is up to date. Log out and back in to load changed configs."
+finish "$rc"
