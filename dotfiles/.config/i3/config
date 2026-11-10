@@ -28,7 +28,8 @@ for_window [class="^tux-float-big$"] floating enable, resize set 1400 860, move 
 for_window [window_role="pop-up"] floating enable
 for_window [window_role="dialog"] floating enable
 for_window [window_type="dialog"] floating enable
-for_window [class="mpv"] floating enable, resize set 1280 720, move position center
+# mpv sizes itself (mpv.conf: autofit), so music opens small and videos at most 1280x720.
+for_window [class="mpv"] floating enable, move position center
 for_window [class="imv"] floating enable, move position center
 for_window [class="feh"] floating enable, resize set 1280 720, move position center
 for_window [class="(?i)pavucontrol|blueman-manager|nm-connection-editor|arandr|qalculate"] floating enable, move position center

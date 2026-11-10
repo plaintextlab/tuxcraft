@@ -243,12 +243,15 @@ wallpapers_stage() {
 }
 
 default_apps() {
-  local m b
+  local m b d
   b=${TUX_BROWSER:-firefox}
   case $b in firefox) b=$( [[ $DISTRO == debian ]] && echo firefox-esr || echo firefox ) ;; esac
   as_user xdg-user-dirs-update >/dev/null 2>&1 || true
-  for m in image/png image/jpeg image/gif image/webp image/bmp image/tiff image/svg+xml; do
-    as_user xdg-mime default imv.desktop "$m" 2>/dev/null || true
+  # imv-dir opens the whole folder at the clicked image, so Left/Right step through it.
+  local iv=imv.desktop
+  for d in /usr/share/applications /usr/local/share/applications; do [[ -f $d/imv-dir.desktop ]] && iv=imv-dir.desktop; done
+  for m in image/png image/jpeg image/gif image/webp image/bmp image/tiff image/svg+xml image/avif image/heif image/jxl; do
+    as_user xdg-mime default "$iv" "$m" 2>/dev/null || true
   done
   for m in video/mp4 video/x-matroska video/webm audio/mpeg audio/flac audio/ogg; do
     as_user xdg-mime default mpv.desktop "$m" 2>/dev/null || true

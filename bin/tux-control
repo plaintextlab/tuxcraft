@@ -9,7 +9,7 @@ if grep -qs '^MODE=hybrid' /etc/tuxcraft/gamevm.conf; then
   if [[ $(cat /etc/tuxcraft/gamevm-gpu-mode 2>/dev/null) == linux ]]; then gpu="󰢮  GPU: use for gaming VM"; else gpu="󰢮  GPU: use for Linux games"; fi
 fi
 c=$(printf '%s\n' ${vm:+"$vm"} ${gpu:+"$gpu"} \
-  "󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰚰  Update system (sysup)" "󰆓  Snapshots" \
+  "󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰚰  Update system (sysup)" "󰚰  Update tuxcraft" "󰆓  Snapshots" \
   "󰋊  Drives: automount" "󰁯  Back up to external drive" "󰖩  Network" "󰂯  Bluetooth" "󰕾  Audio mixer" "󰓃  Audio output" "󰑓  Restart audio" "󰐪  Printers" "󰝚  Music folder" \
   ${void:+"$void"} "$warm" "󰾅  Power profile" "󰖔  Night light toggle" "󰹑  Compositor on/off (i3)" "󰍹  Displays" \
   "󰌌  Keybindings" "󰋼  System info" "󰒃  Shutdown guard list" "󰐥  Power menu" | tux-menu system) || exit 0
@@ -26,6 +26,7 @@ case $c in
   *Font) tux-font --menu ;;
   *Wallpaper) tux-wallpaper --menu ;;
   *sysup*) $T sysup --pause ;;
+  *"Update tuxcraft") $T tux-update --pause ;;
   *Snapshots) $T tux-snap ;;
   *automount*) tux-drives --menu ;;
   *external*) $T bash -c 'tux-backup; read -n1 -rp "Press any key"' ;;

@@ -12,7 +12,7 @@ wget -nv -O- https://plaintextlab.org/tuxcraft | sh              # Debian live
 xbps-fetch -o t https://plaintextlab.org/tuxcraft && sh t         # Void
 ```
 
-Already set up? Update with `curl -fsSL https://plaintextlab.org/tuxcraft | sh -s -- --update`.
+Already set up? Update with `tux-update` (or `curl -fsSL https://plaintextlab.org/tuxcraft | sh -s -- --update`).
 Which ISO to boot and more: [Quick start](#quick-start).
 
 ![tuxcraft on i3: fastfetch, yazi and btop in the kanagawa theme](assets/screenshots/desktop.webp)
@@ -350,6 +350,7 @@ dead SSD — that is what `tux-backup` is for.
 | Command | Does |
 |---|---|
 | `sysup` | the one safe way to update |
+| `tux-update` | update tuxcraft itself (tools, configs, fixes) with your saved choices; same as the `--update` one-liner. Also in the System menu → Update tuxcraft |
 | `tux-snap` | list / create / diff / restore a file / rollback / clean |
 | `tux-backup [mountpoint]` | backup to an external drive |
 | `tux-drives [list\|on\|off NAME]` | choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
