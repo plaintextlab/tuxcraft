@@ -13,8 +13,10 @@ TABLE="$SHARE/data/fonts.tsv"
 STATE="$HOME/.config/tuxcraft/state"
 UFONTS="$HOME/.local/share/fonts/tuxcraft"
 PIN_TABLE="$SHARE/data/downloads.tsv"
+# Only needed to download fonts; an older /usr/share/tuxcraft without it still sets fonts.
 # shellcheck source=../lib/pins.sh
-. "$SHARE/lib/pins.sh"
+[[ -f $SHARE/lib/pins.sh ]] && . "$SHARE/lib/pins.sh"
+command -v pin_get >/dev/null || pin_get() { echo "tux-font: $SHARE/lib/pins.sh missing; run tux-update" >&2; return 1; }
 
 field() { awk -F'\t' -v k="$1" -v c="$2" '$1==k {print $c}' "$TABLE"; }
 state_set() { touch "$STATE"; grep -q "^$1=" "$STATE" && sed -i "s|^$1=.*|$1=\"$2\"|" "$STATE" || echo "$1=\"$2\"" >>"$STATE"; }
