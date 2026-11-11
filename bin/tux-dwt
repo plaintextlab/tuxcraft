@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# tux-dwt [start|stop|status] — switch the touchpad off while you type (i3 / X11).
+#   libinput's own "disable while typing" lets the touchpad back in 0.2-0.5 s after a key, so a
+#   palm or thumb resting on it between words still moves the pointer or taps. This keeps it off
+#   until no key has been pressed for DWT_MS (default 600 ms). Modifier keys alone (Ctrl, Shift,
+#   Alt, Super) do not count, so Ctrl+click and Shift+scroll still work.
+#   Set DWT_MS in ~/.config/tuxcraft/state (0 = off: libinput's own guard only), then
+#   tux-dwt restart. tux-autostart starts it on i3; sway uses libinput's dwt (input.conf).
+set -uo pipefail
+DWT_MS=600
+# shellcheck source=/dev/null
+[[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
+LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-dwt.$UID.lock
+# Ctrl, Shift, Alt, AltGr, Super and Caps Lock (X keycodes)
+MODS=' 37 105 50 62 64 108 133 134 66 '
+
+running() { pgrep -u "$UID" -f '^bash .*tux-dwt daemon' >/dev/null; }
+
+# xinput ids of the touchpads (not the "Mouse" half some touchpads also show)
+pads() { xinput list 2>/dev/null | sed -n 's/.*[Tt]ouch[Pp]ad.*id=\([0-9]*\).*slave *pointer.*/\1/p'; }
+set_pads() { local id; for id in "${PADS[@]}"; do xinput "$1" "$id" 2>/dev/null; done; }
+
+daemon() {
+  exec 9>"$LOCK"; flock -n 9 || exit 0
+  ((DWT_MS > 0)) || exit 0
+  mapfile -t PADS < <(pads)
+  ((${#PADS[@]})) || exit 0   # no touchpad (desktop PC)
+  local secs off=0 key rc
+  secs=$(printf '%d.%03d' $((DWT_MS / 1000)) $((DWT_MS % 1000)))
+  trap 'set_pads enable; exit 0' EXIT INT TERM HUP
+  # Raw key events reach every client no matter which window has focus. Only "detail: <keycode>"
+  # lines of key presses get through grep, so mouse motion never wakes this loop.
+  while :; do
+    if ((off)); then read -r -t "$secs" _ key; else read -r _ key; fi
+    rc=$?
+    if ((rc > 128)); then set_pads enable; off=0; continue   # quiet for DWT_MS
+    elif ((rc)); then break; fi                                # xinput has gone (X exited)
+    [[ $MODS == *" $key "* ]] && continue
+    ((off)) || { set_pads disable; off=1; }
+  done < <(exec 9>&-; xinput test-xi2 --root 2>/dev/null |
+             grep --line-buffered -A2 '(RawKeyPress)' | grep --line-buffered -o 'detail: [0-9]*')
+}
+
+case ${1:-start} in
+  daemon) daemon ;;
+  start)
+    [[ -n ${WAYLAND_DISPLAY:-} || -z ${DISPLAY:-} ]] && exit 0   # X11 only
+    command -v xinput >/dev/null || { echo "tux-dwt: xinput is not installed" >&2; exit 1; }
+    running || setsid -f "$0" daemon >/dev/null 2>&1 ;;
+  stop) pkill -u "$UID" -f '^bash .*tux-dwt daemon'; true ;;
+  restart) "$0" stop; sleep 0.3; "$0" start ;;
+  status)
+    if running; then echo "on: touchpad off while typing, back ${DWT_MS} ms after the last key"
+    else echo "off (libinput's own disable-while-typing still applies)"; fi ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

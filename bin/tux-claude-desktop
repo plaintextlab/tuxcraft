@@ -4,6 +4,7 @@
 #   tux-claude-desktop [--recreate]    install if needed (or rebuild), then launch
 #   tux-claude-desktop install [--recreate]   (re)build the container from scratch
 #   tux-claude-desktop launch [args]   start it (background; log in ~/.local/state/tuxcraft/)
+#   tux-claude-desktop menu            (re)create the Claude entry in the app launcher (rofi/fuzzel)
 #   tux-claude-desktop update          apt upgrade inside the container (sysup does this too)
 #   tux-claude-desktop doctor          check display, keyring, links, sandbox and Cowork (KVM)
 #   tux-claude-desktop remove [--container]   remove the app (and the whole container)
@@ -118,6 +119,9 @@ apt-get update
 apt-get install -y claude-desktop
 # The box has no browser: Electron opens links (sign-in!) with xdg-open, so hand them to the
 # host through the desktop portal on the shared session bus, or distrobox-host-exec.
+# distrobox already put a symlink here to its read-only distrobox-host-exec: writing through it
+# fails, which used to stop the install before the menu entry was made. Replace the link.
+rm -f /usr/local/bin/xdg-open
 cat >/usr/local/bin/xdg-open <<'X'
 #!/bin/sh
 # tuxcraft: open links on the host (the container has no browser)
@@ -134,6 +138,7 @@ EOF
 
 # Full paths: distrobox-export --app NAME only matches NAME against Exec=/Name= lines, and the
 # package's id (com.anthropic.Claude) appears in neither.
+entry() { echo "$HOME/.local/share/applications/$NAME-com.anthropic.Claude.desktop"; }
 desktop_files() { inbox sh -c "dpkg -L claude-desktop | grep '^/usr/share/applications/.*\.desktop\$'" 2>/dev/null; }
 # What every start passes, from the menu, a claude:// link or tux-claude-desktop launch.
 app_flags() { local f=$STORE; ((NO_SANDBOX)) && f+=" --no-sandbox"; echo "$f"; }
@@ -235,8 +240,12 @@ do_doctor() {
   [[ -n ${WAYLAND_DISPLAY:-}${DISPLAY:-} ]] && pass "display: ${WAYLAND_DISPLAY:+wayland $WAYLAND_DISPLAY }${DISPLAY:+x11 $DISPLAY}" || fail "no DISPLAY/WAYLAND_DISPLAY (run from your desktop session)"
   busctl --user status org.freedesktop.secrets >/dev/null 2>&1 && pass "keyring on the session bus" \
     || fail "no Secret Service on the session bus: start gnome-keyring, or you sign in on every launch"
-  grep -qs -- "$STORE" "$HOME/.local/share/applications/$NAME"-com.anthropic.Claude.desktop && pass "menu entry uses the keyring ($STORE)" \
-    || fail "menu entry starts Claude without $STORE (\"no system keyring\"): tux-claude-desktop install"
+  if [[ ! -f $(entry) ]]; then
+    fail "no Claude entry in the app launcher: tux-claude-desktop menu"
+  else
+    grep -qs -- "$STORE" "$(entry)" && pass "menu entry uses the keyring ($STORE)" \
+      || fail "menu entry starts Claude without $STORE (\"no system keyring\"): tux-claude-desktop menu"
+  fi
   busctl --user status org.freedesktop.portal.Desktop >/dev/null 2>&1 && pass "desktop portal (links open on the host)" \
     || fail "no xdg-desktop-portal; links fall back to distrobox-host-exec"
   [[ $(xdg-mime query default x-scheme-handler/claude 2>/dev/null) == "$NAME"-* ]] && pass "claude:// handler: $(xdg-mime query default x-scheme-handler/claude)" \
@@ -251,11 +260,16 @@ do_doctor() {
 }
 
 case $cmd in
-  auto)    if ((RECREATE)) || ! installed; then do_install; fi; do_launch ;;
+  # An install cut short after apt (the xdg-open link above) left no menu entry: heal that.
+  auto)    if ((RECREATE)) || ! installed; then do_install
+           elif [[ ! -f $(entry) || ! -f $MARK ]]; then echo "$NAME" >"$MARK"; export_app; fi
+           do_launch ;;
+  menu)    installed || die "Not installed. Run: tux-claude-desktop install"
+           echo "$NAME" >"$MARK"; export_app ;;
   install) do_install; printf '\nStart it from the menu or with: tux-claude-desktop launch\n' ;;
   launch)  do_launch ;;
   update)  do_update ;;
   doctor)  do_doctor ;;
   remove)  do_remove ;;
-  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

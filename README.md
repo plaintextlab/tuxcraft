@@ -360,6 +360,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
 | `tux-guard --list` / `--edit` | what would block a shutdown right now / edit the watch list |
 | `tux-warm status` / `off` / `on` / `--edit` | fast app start: what is kept warm, switch it off/on, choose the apps |
+| `tux-dwt status` / `restart` | touchpad off while typing (i3), back 600 ms after the last key; `DWT_MS=` in `~/.config/tuxcraft/state` changes the delay, `0` turns it off |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
 
@@ -372,6 +373,7 @@ Debian 13 [distrobox](https://distrobox.it) — the same way on Arch, Debian and
 tux-claude-desktop                    # installs distrobox+podman if needed, builds the box, launches
 tux-claude-desktop install --recreate # throw the box away and rebuild it from scratch
 tux-claude-desktop doctor             # display, keyring, link handling, sandbox, Cowork/KVM
+tux-claude-desktop menu               # (re)create the Claude entry in the app launcher
 ```
 
 It installs `claude-desktop` from Anthropic's apt repository (signing key checked against its

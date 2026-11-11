@@ -62,6 +62,8 @@ case $session in
     fi
     command -v autorandr >/dev/null && autorandr --change --default default >/dev/null 2>&1
     command -v numlockx >/dev/null && numlockx on
+    # Touchpad off while typing, for longer than libinput's own guard (palm between words).
+    tux-dwt start
     if (( idle > 0 )); then
       xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
       once xss-lock --transfer-sleep-lock -- tux-lock --now
