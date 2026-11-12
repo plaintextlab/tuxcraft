@@ -26,6 +26,17 @@ def codepoints():
     return cps
 
 
+def slots():
+    """PSF glyph positions: exactly 512 (the kernel refuses any other count but 256), with
+    0-255 at their own code, Latin-1 style, and box drawing and the rest after them. setfont
+    insists position 32 (space, which the console clears the screen with) is blank, so glyphs
+    cannot simply be packed one after another. Control codes stay blank and unmapped."""
+    s = [cp if 0x20 <= cp <= 0x7E or cp >= 0xA0 else None for cp in range(256)]
+    s += [cp for cp in codepoints() if cp > 0xFF]
+    assert len(s) <= 512
+    return s + [None] * (512 - len(s))
+
+
 def fit(path, px):
     """Font object whose ascent+descent fills PX rows."""
     size = px
@@ -44,9 +55,9 @@ def render(path, px):
     width = max(4, min(32, round(font.getlength("M"))))
     rowbytes = (width + 7) // 8
     glyphs, table = [], []
-    for cp in codepoints():
+    for cp in slots():
         img = Image.new("L", (width, px), 0)
-        if cp:
+        if cp is not None:
             ImageDraw.Draw(img).text((0, ascent), chr(cp), font=font, fill=255, anchor="ls")
         data = bytearray()
         pix = img.load()
@@ -57,7 +68,7 @@ def render(path, px):
                     row |= 0x80 >> (x % 8) << (8 * (rowbytes - 1 - x // 8))
             data += row.to_bytes(rowbytes, "big")
         glyphs.append(bytes(data))
-        table.append((chr(cp).encode() if cp else b"") + b"\xff")
+        table.append((chr(cp).encode() if cp is not None else b"") + b"\xff")
     header = struct.pack("<8I", 0x864AB572, 0, 32, 1, len(glyphs), px * rowbytes, px, width)
     return header + b"".join(glyphs) + b"".join(table), width
 
@@ -122,7 +133,7 @@ def main():
     blob, width = render(path, px)
     with open(out, "wb") as f:
         f.write(blob)
-    print(f"{out}: {width}x{px}, {len(codepoints())} glyphs")
+    print(f"{out}: {width}x{px}, {len(slots())} glyphs")
 
 
 if __name__ == "__main__":
