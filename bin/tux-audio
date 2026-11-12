@@ -12,7 +12,10 @@ fi
 if [[ $kind == input ]]; then list=sources; get='get-default-source'; set='set-default-source'; streams='source-outputs'; move='move-source-output'
 else list=sinks; get='get-default-sink'; set='set-default-sink'; streams='sink-inputs'; move='move-sink-input'; fi
 cur=$(pactl "$get")
-mapfile -t rows < <(pactl -f json list "$list" 2>/dev/null | jq -r '.[] | select(.name | endswith(".monitor") | not) | "\(.name)\t\(.description)"')
+# Smart filters (e.g. tuxcraft's "Speakers (louder)") are skipped: PipeWire puts them in front of
+# their device automatically, so picking the device itself already goes through them.
+mapfile -t rows < <(pactl -f json list "$list" 2>/dev/null | jq -r '.[] | select(.name | endswith(".monitor") | not)
+  | select(.properties["filter.smart"] != "true") | "\(.name)\t\(.description)"')
 ((${#rows[@]})) || { notify-send "Audio" "No $kind devices found"; exit 1; }
 declare -A byLabel; menu=''
 for r in "${rows[@]}"; do
