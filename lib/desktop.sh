@@ -256,9 +256,15 @@ default_apps() {
   for m in video/mp4 video/x-matroska video/webm audio/mpeg audio/flac audio/ogg; do
     as_user xdg-mime default mpv.desktop "$m" 2>/dev/null || true
   done
-  command -v zathura >/dev/null && as_user xdg-mime default org.pwmt.zathura.desktop application/pdf 2>/dev/null
-  [[ $b != none ]] && as_user xdg-settings set default-web-browser "$b.desktop" 2>/dev/null
-  as_user xdg-mime default thunar.desktop inode/directory 2>/dev/null
+  if command -v zathura >/dev/null; then as_user xdg-mime default org.pwmt.zathura.desktop application/pdf 2>/dev/null || true; fi
+  # Outside a desktop session xdg-settings often gives up (exit 4, which tripped the error trap
+  # on every --update): then set the same MIME types it would have set.
+  if [[ $b != none ]] && ! as_user xdg-settings set default-web-browser "$b.desktop" 2>/dev/null; then
+    for m in text/html x-scheme-handler/http x-scheme-handler/https x-scheme-handler/about x-scheme-handler/unknown; do
+      as_user xdg-mime default "$b.desktop" "$m" 2>/dev/null || true
+    done
+  fi
+  as_user xdg-mime default thunar.desktop inode/directory 2>/dev/null || true
   return 0
 }
 

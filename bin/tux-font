@@ -112,6 +112,15 @@ login_font() {
     sudo -n /usr/local/bin/tux-theme-system --console-font "$out" >/dev/null 2>&1 || true
   fi
   rm -f "$out"
+  # The GRUB boot menu in the same font. GRUB usually runs at the panel's native resolution,
+  # so the same rows-per-screen rule, without the console's 32 px cap.
+  px=$(( (${FONT_SIZE%.*} * 22 * fbh + 5400) / 10800 ))
+  ((px < 16)) && px=16; ((px > 64)) && px=64
+  out=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tux-grub-XXXXXX.pf2")
+  if tux-psf --pf2 "$file" "$px" "$out" >/dev/null 2>&1; then
+    sudo -n /usr/local/bin/tux-theme-system --grub-font "$out" >/dev/null 2>&1 || true
+  fi
+  rm -f "$out"
 }
 
 size_menu() {

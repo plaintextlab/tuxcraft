@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """tux-psf FONTFILE PX OUT.psf — render a TrueType/OpenType font as a PSF2 console font.
+tux-psf --pf2 FONTFILE PX OUT.pf2 — the same letters as a GRUB (PFF2) font, named "tuxcraft".
 
 The Linux console (and tuigreet on it) only draws bitmap PSF fonts, so tux-font uses this to
-give the login screen the desktop's font. PX is the cell height in pixels (12-32). Covers
-ASCII, Latin-1, box drawing and blocks (tuigreet's borders) and a little punctuation.
+give the login screen the desktop's font; GRUB draws only its own PF2 bitmaps, so the boot
+menu gets them the same way (no grub-mkfont needed, Void does not ship it). PX is the cell
+height in pixels (12-32 for PSF, 12-64 for PF2). Covers ASCII, Latin-1, box drawing and
+blocks (tuigreet's borders, GRUB's terminal box) and a little punctuation.
 """
 import struct
 import sys
@@ -59,10 +62,61 @@ def render(path, px):
     return header + b"".join(glyphs) + b"".join(table), width
 
 
+def section(tag, data):
+    return tag + struct.pack(">I", len(data)) + data
+
+
+def render_pf2(path, px, name="tuxcraft"):
+    """GRUB PFF2: header sections, a sorted character index, then 1-bit glyph bitmaps (rows
+    packed without padding). Each glyph is one full cell: offset_y = -descent puts its bottom
+    edge on the descent line, so every line is exactly PX tall."""
+    font, ascent = fit(path, px)
+    descent = px - ascent
+    cells = []
+    for cp in sorted(codepoints()[1:]):  # GRUB needs the index in ascending order
+        width = round(font.getlength(chr(cp)))
+        if width < 1:
+            continue
+        img = Image.new("L", (width, px), 0)
+        ImageDraw.Draw(img).text((0, ascent), chr(cp), font=font, fill=255, anchor="ls")
+        pix = img.load()
+        bits = [1 if pix[x, y] >= THRESHOLD else 0 for y in range(px) for x in range(width)]
+        data = bytearray((len(bits) + 7) // 8)
+        for i, b in enumerate(bits):
+            if b:
+                data[i // 8] |= 0x80 >> (i % 8)
+        cells.append((cp, struct.pack(">HHhhh", width, px, 0, -descent, width) + bytes(data)))
+    maxw = max(struct.unpack(">H", g[:2])[0] for _, g in cells)
+    head = (section(b"FILE", b"PFF2") + section(b"NAME", name.encode() + b"\0")
+            + section(b"FAMI", name.encode() + b"\0") + section(b"WEIG", b"normal\0")
+            + section(b"SLAN", b"normal\0") + section(b"PTSZ", struct.pack(">H", px))
+            + section(b"MAXW", struct.pack(">H", maxw)) + section(b"MAXH", struct.pack(">H", px))
+            + section(b"ASCE", struct.pack(">H", ascent)) + section(b"DESC", struct.pack(">H", descent)))
+    index_len = 8 + 9 * len(cells)
+    offset = len(head) + index_len + 8  # glyph data starts after the DATA section header
+    index, glyphs = b"", b""
+    for cp, g in cells:
+        index += struct.pack(">IBI", cp, 0, offset + len(glyphs))
+        glyphs += g
+    return head + section(b"CHIX", index) + b"DATA" + b"\xff\xff\xff\xff" + glyphs, len(cells)
+
+
 def main():
-    if len(sys.argv) != 4:
+    args = sys.argv[1:]
+    pf2 = bool(args) and args[0] == "--pf2"
+    if pf2:
+        args = args[1:]
+    if len(args) != 3:
         sys.exit(__doc__.strip().splitlines()[0])
-    path, px, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+    path, px, out = args[0], int(args[1]), args[2]
+    if pf2:
+        if not 12 <= px <= 64:
+            sys.exit("tux-psf: PX must be 12-64")
+        blob, n = render_pf2(path, px)
+        with open(out, "wb") as f:
+            f.write(blob)
+        print(f"{out}: GRUB font 'tuxcraft', {px}px, {n} glyphs")
+        return
     if not 12 <= px <= 32:
         sys.exit("tux-psf: PX must be 12-32")
     blob, width = render(path, px)

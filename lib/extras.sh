@@ -151,8 +151,8 @@ ensure_clipboard() {
   [[ $TUX_SESSION == i3 ]] || return 0
   command -v copyq >/dev/null && return 0
   command -v flatpak >/dev/null || pkg_install flatpak
-  run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo &&
-    run flatpak install -y --noninteractive flathub com.github.hluk.copyq || warn "CopyQ unavailable; clipboard history disabled"
+  run flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo &&
+    run flatpak install --system -y --noninteractive flathub com.github.hluk.copyq || warn "CopyQ unavailable; clipboard history disabled"
 }
 
 # Gaming bundle: system limits Proton and newer games need, gamemode priority, Heroic, and the
@@ -175,8 +175,8 @@ ensure_gaming() {
 
   command -v flatpak >/dev/null || pkg_install flatpak
   command -v flatpak >/dev/null || { warn "flatpak missing: Heroic not installed"; return 0; }
-  run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
-  run flatpak install -y --noninteractive flathub com.heroicgameslauncher.hgl || warn "Heroic could not be installed"
+  run flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+  run flatpak install --system -y --noninteractive flathub com.heroicgameslauncher.hgl || warn "Heroic could not be installed"
   flatpak_nvidia_runtime
   info "Gaming: Steam launch option  gamemoderun mangohud %command%"
 }
@@ -198,7 +198,7 @@ extras_stage() {
   has_word "$TUX_EXCLUDE" copyq || ensure_clipboard
   ensure_gaming
   if has_word "$TUX_BUNDLES" flatpak && command -v flatpak >/dev/null; then
-    run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+    run flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
     # Let flatpak apps see the GTK theme and our generated colors.
     run flatpak override --system --filesystem=xdg-config/gtk-3.0:ro --filesystem=xdg-config/gtk-4.0:ro \
       --filesystem=/usr/share/themes:ro --filesystem=xdg-config/qt5ct:ro --filesystem=xdg-config/qt6ct:ro \
@@ -220,8 +220,8 @@ flatpak_nvidia_runtime() {
   nv=$(modinfo -k "$kver" -F version nvidia 2>/dev/null || true)
   [[ -n $nv ]] || return 0
   for ext in GL GL32; do
-    flatpak info "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" >/dev/null 2>&1 ||
-      run flatpak install -y --noninteractive flathub "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" ||
+    flatpak info --system "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" >/dev/null 2>&1 ||
+      run flatpak install --system -y --noninteractive flathub "org.freedesktop.Platform.$ext.nvidia-${nv//./-}" ||
       warn "Flatpak NVIDIA $ext runtime $nv not on Flathub yet (sysup installs it later)"
   done
   return 0

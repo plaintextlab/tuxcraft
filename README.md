@@ -183,6 +183,9 @@ Every choice gets Nerd Font icons through a fallback, so the bar and launcher lo
 with the DOS font. Change any time with **Super+Ctrl+F** or `tux-font set dos 13`; the size is the
 first entry of that menu (or `tux-font size 13`). The login screen follows both: the font is
 rendered as a console font (`tux-psf`) and scaled to the screen, so tuigreet uses the same letters.
+So do the boot messages (the init system loads that font first thing; only the kernel's own first
+lines keep its built-in font) and the GRUB menu, which gets the same font as a GRUB font
+(`tux-psf --pf2`) and the theme's colours (`/boot/grub/themes/tuxcraft`, switched with `tux-theme`).
 
 ## What you get
 

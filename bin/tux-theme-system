@@ -1,10 +1,137 @@
 #!/usr/bin/env bash
 # tux-theme-system <theme> — the root-owned half of theming:
-# console (TTY) palette, the tuigreet login screen, Papirus folder colours.
-# tux-theme-system --console-font FILE   the login screen/TTY font (see below)
+# console (TTY) palette, the tuigreet login screen, the GRUB boot menu, Papirus folder colours.
+# tux-theme-system --console-font FILE   the login screen/TTY font, also used for boot messages
+# tux-theme-system --grub-font FILE      the GRUB menu font (a PF2 file made by tux-psf --pf2)
 # wheel users may run it via sudo without a password (see /etc/sudoers.d/20-tuxcraft-theme).
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+
+GRUB_THEME_DIR=/boot/grub/themes/tuxcraft
+
+# set_grub KEY VALUE : set (or add) one /etc/default/grub variable; true when it changed.
+set_grub() {
+  local f=/etc/default/grub before
+  before=$(grep -E "^$1=" "$f" || true)
+  [[ $before == "$1=$2" ]] && return 1
+  if grep -qE "^#?\s*$1=" "$f"; then sed -i -E "s|^#?\s*$1=.*|$1=$2|" "$f"; else echo "$1=$2" >>"$f"; fi
+}
+
+# GRUB boot menu in the theme's colours and the desktop font. theme.txt and the PNG are read
+# at every boot, so a theme switch needs no grub-mkconfig; that only runs when grub.cfg does not
+# load the theme (or the font, once tux-font has made one) yet. Needs the theme's variables.
+grub_theme() {
+  [[ -f /etc/default/grub && -d /boot/grub ]] && command -v grub-mkconfig >/dev/null || return 0
+  local d=$GRUB_THEME_DIR font=$GRUB_THEME_DIR/tuxcraft.pf2 px=16 title changed=0
+  mkdir -p "$d"
+  # Line height of the font (its MAXH section); GRUB's own unicode.pf2 is 16 px.
+  if [[ -f $font ]] && command -v python3 >/dev/null; then
+    px=$(python3 -I - "$font" <<'EOF' 2>/dev/null || echo 16
+import struct, sys
+b = open(sys.argv[1], "rb").read()
+i = 0
+while i + 8 <= len(b):
+    tag, n = b[i:i + 4], struct.unpack(">I", b[i + 4:i + 8])[0]
+    if tag == b"MAXH":
+        print(struct.unpack(">H", b[i + 8:i + 10])[0]); break
+    if tag == b"DATA": break
+    i += 8 + n
+EOF
+)
+    [[ $px =~ ^[0-9]+$ ]] && ((px >= 8 && px <= 64)) || px=16
+  fi
+  # The highlight bar behind the selected entry: GRUB stretches select_c.png across it; the
+  # side pieces (half a line wide) keep the text off its edges.
+  if command -v python3 >/dev/null; then
+    python3 -I -c '
+import sys
+from PIL import Image
+c, d, side = sys.argv[1], sys.argv[2], int(sys.argv[3])
+Image.new("RGB", (8, 8), c).save(d + "/select_c.png")
+for p in "we":
+    Image.new("RGB", (side, 8), c).save(d + "/select_" + p + ".png")' \
+      "$accent" "$d" "$((px / 2))" 2>/dev/null || rm -f "$d"/select_?.png
+  fi
+  title=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-${NAME:-Linux}}")
+  title=${title//\"/}
+  {
+    echo "# tuxcraft boot menu: $name, written by tux-theme-system (changes with tux-theme / tux-font)"
+    echo 'title-text: ""'
+    echo "desktop-color: \"$bg\""
+    echo 'terminal-font: "tuxcraft"'
+    echo 'message-font: "tuxcraft"'
+    echo "message-color: \"$fg\""
+    echo "message-bg-color: \"$bg\""
+    cat <<EOF
+
++ label {
+  top = 14% left = 0 width = 100% height = $((px * 2))
+  align = "center" font = "tuxcraft" color = "$accent"
+  text = "$title"
+}
+
++ boot_menu {
+  left = 20% width = 60% top = 24% height = 52%
+  item_font = "tuxcraft" selected_item_font = "tuxcraft"
+  item_color = "$fg" selected_item_color = "$accent_fg"
+  item_height = $((px * 2)) item_padding = $((px / 2)) item_spacing = $((px / 3))
+  icon_width = 0 icon_height = 0 item_icon_space = 0
+  scrollbar = false
+EOF
+    [[ -f $d/select_c.png ]] && echo '  selected_item_pixmap_style = "select_*.png"'
+    cat <<EOF
+}
+
++ label {
+  id = "__timeout__"
+  top = 80% left = 0 width = 100% height = $((px * 2))
+  align = "center" font = "tuxcraft" color = "$muted"
+  text = "Booting in %d seconds"
+}
+
++ label {
+  top = 88% left = 0 width = 100% height = $((px * 2))
+  align = "center" font = "tuxcraft" color = "$muted"
+  text = "Enter: boot    E: edit    C: command line"
+}
+EOF
+  } >"$d/theme.txt.new" && mv "$d/theme.txt.new" "$d/theme.txt"
+
+  set_grub GRUB_THEME "\"$d/theme.txt\"" && changed=1
+  # Also the font of the command line and the entry editor (and of grub-mkconfig's gfxterm check).
+  [[ -f $font ]] && set_grub GRUB_FONT "\"$font\"" && changed=1
+  local cfg=/boot/grub/grub.cfg
+  if ((changed)) || ! grep -qF "$d/theme.txt" "$cfg" 2>/dev/null ||
+     { [[ -f $font ]] && ! grep -qF tuxcraft.pf2 "$cfg"; } ||
+     { [[ -f $d/select_c.png ]] && ! grep -q 'insmod png' "$cfg"; }; then
+    grub-mkconfig -o "$cfg" >/dev/null 2>&1 || echo "tux-theme-system: grub-mkconfig failed" >&2
+  fi
+}
+
+# Boot messages in the desktop font: the init system loads it long before tux-console, right
+# after the kernel hands over (the kernel's own first lines stay in its built-in font).
+early_console_font() {
+  local f=/etc/tuxcraft/console.psf
+  [[ -f $f ]] || return 0
+  if [[ -d /etc/runit && -f /etc/rc.conf ]]; then
+    # Void: runit's core service 03-console-setup runs setfont "$FONT" on every tty.
+    if grep -qE '^#?\s*FONT=' /etc/rc.conf; then sed -i -E "s|^#?\s*FONT=.*|FONT=\"$f\"|" /etc/rc.conf
+    else echo "FONT=\"$f\"" >>/etc/rc.conf; fi
+  elif [[ -f /etc/default/console-setup ]]; then
+    # Debian: console-setup.service sets FONT (any path) from its cached copy, so refresh that.
+    grep -q '^FONT=' /etc/default/console-setup && sed -i "s|^FONT=.*|FONT=\"$f\"|" /etc/default/console-setup ||
+      echo "FONT=\"$f\"" >>/etc/default/console-setup
+    command -v setupcon >/dev/null && setupcon --save-only >/dev/null 2>&1 || true
+  elif [[ -d /usr/share/kbd/consolefonts ]]; then
+    # Arch: systemd-vconsole-setup reads vconsole.conf. A name in consolefonts/ (not a path) so
+    # mkinitcpio's sd-vconsole hook finds it too; the initramfs picks it up at its next rebuild.
+    install -m644 "$f" /usr/share/kbd/consolefonts/tuxcraft.psf
+    touch /etc/vconsole.conf
+    grep -q '^FONT=' /etc/vconsole.conf && sed -i 's|^FONT=.*|FONT=tuxcraft|' /etc/vconsole.conf ||
+      echo 'FONT=tuxcraft' >>/etc/vconsole.conf
+  fi
+  return 0
+}
 
 # tux-theme-system --console-font FILE: the login screen/TTY font (a PSF2 file made by tux-psf
 # from the desktop font). Installed as /etc/tuxcraft/console.psf, which tux-console loads at boot.
@@ -24,13 +151,32 @@ if [[ ${1:-} == --console-font ]]; then
   if command -v setfont >/dev/null; then
     for t in /dev/tty{1..7}; do setfont -C "$t" /etc/tuxcraft/console.psf 2>/dev/null || true; done
   fi
+  early_console_font
   exit 0
 fi
 
-name=${1:-}
-[[ $name =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system <theme>" >&2; exit 1; }
-tf=/usr/share/tuxcraft/themes/$name.theme
-[[ -f $tf ]] || { echo "Unknown system theme $name (custom themes stay per-user)" >&2; exit 1; }
+if [[ ${1:-} == --grub-font ]]; then
+  f=${2:-}
+  [[ -f $f && ! -L $f ]] || { echo "tux-theme-system: no font file '$f'" >&2; exit 1; }
+  (( $(stat -c %s "$f") < 2097152 )) || { echo "tux-theme-system: $f is too big for a GRUB font" >&2; exit 1; }
+  [[ $(head -c12 "$f" | od -An -tx1 | tr -d ' \n') == 46494c450000000450464632 ]] || { echo "tux-theme-system: $f is not a GRUB (PF2) font" >&2; exit 1; }
+  [[ -d /boot/grub ]] || exit 0
+  mkdir -p "$GRUB_THEME_DIR"
+  install -m644 "$f" "$GRUB_THEME_DIR/tuxcraft.pf2.new" && mv "$GRUB_THEME_DIR/tuxcraft.pf2.new" "$GRUB_THEME_DIR/tuxcraft.pf2"
+  # Re-render theme.txt for the new size, in the colours of the system theme.
+  name=$(cat /etc/tuxcraft/system-theme 2>/dev/null || true)
+  tf=/usr/share/tuxcraft/themes/$name.theme
+  if [[ $name =~ ^[a-z0-9-]+$ && -f $tf ]]; then
+    # shellcheck source=/dev/null
+    . "$tf"; grub_theme
+  fi
+  exit 0
+fi
+
+key=${1:-}
+[[ $key =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system <theme>" >&2; exit 1; }
+tf=/usr/share/tuxcraft/themes/$key.theme
+[[ -f $tf ]] || { echo "Unknown system theme $key (custom themes stay per-user)" >&2; exit 1; }
 # shellcheck source=/dev/null
 . "$tf"
 
@@ -60,4 +206,6 @@ if command -v papirus-folders >/dev/null && [[ -n ${papirus:-} ]]; then
   papirus-folders -C "$papirus" --theme Papirus-Dark >/dev/null 2>&1 || true
   papirus-folders -C "$papirus" --theme Papirus-Light >/dev/null 2>&1 || true
 fi
-echo "$name" >/etc/tuxcraft/system-theme
+grub_theme || true
+# The theme's key (the file name), not its display name: --grub-font finds the theme by it.
+echo "$key" >/etc/tuxcraft/system-theme

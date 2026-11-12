@@ -21,7 +21,8 @@ pkg_refresh() {
     void)
       # Fastest mirror (picked once, then re-applied so repos added since by void-repo-* use it too).
       run bash "$TUX_SRC/bin/tux-mirror" --if-unset || warn "Could not set a Void mirror; using the default"
-      run xbps-install -Sy xbps; run xbps-install -Sy ;;
+      # -u: update xbps if there is a newer one (plain -y prints "ERROR: already installed").
+      run xbps-install -Syu xbps; run xbps-install -Sy ;;
   esac
 }
 
@@ -59,6 +60,9 @@ pkg_install() {
   local p want=()
   for p in "$@"; do
     if has_word "${TUX_EXCLUDE:-}" "$p"; then info "Skipping excluded package $p"; continue; fi
+    # xbps-install prints "ERROR: Package already installed" for each one (on every --update):
+    # leave those out. pacman (--needed) and apt skip them quietly by themselves.
+    [[ $DISTRO == void ]] && pkg_installed "$p" && continue
     if pkg_available "$p"; then want+=("$p"); else PKG_MISSING+=" $p"; warn "Package not available on $DISTRO: $p"; fi
   done
   ((${#want[@]})) || return 0

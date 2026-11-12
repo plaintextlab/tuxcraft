@@ -120,7 +120,7 @@ if command -v flatpak >/dev/null; then
     for ext in GL GL32; do
       ref=org.freedesktop.Platform.$ext.nvidia-${nv//./-}
       flatpak info "$ref" >/dev/null 2>&1 ||
-        flatpak install -y --noninteractive flathub "$ref" >/dev/null 2>&1 || warn "Flatpak $ref is not on Flathub yet"
+        flatpak install --system -y --noninteractive flathub "$ref" >/dev/null 2>&1 || warn "Flatpak $ref is not on Flathub yet"
     done
   fi
 fi
