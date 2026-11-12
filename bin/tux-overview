@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# tux-overview [watch]  — workspace overview (Super+Space): a grid of every workspace with a live-ish
-# thumbnail and the apps on it. Pick one (arrows/mouse/number/typing + Enter) to go there.
+# tux-overview [watch|switch [back]]  — workspace overview (Super+Space): a grid of every workspace
+# with a live-ish thumbnail and the apps on it. Pick one (arrows/mouse/number/typing + Enter) to go there.
 #   watch   keep the thumbnails fresh (tux-autostart runs this): i3/sway hide the windows of other
-#           workspaces, so each thumbnail is the workspace as it last looked on screen.
+#           workspaces, so each thumbnail is the workspace as it last looked on screen. It also
+#           remembers the order workspaces were last used in (for switch).
+#   switch  Alt+Tab like Windows, for workspaces: the same grid, most recently used first. A quick
+#           Alt+Tab goes back to the last workspace; hold Alt and Tab / Shift+Tab to pick, release
+#           Alt to go there, Esc cancels. "back" (Alt+Shift+Tab) starts at the least recent one.
 # Works on i3 (ffmpeg x11grab) and sway (grim). Grid: rofi, themed like every other menu.
 set -uo pipefail
 dir="${XDG_RUNTIME_DIR:-/tmp/tux-$UID}/tux-overview"; mkdir -p "$dir"
 if [[ -n ${SWAYSOCK:-} ]]; then msg=swaymsg; else msg=i3-msg; fi
 SCALE=4   # thumbnails are 1/4 of the screen size
+mru=$dir/mru   # workspace names, most recently focused first
 
 key() { printf '%s' "$1" | md5sum | cut -c1-12; }   # file name for a workspace name
 
@@ -25,8 +30,23 @@ capture() {
   done < <($msg -t get_workspaces | jq -r '.[] | select(.visible) | [.name, .rect.x, .rect.y, .rect.width, .rect.height] | @tsv')
 }
 
+mru_push() {
+  [[ -n $1 ]] || return 0
+  { printf '%s\n' "$1"; grep -vxF -e "$1" "$mru" 2>/dev/null | head -n 50; } >"$mru.tmp"
+  mv -f "$mru.tmp" "$mru"
+}
+
+# Remember the order workspaces get focused in (i3/sway only know the last one).
+mru_track() {
+  mru_push "$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .name')"
+  $msg -t subscribe -m '["workspace"]' 2>/dev/null |
+    jq --unbuffered -r 'select(.change == "focus") | .current.name // empty' |
+    while IFS= read -r name; do mru_push "$name"; done
+}
+
 watch() {
   exec 9>"$dir/watch.lock"; flock -n 9 || exit 0   # one watcher per session
+  mru_track 9>&- &
   capture
   # Capture half a second after things change (lets the open/close animations finish), and
   # every 10 s while nothing happens, so video or a long build still looks current.
@@ -41,9 +61,24 @@ watch() {
   done
 }
 
+# Is Alt held down right now? (X11: asks every keyboard; the master keyboard cannot be asked.)
+alt_held() {
+  local id
+  for id in $(xinput list --short 2>/dev/null | sed -n 's/.*id=\([0-9]*\).*slave  keyboard.*/\1/p'); do
+    xinput query-state "$id" 2>/dev/null | grep -qE 'key\[(64|108)\]=down' && return 0
+  done
+  return 1
+}
+
+go() { $msg workspace "\"$1\"" >/dev/null; }
+
+# show [switch [back]]
 show() {
-  pgrep -x rofi >/dev/null && { pkill -x rofi; exit 0; }   # pressing Super+Space again closes it
-  capture
+  local mode=${1:-} back=${2:-}
+  if [[ -z $mode ]]; then
+    pgrep -x rofi >/dev/null && { pkill -x rofi; exit 0; }   # pressing Super+Space again closes it
+    capture
+  fi
   local -a names labels icons
   local name apps cur i=0 sel=0
   # name<TAB>apps, in workspace order; the scratchpad is not a workspace you visit.
@@ -65,26 +100,76 @@ show() {
   for ((i = 0; i < ${#names[@]}; i++)); do [[ ${names[i]} == "$cur" ]] && sel=$i; done
 
   local n=${#names[@]} cols rows tw
+  local -a kb=()
+  if [[ $mode == switch ]]; then
+    ((n > 1)) || exit 0
+    # Most recently used first: this workspace, the last one, ... then the never-visited ones.
+    local -a order=("$sel") n2=() l2=() i2=()
+    local -A idx=() seen=([$sel]=1)
+    local m
+    for ((i = 0; i < n; i++)); do idx[${names[i]}]=$i; done
+    while IFS= read -r m; do
+      [[ -n $m && -n ${idx[$m]+x} && -z ${seen[${idx[$m]}]+x} ]] || continue
+      order+=("${idx[$m]}"); seen[${idx[$m]}]=1
+    done < <(cat "$mru" 2>/dev/null)
+    for ((i = 0; i < n; i++)); do [[ -n ${seen[$i]+x} ]] || order+=("$i"); done
+    for i in "${order[@]}"; do n2+=("${names[i]}"); l2+=("${labels[i]}"); i2+=("${icons[i]}"); done
+    names=("${n2[@]}") labels=("${l2[@]}") icons=("${i2[@]}")
+    if [[ $back == back ]]; then sel=$((n - 1)); else sel=1; fi
+    # Sway (no key state to ask), or Alt already let go (a quick tap): no grid, just go.
+    if [[ -n ${SWAYSOCK:-} ]] || ! alt_held; then go "${names[sel]}"; exit 0; fi
+    # Tab / Shift+Tab step through (with or without Alt: rofi starts with Alt already down, so it
+    # may not know). Esc cancels.
+    kb=(-kb-element-next 'Tab,Alt+Tab'
+        -kb-element-prev 'ISO_Left_Tab,Shift+ISO_Left_Tab,Alt+ISO_Left_Tab,Alt+Shift+ISO_Left_Tab'
+        -kb-cancel 'Escape,Alt+Escape')
+    # Releasing Alt picks. rofi never saw Alt go down, so it cannot see it come up either: watch
+    # the key here and press Return for it. Let go before rofi showed up (a quick tap): close it
+    # and go to the last workspace.
+    rm -f "$dir/tap"
+    (
+      local ids; ids=$(xinput list --short 2>/dev/null | sed -n 's/.*id=\([0-9]*\).*slave  keyboard.*/\1/p')
+      held() { local id; for id in $ids; do xinput query-state "$id" 2>/dev/null | grep -qE 'key\[(64|108)\]=down' && return 0; done; return 1; }
+      local up=0
+      for _ in $(seq 100); do   # wait (up to ~2.5 s) for the grid to be on screen
+        sleep 0.025
+        held || up=1
+        xdotool search --onlyvisible --class '^rofi$' >/dev/null 2>&1 && break
+      done
+      if ((up)) || ! held; then : >"$dir/tap"; pkill -u "$UID" -x rofi; exit 0; fi
+      while pgrep -u "$UID" -x rofi >/dev/null; do
+        held || { pgrep -u "$UID" -x rofi >/dev/null && xdotool key Return; break; }
+        sleep 0.03
+      done
+    ) &
+  fi
+
   cols=$(( n < 4 ? n : (n <= 6 ? 3 : 4) )); rows=$(( (n + cols - 1) / cols ))
   # Thumbnail width so the grid fills ~80% of the screen width.
   local sw; sw=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .rect.width'); sw=${sw:-1920}
   tw=$(( sw * 80 / 100 / cols - 40 ))
   ((tw > 420)) && tw=420; ((tw < 160)) && tw=160
 
-  local pick
+  local pick prompt=workspaces
+  [[ $mode == switch ]] && prompt="alt+tab"
   pick=$(for ((i = 0; i < n; i++)); do printf '%s\0icon\x1f%s\n' "${labels[i]}" "${icons[i]}"; done |
-    rofi -dmenu -i -show-icons -format i -selected-row "$sel" -p "workspaces" -no-custom \
+    rofi -dmenu -i -show-icons -format i -selected-row "$sel" -p "$prompt" -no-custom "${kb[@]}" \
       -theme-str "window { width: $(( (tw + 40) * cols + 40 ))px; }
                   listview { columns: $cols; lines: $rows; flow: horizontal; fixed-columns: true; spacing: 16px; scrollbar: false; }
                   element { orientation: vertical; padding: 10px; spacing: 8px; border-radius: 6px; }
                   element-icon { size: ${tw}px; horizontal-align: 0.5; }
                   element-text { horizontal-align: 0.5; }
-                  inputbar { children: [prompt, entry]; }") || exit 0
-  [[ -n $pick ]] && $msg workspace "\"${names[pick]}\"" >/dev/null
+                  inputbar { children: [prompt, entry]; }")
+  local rc=$?
+  if ((rc == 0)) && [[ -n $pick ]]; then go "${names[pick]}"
+  elif [[ -e $dir/tap ]]; then go "${names[sel]}"
+  fi
+  rm -f "$dir/tap"
 }
 
 case ${1:-show} in
-  watch) watch ;;
-  show)  show ;;
-  *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  watch)  watch ;;
+  show)   show ;;
+  switch) show switch "${2:-}" ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

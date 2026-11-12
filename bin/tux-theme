@@ -104,7 +104,6 @@ reload_all() {
     pgrep -x polybar >/dev/null && "$HOME/.config/polybar/launch.sh" >/dev/null 2>&1 &
   fi
   pkill -USR1 -x kitty 2>/dev/null || true   # kitty re-reads kitty.conf (+ theme.conf)
-  pgrep -u "$UID" -x alttab >/dev/null && { tux-alttab restart & }   # Alt+Tab colours + font
   if pgrep -x dunst >/dev/null; then
     dunstctl reload 2>/dev/null || { pkill -x dunst; setsid -f dunst >/dev/null 2>&1; }
   fi

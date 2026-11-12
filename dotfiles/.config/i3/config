@@ -17,10 +17,10 @@ include ~/.config/tuxcraft/wm/common.conf
 
 tiling_drag modifier titlebar
 bindsym $mod+Shift+r restart
-#: Alt+Tab (hold Alt)     Switch window like Windows: Tab / Shift+Tab to pick, release Alt
-# Not bound here: alttab (tux-alttab, started by tux-autostart) grabs Alt+Tab itself, and it could
-# not if i3 had the key. Without alttab, tux-autostart writes the fallback included below.
-include ~/.config/tuxcraft/wm/i3-fallback-*.conf
+#: Alt+Tab (hold Alt)     Switch workspace (previews, most recent first; tap = last workspace)
+# Hold Alt: Tab / Shift+Tab pick, releasing Alt goes there, Esc cancels (tux-overview switch).
+bindsym $alt+Tab exec --no-startup-id tux-overview switch
+bindsym $alt+Shift+Tab exec --no-startup-id tux-overview switch back
 #: Super+Shift+Q          Kill a frozen window by clicking it (xkill)
 bindsym $mod+Shift+q exec --no-startup-id xkill
 

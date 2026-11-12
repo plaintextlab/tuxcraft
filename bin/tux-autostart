@@ -74,19 +74,6 @@ case $session in
     elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &
     fi
     "$HOME/.config/polybar/launch.sh"
-    # Windows-style Alt+Tab: alttab grabs the key, so i3 must not bind it. Without alttab (Arch
-    # does not package it), a one-line include gives Alt+Tab = last workspace instead. i3 is
-    # reloaded only when that changes.
-    fb=$HOME/.config/tuxcraft/wm/i3-fallback-alttab.conf
-    if command -v alttab >/dev/null; then
-      [[ -e $fb ]] && { rm -f "$fb"; i3-msg -q reload; }
-      tux-alttab start
-    elif [[ ! -e $fb ]]; then
-      mkdir -p "${fb%/*}"
-      printf '%s\n' '# Written by tux-autostart: alttab is not installed, so Alt+Tab = last workspace.' \
-        'bindsym Mod1+Tab workspace back_and_forth' >"$fb"
-      i3-msg -q reload
-    fi
     ;;
   sway)
     once waybar
