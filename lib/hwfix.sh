@@ -32,6 +32,9 @@ hda_card_pci() {
 #     Measured on this laptop: random noise at -96 dBFS still lets the amp sleep, -90 keeps it on;
 #     a -80 dBFS sine at 50 Hz, 1 kHz or 15 kHz keeps it on too. PipeWire's own dither.noise
 #     (even 11 bits, with or without dither.method) did NOT keep it on.
+#     The speaker volume is applied after the filter (in the codec), so it turns the tone down too:
+#     at 60 % the amp slept again. tux-speaker-tone (started by PipeWire) raises the tone by what
+#     the volume takes away, so the speakers always get about -74 dBFS.
 hwfix_hp_omen_8a44() {
   info "HP OMEN 16 (8A44): mute LED + louder speakers + speaker amp kept awake"
   write_file /usr/lib/firmware/tuxcraft/hda-hp-8a44.fw <<'EOF'
@@ -68,10 +71,13 @@ EOF
   write_file "$TUX_HOME/.config/pipewire/pipewire.conf.d/60-tuxcraft-louder-speakers.conf" <<EOF
 # tuxcraft: louder built-in speakers (written for HP OMEN 16-n0xxx).
 # A look-ahead limiter in front of the speaker output only (WirePlumber smart filter):
-# +6 dB, peaks held at -1 dBFS, so it gets louder without clipping. After it, a 15 kHz tone at
-# -80 dBFS (inaudible) is mixed in: the speaker amp switches off on silence and eats the first
-# word after every pause, and this keeps it awake. Headphones, Bluetooth and HDMI are separate
-# outputs and are not touched. Remove this file to turn it off.
+# +6 dB, peaks held at -1 dBFS, so it gets louder without clipping. After it, a quiet 15 kHz tone
+# is mixed in: the speaker amp switches off on silence and eats the first word after every
+# pause, and this keeps it awake. tux-speaker-tone raises the tone as the volume goes down
+# (the volume is applied after this filter), so the speakers always get about -74 dBFS
+# (inaudible). Headphones, Bluetooth and HDMI are separate outputs and are not touched.
+# Remove this file to turn it off.
+context.exec = [ { path = "/usr/local/bin/tux-speaker-tone" args = "" } ]
 context.modules = [
   { name = libpipewire-module-filter-chain
     args = {
@@ -81,7 +87,7 @@ context.modules = [
         nodes = [
           { type = ladspa name = lim plugin = fast_lookahead_limiter_1913 label = fastLookaheadLimiter
             control = { "Input gain (dB)" = 6.0 "Limit (dB)" = -1.0 "Release time (s)" = 0.1 } }
-          { type = builtin name = tone label = sine control = { "Freq" = 15000.0 "Ampl" = 0.0001 } }
+          { type = builtin name = tone label = sine control = { "Freq" = 15000.0 "Ampl" = 0.0002 } }
           { type = builtin name = mixL label = mixer control = { "Gain 1" = 1.0 "Gain 2" = 1.0 } }
           { type = builtin name = mixR label = mixer control = { "Gain 1" = 1.0 "Gain 2" = 1.0 } }
         ]

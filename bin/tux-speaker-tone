@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# tux-speaker-tone — keep the HP OMEN 16 (8A44) speaker amp's wake tone at a fixed level at the
+# speakers, whatever the volume.
+# The "Speakers (louder)" filter (lib/hwfix.sh) mixes a quiet 15 kHz tone in so the amp never
+# sees silence (it switches off on silence and eats the next first word). The speaker volume is
+# applied after the filter, in the sound chip, so it turns the tone down too; below ~80 % the
+# amp went to sleep again. This raises the tone by exactly what the volume takes away, so what
+# reaches the speakers stays at about -74 dBFS (inaudible) at any volume, up to a cap (-20 dBFS
+# before the volume) that keeps music + tone from clipping; below about 13 % volume the cap wins.
+# Started by PipeWire (context.exec in pipewire.conf.d/60-tuxcraft-louder-speakers.conf) and
+# exits with it.
+base=0.0002 cap=0.1
+filter=tuxcraft.louder-speakers
+ppid=$PPID
+
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/tux-speaker-tone.lock"
+flock -n 9 || exit 0   # one copy only
+
+apply() {
+  local j id db a
+  j=$(pactl -f json list sinks 2>/dev/null) || return
+  id=$(jq -r --arg f "$filter" 'first(.[] | select(.name == $f) | .index) // empty' <<<"$j")
+  db=$(jq -r 'first(.[] | select(.name | endswith("HiFi__Speaker__sink")) | .volume | to_entries | first.value.db) // empty' <<<"$j")
+  [[ -n $id && -n $db ]] || return
+  a=$(awk -v d="${db% dB}" -v b=$base -v c=$cap 'BEGIN {
+        if (d !~ /^-?[0-9.]+$/) { print c; exit }   # -inf (volume 0)
+        a = b / 10 ^ (d / 20); if (a > c) a = c; printf "%.6f", a }')
+  [[ "$id $a" == "${last:-}" ]] && return
+  pw-cli set-param "$id" Props "{ params = [ \"tone:Ampl\" $a ] }" >/dev/null 2>&1 && last="$id $a"
+}
+
+while kill -0 "$ppid" 2>/dev/null; do
+  apply
+  pactl subscribe 2>/dev/null | while read -r line; do
+    [[ $line == *" on sink "* || $line == *" on server"* ]] || continue
+    while read -r -t 0.2 _; do :; done
+    apply
+  done
+  sleep 1   # pipewire-pulse not up yet, or restarting
+done

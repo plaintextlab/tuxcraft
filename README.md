@@ -428,7 +428,7 @@ Windows 11, set to the Linux screen's mode, e.g. 1080p @ 165 Hz). LTSC media nee
 
 | Machine | Fix |
 |---|---|
-| HP OMEN 16-n0xxx (board 8A44, Realtek ALC245) | mute-key LED (the kernel has no quirk for 8A44; it borrows HP board 8A25's (kernel 6.6+), which drives the LED from Realtek coef 0x0b bit 3), and louder built-in speakers: a +6 dB look-ahead limiter on the speaker output only (`~/.config/pipewire/pipewire.conf.d/60-tuxcraft-louder-speakers.conf`) |
+| HP OMEN 16-n0xxx (board 8A44, Realtek ALC245) | mute-key LED (the kernel has no quirk for 8A44; it borrows HP board 8A25's (kernel 6.6+), which drives the LED from Realtek coef 0x0b bit 3), and louder built-in speakers: a +6 dB look-ahead limiter on the speaker output only (`~/.config/pipewire/pipewire.conf.d/60-tuxcraft-louder-speakers.conf`). The speaker amp switches off on silence and drops the first word after every pause, so the same filter mixes in an inaudible 15 kHz tone that `tux-speaker-tone` keeps at the same level at the speakers whatever the volume, and the speakers sleep 30 s after the last sound instead of 5 s (`~/.config/wireplumber/wireplumber.conf.d/60-tuxcraft-speaker-sleep.conf`) |
 
 ## Your own changes
 
