@@ -5,6 +5,22 @@ bleopt exec_errexit_mark=        # starship already shows a failed exit code
 bleopt exec_elapsed_mark=        # ... and how long a slow command took
 bleopt edit_bell=                # no beep, no flash
 bleopt complete_menu_style=align-nowrap
+# Paths that exist keep ble.sh's colours but are not underlined (its defaults, minus underline).
+ble-face -s filename_directory        fg=33
+ble-face -s filename_directory_sticky fg=231,bg=26
+ble-face -s filename_executable       fg=green
+ble-face -s filename_link             fg=teal
+ble-face -s filename_orphan           fg=16,bg=224
+ble-face -s filename_setuid           fg=black,bg=220
+ble-face -s filename_setgid           fg=black,bg=191
+ble-face -s filename_socket           fg=cyan,bg=black
+ble-face -s filename_pipe             fg=lime,bg=black
+ble-face -s filename_character        fg=231,bg=black
+ble-face -s filename_block            fg=yellow,bg=black
+ble-face -s filename_warning          fg=red
+ble-face -s filename_url              fg=blue
+ble-face -s filename_ls_colors        none
+ble-face -s filename_other            none
 # Up/Down: search history for lines starting with what is typed (like .inputrc).
 ble-bind -f up   'history-search-backward hide-status:immediate-accept:empty=history-move:point=end'
 ble-bind -f down 'history-search-forward hide-status:immediate-accept:empty=history-move:point=end'
