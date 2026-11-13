@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# tux-move-latest [FOLDER] — move your newest file (a download, screenshot, recording …) into
+# FOLDER (default: the current one). Thunar runs it from right-click → "Move the latest file here".
+#
+#   tux-move-latest ~/Documents/taxes     move it there
+#   tux-move-latest --dry-run [FOLDER]    only say which file it would move
+#
+# Looks in Downloads, Desktop, Documents, Music, Pictures and Videos (your XDG folders, a few
+# levels deep, which covers tux-capture's Screenshots, Screen Captures and Voice Recordings).
+# Skipped: hidden files and folders, partial downloads (.part, .crdownload, .tmp …), files you
+# do not own, files a program still has open for writing, the wallpaper pack and anything
+# already in FOLDER. An existing file is never overwritten: the moved one becomes "name (2).ext".
+set -euo pipefail
+
+DEPTH=3      # how far below each folder to look
+dry=0
+[[ ${1:-} == --dry-run || ${1:-} == -n ]] && { dry=1; shift; }
+[[ ${1:-} == -h || ${1:-} == --help ]] && { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+dest=${1:-$PWD}
+
+gui() { [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} && ! -t 1 ]]; }
+note() {  # title body [urgency]
+  if gui && command -v notify-send >/dev/null; then notify-send -a files -u "${3:-normal}" "$1" "$2"
+  else printf '%s: %s\n' "$1" "$2"; fi
+}
+fail() { note "Move the latest file" "$*" critical; exit 1; }
+tilde() { printf '%s' "${1/#$HOME/\~}"; }
+
+[[ -d $dest ]] || fail "$(tilde "$dest") is not a folder"
+[[ -w $dest ]] || fail "You cannot write to $(tilde "$dest")"
+dest=$(realpath -- "$dest")
+
+xdg() { local d; d=$(xdg-user-dir "$1" 2>/dev/null) || d=''; [[ -n $d && $d != "$HOME" ]] && echo "$d"; }
+
+# Folders to search (deduplicated, existing ones only).
+roots=()
+add_root() { local r; [[ -d ${1:-} ]] || return 0; r=$(realpath -- "$1")
+  for x in "${roots[@]}"; do [[ $x == "$r" ]] && return 0; done; roots+=("$r"); }
+add_root "$(xdg DOWNLOAD || echo "$HOME/Downloads")"
+add_root "$(xdg DESKTOP || echo "$HOME/Desktop")"
+add_root "$(xdg PICTURES || echo "$HOME/Pictures")"
+add_root "$(xdg VIDEOS || echo "$HOME/Videos")"
+add_root "$(xdg MUSIC || echo "$HOME/Music")"
+add_root "$(xdg DOCUMENTS || echo "$HOME/Documents")"
+((${#roots[@]})) || fail "None of your Downloads, Pictures, Videos … folders exist"
+pics=$(xdg PICTURES || echo "$HOME/Pictures")
+
+# Is any of my processes holding this file open for writing? (/proc fdinfo: flags & 3 != 0)
+open_for_writing() {
+  local f=$1 fd flags pat
+  pat=$(printf '%s' "$f" | sed 's/[][*?\\]/\\&/g')   # -lname takes a glob: escape it
+  while IFS= read -r fd; do
+    flags=$(sed -n 's/^flags:[[:space:]]*//p' "${fd%/fd/*}/fdinfo/${fd##*/}" 2>/dev/null) || continue
+    [[ -n $flags ]] && (( (8#$flags & 3) != 0 )) && return 0
+  done < <(find /proc/[0-9]*/fd -maxdepth 1 -lname "$pat" 2>/dev/null)
+  return 1
+}
+
+# Still downloading or recording?
+busy() {
+  local f=$1 s1 s2
+  for p in "$f.part" "$f.crdownload" "$f.download" "$f.partial"; do [[ -e $p ]] && return 0; done
+  [[ -s ${XDG_RUNTIME_DIR:-/tmp}/tux-record.file && $(cat "${XDG_RUNTIME_DIR:-/tmp}/tux-record.file") == "$f" ]] &&
+    pgrep -u "$UID" -f 'wf-recorder|ffmpeg|gpu-screen-recorder|pw-record' >/dev/null && return 0
+  open_for_writing "$f" && return 0
+  # Changed in the last few seconds: make sure it has stopped growing.
+  if (( $(date +%s) - $(stat -c %Y -- "$f") < 3 )); then
+    s1=$(stat -c %s -- "$f"); sleep 1; s2=$(stat -c %s -- "$f")
+    [[ $s1 != "$s2" ]] && return 0
+  fi
+  return 1
+}
+
+# Newest first: "mtime<TAB>path", NUL-separated.
+candidates() {
+  find "${roots[@]}" -maxdepth "$DEPTH" \
+    \( -name '.*' -o -path "$pics/Wallpapers" \) -prune -o \
+    -type f -user "$UID" \
+    ! -iname '*.part' ! -iname '*.crdownload' ! -iname '*.tmp' ! -iname '*.temp' \
+    ! -iname '*.download' ! -iname '*.partial' ! -iname '*.!qb' ! -iname '*.aria2' \
+    ! -name '*~' -printf '%T@\t%p\0' 2>/dev/null |
+    sort -z -t $'\t' -k1,1 -rn
+}
+
+pick='' skipped=0
+while IFS=$'\t' read -r -d '' _ f; do
+  [[ $(dirname -- "$f") == "$dest" ]] && continue     # already here
+  # An empty file in a download folder is a browser's placeholder for a download in progress.
+  [[ ! -s $f && $f == "${roots[0]}"/* ]] && continue
+  if busy "$f"; then skipped=$((skipped + 1)); continue; fi
+  pick=$f; break
+done < <(candidates)
+
+[[ -n $pick ]] || fail "No recent file found in $(for r in "${roots[@]}"; do printf '%s ' "$(tilde "$r")"; done)"
+
+# Never overwrite: "name.ext" → "name (2).ext", "name (3).ext" …
+name=${pick##*/} base=$name ext=''
+if [[ $name == ?*.* ]]; then base=${name%.*} ext=.${name##*.}
+  case ${base,,} in *.tar) ext=.${base##*.}$ext base=${base%.*} ;; esac
+fi
+target="$dest/$name" n=2
+while [[ -e $target || -L $target ]]; do target="$dest/$base ($n)$ext"; n=$((n + 1)); done
+
+if ((dry)); then echo "would move $(tilde "$pick") → $(tilde "$target")"; exit 0; fi
+mv -n -- "$pick" "$target" || fail "Could not move $(tilde "$pick")"
+[[ -e $pick ]] && fail "Not moved: $(tilde "$target") appeared at the same moment"
+
+msg="$(tilde "$(dirname -- "$pick")") → $(tilde "$dest")"
+[[ $target != "$dest/$name" ]] && msg+=$'\n'"saved as ${target##*/} (a file named $name was already there)"
+((skipped)) && msg+=$'\n'"($skipped newer file(s) still being written were left alone)"
+note "Moved ${name}" "$msg"

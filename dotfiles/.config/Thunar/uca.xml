@@ -12,4 +12,37 @@
 	<startup-notify/>
 	<directories/>
 </action>
+<action>
+	<icon>document-send</icon>
+	<name>Move the latest file here</name>
+	<submenu></submenu>
+	<unique-id>1792921976998965-2</unique-id>
+	<command>tux-move-latest %f</command>
+	<description>Move your newest download, screenshot or recording into this folder</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+</action>
+<action>
+	<icon>drive-harddisk</icon>
+	<name>Drive space</name>
+	<submenu></submenu>
+	<unique-id>1792921976998965-3</unique-id>
+	<command>tux-drives space --menu</command>
+	<description>Used and free space of every drive; pick one to open it</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+</action>
+<action>
+	<icon>audio-volume-muted</icon>
+	<name>Remove audio</name>
+	<submenu></submenu>
+	<unique-id>1792921976998965-4</unique-id>
+	<command>tux-strip-audio %F</command>
+	<description>Save a copy without sound, "name (no audio).ext", next to the original</description>
+	<range></range>
+	<patterns>*</patterns>
+	<video-files/>
+</action>
 </actions>
