@@ -206,7 +206,13 @@ udiskie, gammastep (night light), xdg portals, Papirus icons, adw-gtk3.
 
 **Copying to USB sticks shows the real progress:** USB disks and SD cards may hold at most 16 MiB
 of unwritten data in RAM, so a copy no longer jumps to 100% and then hangs while the data is
-still being written (or the unmount does). Internal disks keep the normal large write cache.
+still being written (or the unmount does). Internal disks start writing at 64 MiB and cap at
+256 MiB, so a big copy never stalls the desktop while gigabytes are flushed at once.
+
+**Stays responsive under load:** zram swap (zstd, half the RAM, at most 8 GiB) with the kernel
+tuned for it, and **earlyoom**, which ends the biggest process when memory runs out instead of
+letting the desktop freeze. Key repeat starts after 220 ms at 40 per second, and window
+animations last 100–160 ms.
 
 **Login screen:** greetd + **tuigreet** — a TUI login that fits a keyboard-driven setup, works with
 X11 and Wayland, systemd and runit, and is coloured by the system theme (the console palette is

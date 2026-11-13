@@ -373,6 +373,7 @@ target_stage() {
     sys_pkgmanager
   fi
   sys_writeback
+  sys_tuning
   # Only now: on a fresh install the user is created by system_stage.
   TUX_HOME=$(getent passwd "$TUX_USER" | cut -d: -f6)
   export TUX_HOME

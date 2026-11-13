@@ -233,15 +233,54 @@ EOF
       ;;
     void) pkg_install zramen; svc_enable zramen ;;
   esac
-  # Prefer RAM over compressed swap only when needed; good default for zram.
+}
+
+# Settings that keep the desktop responsive. Runs on install and on every update, so existing
+# systems get them too; takes effect at the next boot (or at once on an update, for sysctl).
+sys_tuning() {
   mkdir -p /etc/sysctl.d   # absent on a fresh Void base system
-  echo 'vm.swappiness = 100' >/etc/sysctl.d/99-tuxcraft-zram.conf
+  # zram: swap is cheap compressed RAM, so use it freely; read it back one page at a time (no
+  # disk seeks to amortise), and don't evict extra cache after a brief memory shortage.
+  cat >/etc/sysctl.d/99-tuxcraft-zram.conf <<'EOF'
+# tuxcraft: tuned for zram swap (Fedora / Pop!_OS values)
+vm.swappiness = 100
+vm.page-cluster = 0
+vm.watermark_boost_factor = 0
+vm.watermark_scale_factor = 125
+EOF
+  # By default up to 20% of RAM (6 GB with 32 GB) can wait in memory unwritten; flushing that
+  # much at once stalls every program that touches the disk. Write it out early and in small parts.
+  cat >/etc/sysctl.d/99-tuxcraft-writeback.conf <<'EOF'
+# tuxcraft: start writing at 64 MiB of unwritten data, make writers wait at 256 MiB
+vm.dirty_background_bytes = 67108864
+vm.dirty_bytes = 268435456
+EOF
+  if [[ ${TUX_MODE:-} != install ]]; then
+    sysctl -q -p /etc/sysctl.d/99-tuxcraft-zram.conf /etc/sysctl.d/99-tuxcraft-writeback.conf 2>/dev/null || true
+  fi
+
+  # Void's zramen defaults to lz4 at 25% of RAM; match the other distros (zstd, half, max 8 GiB).
+  # Only while its conf is untouched (all comments) or ours, so your own edits are kept.
+  local zc=/etc/sv/zramen/conf
+  if [[ -f $zc ]] && { grep -q '^# tuxcraft' "$zc" || ! grep -qvE '^[[:space:]]*(#|$)' "$zc"; }; then
+    cat >"$zc" <<'EOF'
+# tuxcraft: same zram as on Arch/Debian (applies at the next boot)
+export ZRAM_COMP_ALGORITHM=zstd
+export ZRAM_SIZE=50
+export ZRAM_MAX_SIZE=8192
+EOF
+  fi
+
+  # earlyoom: when RAM and swap are nearly gone, end the biggest process at once instead of
+  # letting the whole desktop freeze for minutes before the kernel's own OOM killer acts.
+  pkg_install earlyoom
+  if [[ $INIT == systemd ]] || [[ -d /etc/sv/earlyoom ]]; then svc_enable earlyoom; fi
 }
 
 # Linux caches writes in RAM (up to ~20% of it) and lets the copy "finish" before the data is on
 # the disk, so a copy to a USB stick races to 100% and then hangs in sync/unmount. Cap the write
 # cache of USB disks and SD cards only (kernel 6.2+ strict per-device limit): file managers then
-# show the real progress, while internal disks keep the large cache that makes them fast.
+# show the real progress. (Internal disks get the system-wide 256 MiB limit from sys_tuning.)
 sys_writeback() {
   mkdir -p /etc/udev/rules.d
   cat >/etc/udev/rules.d/60-tuxcraft-usb-writeback.rules <<'EOF'

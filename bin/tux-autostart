@@ -62,6 +62,8 @@ case $session in
     fi
     command -v autorandr >/dev/null && autorandr --change --default default >/dev/null 2>&1
     command -v numlockx >/dev/null && numlockx on
+    # Key repeat: start after 220 ms, 40 per second (X's default, 660 ms / 25, feels sluggish).
+    xset r rate 220 40
     # Touchpad off while typing, for longer than libinput's own guard (palm between words).
     tux-dwt start
     if (( idle > 0 )); then

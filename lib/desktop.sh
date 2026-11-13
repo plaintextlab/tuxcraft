@@ -194,7 +194,7 @@ deploy_dotfiles() {
 
   # Keyboard layout for sway (X11 reads /etc/X11/xorg.conf.d)
   mkdir -p "$TUX_HOME/.config/sway"
-  printf 'input type:keyboard {\n    xkb_layout %s\n    xkb_numlock enabled\n}\ninput type:touchpad {\n    tap enabled\n    natural_scroll disabled\n    dwt enabled\n}\n' \
+  printf 'input type:keyboard {\n    xkb_layout %s\n    xkb_numlock enabled\n    repeat_delay 220\n    repeat_rate 40\n}\ninput type:touchpad {\n    tap enabled\n    natural_scroll disabled\n    dwt enabled\n}\n' \
     "$TUX_KEYMAP" >"$TUX_HOME/.config/sway/input.conf"
 
   # Remember the choices so tux-theme/tux-font can re-render later.
