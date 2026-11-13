@@ -37,6 +37,7 @@ pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
 pgrep -u "$UID" -f '^python3 .*/tux-winslot' >/dev/null || { tux-winslot & }
 # Thumbnails for the workspace overview (Super+O).
 tux-overview watch &   # exits at once if one is already running
+tux-recent watch &     # programs list for Super+Shift+Z (one per session too)
 # Music daemon for rmpc (folder: tux-music folder).
 command -v mpd >/dev/null && tux-music start
 # First login with printing set up but no printer yet: add the ones found on the network / USB.

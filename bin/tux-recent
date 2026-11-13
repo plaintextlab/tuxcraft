@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+"""tux-recent files|apps|watch|add PATH — reopen what you used lately.
+
+  tux-recent files     menu of recently opened files (Super+Z): films, music, documents,
+                       pictures … newest first. Pick one to open it again in its usual app.
+  tux-recent apps      menu of recently opened programs (Super+Shift+Z); pick one to start it.
+  tux-recent watch     keep the program list (tux-autostart runs this; one per session).
+  tux-recent add PATH  put a file on the list (mpv does this for what it plays).
+
+The file list is the one GTK apps already keep (~/.local/share/recently-used.xbel: Thunar,
+LibreOffice, Mousepad, file dialogs, browser downloads …) plus ~/.local/state/tuxcraft/recent-files.tsv.
+The program list is ~/.local/state/tuxcraft/recent-apps.tsv: the watcher writes a line whenever a
+new window opens in i3 or sway, for programs that have a .desktop launcher.
+"""
+import calendar
+import fcntl
+import json
+import mimetypes
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from urllib.parse import unquote, urlparse
+import xml.etree.ElementTree as ET
+
+HOME = os.path.expanduser("~")
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local/state"), "tuxcraft")
+DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local/share")
+XBEL = os.path.join(DATA_HOME, "recently-used.xbel")
+FILES_LOG = os.path.join(STATE, "recent-files.tsv")
+APPS_LOG = os.path.join(STATE, "recent-apps.tsv")
+MAX_FILES, MAX_APPS = 40, 50
+
+# Windows that are not programs you would reopen: our own popups, menus, bars, notifications.
+SKIP_CLASS = re.compile(r"^(tux-.*|rofi|fuzzel|dunst|polybar|waybar|xdg-desktop-portal.*|"
+                        r"i3bar|swaybar|swaynag|i3-nagbar|picom|nm-applet|udiskie)$", re.I)
+
+
+# --- helpers ------------------------------------------------------------------------------
+
+def tilde(p):
+    return "~" + p[len(HOME):] if p == HOME or p.startswith(HOME + "/") else p
+
+
+def age(ts):
+    s = max(0, int(time.time() - ts))
+    for unit, n in (("d", 86400), ("h", 3600), ("min", 60)):
+        if s >= n:
+            return f"{s // n} {unit} ago"
+    return "just now"
+
+
+def iso_ts(s):
+    """xbel time stamp (2026-11-13T07:45:12.123456Z) -> epoch seconds."""
+    if not s:
+        return 0.0
+    try:
+        base = s.rstrip("Z").split(".")[0]
+        return float(calendar.timegm(time.strptime(base, "%Y-%m-%dT%H:%M:%S")))
+    except ValueError:
+        return 0.0
+
+
+def detach(argv, cwd=None):
+    subprocess.Popen(argv, cwd=cwd or HOME, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def notify(title, body=""):
+    if shutil.which("notify-send"):
+        subprocess.run(["notify-send", "-a", "recent", title, body], check=False)
+    else:
+        print(f"{title}: {body}", file=sys.stderr)
+
+
+def menu(prompt, rows):
+    """rows: [(text, icon)] -> picked index or None. Same backends as tux-menu."""
+    if not rows:
+        return None
+    if os.environ.get("WAYLAND_DISPLAY") and shutil.which("fuzzel"):
+        extra, icons = ["--index"], True
+    elif os.environ.get("DISPLAY") and shutil.which("rofi"):
+        extra, icons = ["-show-icons", "-format", "i"], True
+    else:
+        extra, icons = [], False     # fzf in a terminal: plain lines, matched back by text
+    lines = []
+    for text, icon in rows:
+        text = text.replace("\n", " ")
+        lines.append(f"{text}\0icon\x1f{icon}" if icons and icon else text)
+    cmd = ["tux-menu", prompt] + (["--"] + extra if extra else [])
+    try:
+        r = subprocess.run(cmd, input="\n".join(lines) + "\n", capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
+    out = r.stdout.strip()
+    if r.returncode != 0 or not out:
+        return None
+    if extra:
+        return int(out) if out.isdigit() and int(out) < len(rows) else None
+    texts = [t for t, _ in rows]
+    return texts.index(out) if out in texts else None
+
+
+def lock_log(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def read_tsv(path):
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                ts, _, val = line.rstrip("\n").partition("\t")
+                try:
+                    out.append((float(ts), val))
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def push_tsv(path, value, cap):
+    """Put value first (newest), drop older copies of it, keep at most cap lines."""
+    fd = lock_log(path)
+    try:
+        rows = [(t, v) for t, v in read_tsv(path) if v != value]
+        rows.sort(key=lambda r: -r[0])
+        rows = [(time.time(), value)] + rows[:cap - 1]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(f"{t:.3f}\t{v}\n" for t, v in rows)
+        os.replace(tmp, path)
+    finally:
+        os.close(fd)
+
+
+# --- files --------------------------------------------------------------------------------
+
+def xbel_files():
+    try:
+        root = ET.parse(XBEL).getroot()
+    except (OSError, ET.ParseError):
+        return []
+    out = []
+    for b in root.iter("bookmark"):
+        u = urlparse(b.get("href", ""))
+        if u.scheme != "file":
+            continue
+        ts = max(iso_ts(b.get("modified")), iso_ts(b.get("visited")), iso_ts(b.get("added")))
+        out.append((ts, unquote(u.path)))
+    return out
+
+
+def recent_files():
+    best = {}
+    for ts, p in xbel_files() + read_tsv(FILES_LOG):
+        if ts > best.get(p, -1):
+            best[p] = ts
+    rows = sorted(best.items(), key=lambda kv: -kv[1])
+    return [(p, ts) for p, ts in rows if os.path.isfile(p)][:MAX_FILES]
+
+
+def file_icon(path):
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    major = mime.split("/")[0]
+    if major in ("image", "audio", "video", "text"):
+        return f"{major}-x-generic"
+    return mime.replace("/", "-")
+
+
+def cmd_files():
+    files = recent_files()
+    if not files:
+        notify("No recent files yet", "Files you open in Thunar, mpv, LibreOffice … show up here.")
+        return 0
+    rows = [(f"{os.path.basename(p)}   —   {tilde(os.path.dirname(p))}   ·   {age(ts)}", file_icon(p))
+            for p, ts in files]
+    i = menu("Recent files", rows)
+    if i is None:
+        return 0
+    path = files[i][0]
+    opener = "xdg-open" if shutil.which("xdg-open") else "gio"
+    detach([opener, path] if opener == "xdg-open" else ["gio", "open", path], cwd=os.path.dirname(path))
+    push_tsv(FILES_LOG, path, MAX_FILES * 3)
+    return 0
+
+
+def cmd_add(paths):
+    for p in paths:
+        if "://" in p:
+            continue
+        p = os.path.abspath(os.path.expanduser(p))
+        if os.path.isfile(p):
+            push_tsv(FILES_LOG, p, MAX_FILES * 3)
+    return 0
+
+
+# --- .desktop launchers -------------------------------------------------------------------
+
+def app_dirs():
+    dirs = [os.path.join(DATA_HOME, "applications")]
+    for d in (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":"):
+        if d:
+            dirs.append(os.path.join(d, "applications"))
+    dirs += [os.path.join(DATA_HOME, "flatpak/exports/share/applications"),
+             "/var/lib/flatpak/exports/share/applications"]
+    seen, out = set(), []
+    for d in dirs:
+        r = os.path.realpath(d)
+        if r not in seen and os.path.isdir(r):
+            seen.add(r)
+            out.append(d)
+    return out
+
+
+def read_desktop(path):
+    """[Desktop Entry] keys of a .desktop file (unlocalised), or {} if unreadable."""
+    entry, inside = {}, False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("["):
+                    if inside:
+                        break
+                    inside = line == "[Desktop Entry]"
+                elif inside and "=" in line and not line.startswith("#"):
+                    k, _, v = line.partition("=")
+                    entry.setdefault(k.strip(), v.strip())
+    except OSError:
+        return {}
+    return entry
+
+
+def desktop_index():
+    """{lowercase key: desktop path}; earlier keys of a stronger kind win."""
+    files = {}
+    for d in app_dirs():                       # first dir wins for a desktop id (user overrides)
+        for dp, _, names in os.walk(d):
+            for n in names:
+                if n.endswith(".desktop"):
+                    rel = os.path.relpath(os.path.join(dp, n), d).replace("/", "-")
+                    files.setdefault(rel, os.path.join(dp, n))
+    strong, ids, weak = {}, {}, {}
+    for did, path in files.items():
+        e = read_desktop(path)
+        if e.get("Type", "Application") != "Application" or e.get("Hidden") == "true" or "Exec" not in e:
+            continue
+        stem = did[:-len(".desktop")].lower()
+        if e.get("StartupWMClass"):
+            strong.setdefault(e["StartupWMClass"].lower(), path)
+        ids.setdefault(stem, path)
+        ids.setdefault(stem.split(".")[-1], path)
+        try:
+            argv0 = os.path.basename(shlex.split(e["Exec"])[0]).lower()
+        except (ValueError, IndexError):
+            argv0 = ""
+        if argv0 and argv0 not in ("flatpak", "env", "sh", "bash", "snap"):
+            weak.setdefault(argv0, path)
+        if e.get("Icon") and "/" not in e["Icon"]:
+            weak.setdefault(e["Icon"].lower(), path)
+    return strong, ids, weak
+
+
+def find_desktop(cls, index):
+    c = cls.lower()
+    tries = [c, re.sub(r"[-_ ]?[\d.]+$", "", c)]
+    for table in index:
+        for t in tries:
+            if t and t in table:
+                return table[t]
+    return None
+
+
+def launch(path):
+    e = read_desktop(path)
+    try:
+        argv = shlex.split(e.get("Exec", ""))
+    except ValueError:
+        return False
+    # Field codes (%f %U %i …) are for files and icons; none are passed here. %% is a literal %.
+    argv = [a.replace("%%", "\0") for a in argv]
+    argv = [re.sub(r"%[a-zA-Z]", "", a).replace("\0", "%") for a in argv]
+    argv = [a for a in argv if a]
+    if not argv:
+        return False
+    if e.get("Terminal") == "true":
+        argv = ["tux-term", "-e"] + argv
+    cwd = e.get("Path") or None
+    try:
+        detach(argv, cwd=cwd if cwd and os.path.isdir(cwd) else None)
+    except OSError:
+        return False
+    return True
+
+
+def cmd_apps():
+    rows, apps = [], []
+    for ts, path in sorted(read_tsv(APPS_LOG), key=lambda r: -r[0]):
+        e = read_desktop(path)
+        if not e.get("Exec"):
+            continue
+        apps.append((path, e))
+        rows.append((f"{e.get('Name', os.path.basename(path))}   ·   {age(ts)}", e.get("Icon", "")))
+    if not rows:
+        notify("No recent programs yet", "Programs you open appear here (tux-recent watch records them).")
+        return 0
+    i = menu("Recent programs", rows)
+    if i is None:
+        return 0
+    path, e = apps[i]
+    if not launch(path):
+        notify("Could not start", e.get("Name", path))
+        return 1
+    push_tsv(APPS_LOG, path, MAX_APPS)
+    return 0
+
+
+# --- watcher ------------------------------------------------------------------------------
+
+def window_class(event):
+    if event.get("change") != "new":
+        return None
+    c = event.get("container") or {}
+    return c.get("app_id") or (c.get("window_properties") or {}).get("class")
+
+
+def events(stream):
+    """JSON documents from an i3/sway subscribe stream (one per line, or pretty-printed)."""
+    dec, buf = json.JSONDecoder(), ""
+    for chunk in iter(lambda: stream.readline(), ""):
+        buf += chunk
+        while True:
+            buf = buf.lstrip()
+            if not buf:
+                break
+            try:
+                obj, end = dec.raw_decode(buf)
+            except json.JSONDecodeError:
+                break                          # incomplete: wait for more
+            buf = buf[end:]
+            yield obj
+
+
+def record(cls, index):
+    if not cls or SKIP_CLASS.match(cls):
+        return None
+    path = find_desktop(cls, index)
+    if path:
+        push_tsv(APPS_LOG, path, MAX_APPS)
+    return path
+
+
+def cmd_watch():
+    sway = bool(os.environ.get("SWAYSOCK"))
+    msg = ["swaymsg", "-r"] if sway else ["i3-msg"]
+    run = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/tux-{os.getuid()}"
+    os.makedirs(run, exist_ok=True)
+    lock = open(os.path.join(run, "tux-recent.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 0                               # one watcher per session already runs
+    index, built = desktop_index(), time.time()
+    unknown = set()                            # classes without a launcher (games, popups …)
+    while True:
+        p = subprocess.Popen(msg + ["-t", "subscribe", "-m", '["window"]'], stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True)
+        for ev in events(p.stdout):
+            if not isinstance(ev, dict):
+                continue
+            cls = window_class(ev)
+            if not cls:
+                continue
+            if time.time() - built > 600:      # pick up newly installed programs
+                index, built = desktop_index(), time.time()
+            if cls in unknown:
+                continue
+            if record(cls, index) is None and not SKIP_CLASS.match(cls):
+                index, built = desktop_index(), time.time()   # maybe just installed: retry once
+                if record(cls, index) is None:
+                    unknown.add(cls)
+        p.wait()
+        # The stream ends when i3 restarts (Super+Shift+R) or the session ends: reconnect only
+        # while the window manager still answers.
+        time.sleep(1)
+        alive = subprocess.run(msg + ["-t", "get_version"], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL).returncode == 0
+        if not alive:
+            return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "files"
+    if cmd == "files":
+        return cmd_files()
+    if cmd == "apps":
+        return cmd_apps()
+    if cmd == "watch":
+        return cmd_watch()
+    if cmd == "add":
+        return cmd_add(argv[2:])
+    if cmd in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    print(f"tux-recent: unknown command '{cmd}' (try --help)", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

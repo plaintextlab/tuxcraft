@@ -351,6 +351,7 @@ dead SSD — that is what `tux-backup` is for.
 | Super+O | window switcher | Super+Tab / Shift+Tab | next / previous workspace |
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
 | Super+T | notes | Super+A | web apps |
+| Super+Z | **recent files** (films, music, documents, pictures …; pick one to reopen it) | Super+Shift+Z | **recent programs** (pick one to start it again) |
 | Super+Alt+Tab / +Shift | next / previous window in this workspace | Alt+Tab (hold Alt) | **workspace switcher**, most recent first (tap: last workspace) |
 | Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
 
@@ -362,6 +363,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-update` | update tuxcraft itself (tools, configs, fixes) with your saved choices; same as the `--update` one-liner. Also in the System menu → Update tuxcraft |
 | `tux-snap` | list / create / diff / restore a file / rollback / clean |
 | `tux-backup [mountpoint]` | backup to an external drive |
+| `tux-recent files\|apps` | menus behind Super+Z / Super+Shift+Z. Files come from the list GTK apps keep (`~/.local/share/recently-used.xbel`: Thunar, LibreOffice, Mousepad, file dialogs, browser downloads) plus what mpv plays; programs are recorded by `tux-recent watch` (started at login) whenever a window opens, for every app with a launcher |
 | `tux-drives [list\|on\|off NAME]` | choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
