@@ -65,6 +65,7 @@ licence; for CC BY-SA images the graded version is shared under the same licence
 | `foggy-day-thung-salaeng-luang.jpg` | [Foggy day Thung Salaeng Luang](https://commons.wikimedia.org/wiki/File:Foggy_day_Thung_Salaeng_Luang.jpg) | BerryJ | CC BY-SA 4.0 |
 | `foggy-sunset-view-from-moos-mountain-baden-w-rtt.jpg` | [Foggy sunset view from Moos mountain, Baden-Württemberg, Germany](https://commons.wikimedia.org/wiki/File:Foggy_sunset_view_from_Moos_mountain,_Baden-W%C3%BCrttemberg,_Germany.jpg) | Thomas Heins from Friesenheim, Deutschland | CC BY 4.0 |
 | `bergtocht-van-churwalden-mittelberg-1500-meter-v.jpg` | [Bergtocht van Churwalden Mittelberg (1500 meter) via Ranculier en Praden naar Tschiertschen 005](https://commons.wikimedia.org/wiki/File:Bergtocht_van_Churwalden_Mittelberg_(1500_meter)_via_Ranculier_en_Praden_naar_Tschiertschen_005.jpg) | Agnes Monkelbaan | CC BY-SA 4.0 |
+| `tatoosh-range-wa-mrnp1.jpg` | [Tatoosh Range WA MRNP1](https://commons.wikimedia.org/wiki/File:Tatoosh_Range_WA_MRNP1.jpg) | Acroterion | CC BY-SA 4.0 |
 
 ## nord
 
@@ -90,3 +91,5 @@ licence; for CC BY-SA images the graded version is shared under the same licence
 |---|---|---|---|
 | `2024-11-17-lower-manhattan-0593.jpg` | [2024-11-17-Lower Manhattan-0593](https://commons.wikimedia.org/wiki/File:2024-11-17-Lower_Manhattan-0593.jpg) | Superbass | CC BY-SA 4.0 |
 | `perth-au-elizabeth-quay-bridge-2019-0346-8-crop.jpg` | [Perth (AU), Elizabeth Quay Bridge -- 2019 -- 0346-8 (crop 2)](https://commons.wikimedia.org/wiki/File:Perth_(AU),_Elizabeth_Quay_Bridge_--_2019_--_0346-8_(crop_2).jpg) | Dietmar Rabich | CC BY-SA 4.0 |
+| `tokyo-tower-minato-city.jpg` | [Tokyo Tower, Minato City](https://commons.wikimedia.org/wiki/File:Tokyo_Tower,_Minato_City.jpg) | David Kernan | CC BY 4.0 |
+| `at-new-york-city-2025-001-hudson-yards-skyline-n.jpg` | [At New York City 2025 001 - Hudson Yards skyline, New York, at night](https://commons.wikimedia.org/wiki/File:At_New_York_City_2025_001_-_Hudson_Yards_skyline,_New_York,_at_night.jpg) | Photograph by Mike Peel (www.mikepeel.net). | CC BY-SA 4.0 |
