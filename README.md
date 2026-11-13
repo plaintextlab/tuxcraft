@@ -284,7 +284,17 @@ warm and how much of it is in RAM.
 It stays off after the next login; `tux-warm on` turns it back on. Idle server modes close at once;
 one that still holds a terminal or Thunar window closes with that window.
 
-**Files:** Thunar (right-click → Open Terminal Here), yazi in the terminal.
+**Files:** Thunar, yazi in the terminal. Thunar's right-click menu adds:
+- **Open Terminal Here**.
+- **Move the latest file here** (empty area of a folder): moves your newest download, screenshot or
+  recording into that folder. Hidden files, partial downloads, files still being written and the
+  wallpaper pack are skipped; an existing file is never overwritten (the moved one becomes `name (2).ext`).
+- **Remove audio** (video files): saves a copy without sound as `name (no audio).ext`, losslessly
+  (`ffmpeg -c copy`, video and subtitles kept). The original is left alone.
+- **Drive space**: a used/free bar for every mounted drive, like Explorer's "This PC"; pick one to open
+  it. Thunar itself cannot draw bars in its side pane. It shows the free space of the current drive in
+  the status bar (nothing selected), a usage bar in Properties (right-click a drive), and used/free in
+  the side-pane tooltip.
 **TUI apps:** yazi (files), btop, lazygit, wifitui (Wi-Fi; nmtui for wired/VPN), bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
 fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, rmpc, cava.
 
@@ -362,7 +372,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-update` | update tuxcraft itself (tools, configs, fixes) with your saved choices; same as the `--update` one-liner. Also in the System menu → Update tuxcraft |
 | `tux-snap` | list / create / diff / restore a file / rollback / clean |
 | `tux-backup [mountpoint]` | backup to an external drive |
-| `tux-drives [list\|on\|off NAME]` | choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
+| `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# tux-strip-audio VIDEO… — copy each video without its sound. Thunar runs it from
+# right-click → "Remove audio" on video files.
+#
+# The copy is lossless (ffmpeg -c copy: no re-encoding, so it takes seconds) and keeps every
+# video and subtitle track; only the audio tracks go. It is saved next to the original as
+# "name (no audio).ext" (or "name (no audio 2).ext" …); the original is never touched.
+set -uo pipefail
+
+[[ ${1:-} == -h || ${1:-} == --help || $# -eq 0 ]] && { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+command -v ffmpeg >/dev/null || { echo "tux-strip-audio: ffmpeg is not installed" >&2; exit 1; }
+
+gui() { [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} && ! -t 1 ]] && command -v notify-send >/dev/null; }
+nid=''  # one notification that each step replaces (libnotify ≥ 0.7.9; older ones just stack)
+note() {  # title body [urgency]
+  if ! gui; then printf '%s: %s\n' "$1" "$2"; return; fi
+  local id
+  id=$(notify-send -a video -i video-x-generic -u "${3:-normal}" -p ${nid:+-r "$nid"} "$1" "$2" 2>/dev/null) ||
+    { notify-send -a video -u "${3:-normal}" "$1" "$2"; return; }
+  nid=$id
+}
+tilde() { printf '%s' "${1/#$HOME/\~}"; }
+
+audio_tracks() { ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 -- "$1" 2>/dev/null | grep -c .; }
+
+# out_name FILE → "dir/name (no audio).ext", numbered when that already exists.
+out_name() {
+  local f=$1 dir name base ext o n=2
+  dir=$(dirname -- "$f") name=${f##*/} base=$name ext=''
+  [[ $name == ?*.* ]] && { base=${name%.*}; ext=.${name##*.}; }
+  o="$dir/$base (no audio)$ext"
+  while [[ -e $o || -L $o ]]; do o="$dir/$base (no audio $n)$ext"; n=$((n + 1)); done
+  printf '%s' "$o"
+}
+
+ok=0 failed=0 i=0 total=$# last='' errs=''
+for f in "$@"; do
+  i=$((i + 1))
+  name=${f##*/}
+  if [[ ! -f $f ]]; then failed=$((failed + 1)); errs+="$name: not a file"$'\n'; continue; fi
+  if [[ $(audio_tracks "$f") == 0 ]]; then
+    errs+="$name: has no audio already"$'\n'; failed=$((failed + 1)); continue
+  fi
+  out=$(out_name "$f")
+  if [[ ! -w $(dirname -- "$f") ]]; then failed=$((failed + 1)); errs+="$name: folder is read-only"$'\n'; continue; fi
+  note "Removing audio ($i/$total)" "$name"
+  # Write to a hidden temporary file first so a half-written copy never looks finished.
+  ext=''; [[ $name == ?*.* ]] && ext=.${name##*.}
+  tmp="$(dirname -- "$out")/.tux-strip-audio.$$.$i$ext"
+  log=$(ffmpeg -nostdin -hide_banner -loglevel error -y -i "$f" \
+          -map 0 -map -0:a -c copy -map_metadata 0 "$tmp" 2>&1)
+  rc=$?
+  if ((rc != 0)); then
+    # Some containers (MP4 timecode/data tracks, odd attachments) refuse "-map 0": keep just
+    # video and subtitles then.
+    log=$(ffmpeg -nostdin -hide_banner -loglevel error -y -i "$f" \
+            -map 0:v -map '0:s?' -c copy -map_metadata 0 "$tmp" 2>&1)
+    rc=$?
+  fi
+  if ((rc == 0)) && [[ -s $tmp ]] && mv -n -- "$tmp" "$out" && [[ ! -e $tmp ]]; then
+    ok=$((ok + 1)); last=$out
+  else
+    rm -f -- "$tmp"; failed=$((failed + 1))
+    errs+="$name: ${log##*$'\n'}"$'\n'
+  fi
+done
+
+errs=${errs%$'\n'}
+if ((failed == 0)); then
+  if ((ok == 1)); then note "Audio removed" "Saved as $(tilde "$last")"
+  else note "Audio removed" "$ok videos copied without sound"; fi
+elif ((ok == 0)); then
+  note "Removing audio failed" "$errs" critical; exit 1
+else
+  note "Audio removed from $ok of $total" "$errs" critical; exit 1
+fi

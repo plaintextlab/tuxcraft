@@ -4,6 +4,8 @@
 #   tux-drives [--menu]            toggle drives in a menu (System menu → Drives)
 #   tux-drives list                show every drive and whether it automounts
 #   tux-drives on|off NAME|UUID    switch one drive (label, /dev/sdXN or UUID)
+#   tux-drives space [--menu]      used/free bar for every mounted drive (--menu: pick one to
+#                                  open it in Thunar; Thunar right-click → "Drive space")
 #
 # Internal drives get an /etc/fstab entry (nofail: a missing or broken disk never stops the
 # boot) and are mounted at boot, before login, under /media/<label>. Thunar still shows them.
@@ -213,6 +215,47 @@ external_set() {  # uuid on|off
   else { udiskie_ids; echo "$1"; } | udiskie_write; fi
 }
 
+# --- free space -------------------------------------------------------------------------
+
+# Mounted drives worth showing: the system disk, /home if separate, and data drives under
+# /media, /run/media and /mnt. One line each: target|label|size|used|avail|percent.
+space_scan() {
+  local src size used avail tgt seen=' ' label
+  while read -r src size used avail tgt; do
+    case $tgt in /|/home|/media/*|/run/media/*|/mnt/*) ;; *) continue ;; esac
+    [[ $seen == *" $src "* ]] && continue            # btrfs subvolumes of one disk: once
+    seen+="$src "
+    [[ $size =~ ^[0-9]+$ ]] && (( size > 0 )) || continue
+    case $tgt in /) label=System ;; /home) label=Home ;; *) label=${tgt##*/} ;; esac
+    printf '%s|%s|%s|%s|%s|%s\n' "$tgt" "$label" "$size" "$used" "$avail" $(( (size - avail) * 100 / size ))
+  done < <(df -B1 --output=source,size,used,avail,target -x tmpfs -x devtmpfs -x efivarfs \
+             -x squashfs -x overlay -x ramfs 2>/dev/null | tail -n +2 | sort -k5)
+}
+human() { numfmt --to=iec --suffix=B --format='%.1f' "$1" 2>/dev/null || echo "$1 B"; }
+
+space_lines() {  # one bar per drive, like Explorer's "This PC"
+  local tgt label size used avail pct cells=20 fill bar any=0 c
+  while IFS='|' read -r tgt label size used avail pct; do
+    any=1; fill=$(( (pct * cells + 50) / 100 )) bar=''
+    for ((c = 0; c < cells; c++)); do if ((c < fill)); then bar+='█'; else bar+='░'; fi; done
+    printf '%s %-14.14s %s %3d%%  %s free of %s   ‹%s›\n' "$( ((pct >= 90)) && echo 󰀦 || echo 󰋊 )" \
+      "$label" "$bar" "$pct" "$(human "$avail")" "$(human "$size")" "$tgt"
+  done < <(space_scan)
+  ((any)) || say "no mounted drives found"
+}
+
+cmd_space() {
+  if [[ ${1:-} == --menu ]]; then
+    local pick
+    pick=$(space_lines | tux-menu "Drive space") || return 0
+    [[ $pick == *‹*› ]] || return 0
+    pick=${pick##*‹}; pick=${pick%›*}
+    if command -v thunar >/dev/null; then setsid -f thunar "$pick" >/dev/null 2>&1; else xdg-open "$pick"; fi
+  else
+    space_lines | sed 's/   ‹.*›$//'
+  fi
+}
+
 # --- user-facing --------------------------------------------------------------------------
 
 as_root() {  # run "tux-drives internal …" as root: passwordless sudo rule, else a terminal
@@ -255,8 +298,9 @@ cmd_menu() {
 case ${1:---menu} in
   --menu|menu) cmd_menu ;;
   list) cmd_list ;;
+  space) shift; cmd_space "$@" ;;
   on|off) [[ $# -eq 2 ]] || die "usage: tux-drives $1 NAME|UUID"; cmd_set "$1" "$2" ;;
   internal) shift; cmd_internal "$@" ;;
-  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$1' (try --help)" ;;
 esac
