@@ -107,7 +107,9 @@ reload_all() {
   if pgrep -x dunst >/dev/null; then
     dunstctl reload 2>/dev/null || { pkill -x dunst; setsid -f dunst >/dev/null 2>&1; }
   fi
-  [[ $WALLPAPER == theme ]] && tux-wallpaper theme >/dev/null 2>&1 || true
+  # A new theme brings a wallpaper from its folder (~/Pictures/Wallpapers/<theme>); the
+  # gradient still follows the palette when that is the wallpaper.
+  if [[ ${THEME_CHANGED:-0} == 1 || $WALLPAPER == theme ]]; then tux-wallpaper for-theme >/dev/null 2>&1 || true; fi
   # Firefox: colours and fonts into every profile. It reads them at start, so say so if it runs.
   local ff_running=0
   if command -v tux-firefox >/dev/null && tux-firefox apply >/dev/null 2>&1; then
@@ -130,7 +132,7 @@ menu() {
 
 case ${1:-} in
   set)      theme_file "${2:?theme name}" >/dev/null || { echo "Unknown theme '$2'. Try: tux-theme list" >&2; exit 1; }
-            THEME=$2; state_set THEME "$2"; render; reload_all ;;
+            THEME=$2; state_set THEME "$2"; THEME_CHANGED=1; render; reload_all ;;
   apply)    render; reload_all ;;
   list)     list_themes ;;
   current)  echo "$THEME" ;;

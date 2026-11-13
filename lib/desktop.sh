@@ -239,6 +239,19 @@ wallpapers_stage() {
     fi
     rm -rf "$t"
   fi
+  # Wallpapers for each colour theme, from the repo: ~/Pictures/Wallpapers/<theme>/. Files
+  # copied once are listed, so one you deleted does not come back with the next update.
+  local src="$TUX_SHARE/assets/wallpapers" seen="$TUX_HOME/.local/state/tuxcraft/wallpapers-copied" f rel
+  if [[ -d $src ]]; then
+    mkdir -p "${seen%/*}"; touch "$seen"
+    while IFS= read -r -d '' f; do
+      rel=${f#"$src"/}
+      grep -qxF -- "$rel" "$seen" && continue
+      [[ -e $dir/$rel ]] || install -D -m644 "$f" "$dir/$rel"
+      echo "$rel" >>"$seen"
+    done < <(find "$src" -mindepth 2 -type f -iname '*.jpg' -print0)
+    chown "$TUX_USER:" "${seen%/*}" "$seen"
+  fi
   chown -R "$TUX_USER:" "$TUX_HOME/Pictures"
 }
 

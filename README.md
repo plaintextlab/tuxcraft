@@ -295,6 +295,8 @@ one that still holds a terminal or Thunar window closes with that window.
   it. Thunar itself cannot draw bars in its side pane. It shows the free space of the current drive in
   the status bar (nothing selected), a usage bar in Properties (right-click a drive), and used/free in
   the side-pane tooltip.
+- **Set as wallpaper** (one image).
+
 **TUI apps:** yazi (files), btop, lazygit, wifitui (Wi-Fi; nmtui for wired/VPN), bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
 fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, rmpc, cava.
 
@@ -304,6 +306,13 @@ fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdee
 GTK 3 (adw-gtk3), GTK 4/libadwaita, **Qt 5/6 (qt5ct/qt6ct, Fusion + the same palette, so Qt and
 GTK apps match)**, btop, micro, starship, fzf, zathura, swaylock, the wallpaper, the login screen
 and the TTY. Switch with **Super+Ctrl+T** or `tux-theme set nord`.
+
+**Wallpapers per theme:** `~/Pictures/Wallpapers/<theme>/` (gruvbox, nord, …) holds four photos
+for each theme, from Wikimedia Commons and colour-graded toward its palette (authors and licences:
+[`assets/wallpapers/CREDITS.md`](assets/wallpapers/CREDITS.md)). Switching theme puts up one of
+its wallpapers; **Super+Shift+W** changes to another from the same theme. Drop your own images in
+a theme's folder and they join its rotation; a theme with an empty folder gets a gradient in its
+colours. The installer copies the wallpapers on a new machine; one you delete stays deleted.
 
 **Firefox** follows too (`tux-firefox`, run by every theme or font change): tabs, toolbar,
 address bar, menus and the new-tab page take the palette, with square corners on menus,

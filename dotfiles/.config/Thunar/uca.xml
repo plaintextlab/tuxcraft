@@ -45,4 +45,15 @@
 	<patterns>*</patterns>
 	<video-files/>
 </action>
+<action>
+	<icon>preferences-desktop-wallpaper</icon>
+	<name>Set as wallpaper</name>
+	<submenu></submenu>
+	<unique-id>1792921976998965-5</unique-id>
+	<command>tux-wallpaper set %f</command>
+	<description>Use this image as the desktop wallpaper</description>
+	<range>1-1</range>
+	<patterns>*.jpg;*.jpeg;*.png;*.webp;*.JPG;*.JPEG;*.PNG;*.WEBP</patterns>
+	<image-files/>
+</action>
 </actions>

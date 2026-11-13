@@ -1,12 +1,26 @@
 #!/usr/bin/env bash
-# tux-wallpaper set <file> | random | theme | restore | --menu
-# Wallpapers live in ~/Pictures/Wallpapers. "theme" generates a gradient in the current palette.
+# tux-wallpaper set <file> | random | for-theme | theme | restore | --menu
+# Wallpapers live in ~/Pictures/Wallpapers, one folder per colour theme (gruvbox/, nord/ …).
+#   set FILE    use this image (Thunar: right-click an image → Set as wallpaper)
+#   random      another wallpaper from the current theme's folder (Super+Shift+W)
+#   for-theme   a wallpaper from the current theme's folder; the theme gradient when it is
+#               empty (tux-theme runs this when you switch themes)
+#   theme       a gradient generated in the current palette
+#   restore     show the saved choice again (at login)
+#   --menu      pick one: the current theme's wallpapers first, then the rest
+# Put your own images in a theme's folder and they join its rotation.
 DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Wallpapers"
 STATE="$HOME/.config/tuxcraft/state"
 GEN="$HOME/.local/share/tuxcraft/wallpapers"
 mkdir -p "$DIR" "$GEN"
 
 state_set() { touch "$STATE"; grep -q '^WALLPAPER=' "$STATE" && sed -i "s|^WALLPAPER=.*|WALLPAPER=\"$1\"|" "$STATE" || echo "WALLPAPER=\"$1\"" >>"$STATE"; }
+current_theme() { (. "$STATE" 2>/dev/null; echo "${THEME:-default}"); }
+current_wall() { (. "$STATE" 2>/dev/null; echo "${WALLPAPER:-theme}"); }
+
+images() {  # images under the given folders (follows symlinks), one per line
+  find -L "$@" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) 2>/dev/null
+}
 
 show() {
   local f=$1
@@ -17,10 +31,12 @@ show() {
   fi
 }
 
+use() { show "$1"; state_set "$1"; }
+
 theme_wall() {
   . "$HOME/.config/tuxcraft/colors.sh"
-  local t; t=$(. "$STATE" 2>/dev/null; echo "${THEME:-default}")
-  local f="$GEN/$t.png" im
+  local t f im; t=$(current_theme)
+  f="$GEN/$t.png"
   if [[ ! -f $f ]]; then
     im=$(command -v magick || command -v convert) || { echo "imagemagick missing" >&2; return 1; }
     "$im" -size 2560x1440 radial-gradient:"$bg_alt"-"$bg_dark" \
@@ -30,21 +46,40 @@ theme_wall() {
   echo "$f"
 }
 
+# A random image from the current theme's folder, not the one showing now. Empty if none.
+pick_theme_image() {
+  local d cur
+  d="$DIR/$(current_theme)"; cur=$(current_wall)
+  [[ -d $d ]] || return 0
+  images "$d" | grep -vxF -e "$cur" | shuf -n1 | grep . || images "$d" | shuf -n1
+}
+
 case ${1:-restore} in
-  set)    [[ -f $2 ]] || { echo "No such file: $2" >&2; exit 1; }
-          f=$(readlink -f "$2"); show "$f"; state_set "$f" ;;
-  random) f=$(find -L "$DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) | shuf -n1)
-          [[ -n $f ]] || { notify-send "No wallpapers in $DIR"; exit 1; }
-          show "$f"; state_set "$f" ;;
+  set)    [[ -f ${2:-} ]] || { echo "No such file: ${2:-}" >&2; exit 1; }
+          use "$(readlink -f "$2")" ;;
+  random) f=$(pick_theme_image)
+          if [[ -z $f ]]; then
+            notify-send "Wallpaper" "No wallpapers in ${DIR/#$HOME/\~}/$(current_theme); add some there"
+            exit 1
+          fi
+          use "$f" ;;
+  for-theme)
+          f=$(pick_theme_image)
+          if [[ -n $f ]]; then use "$f"; else f=$(theme_wall) && show "$f"; state_set theme; fi ;;
   theme)  f=$(theme_wall) && show "$f"; state_set theme ;;
   restore)
-          w=$(. "$STATE" 2>/dev/null; echo "${WALLPAPER:-theme}")
+          w=$(current_wall)
           if [[ $w == theme || ! -f $w ]]; then f=$(theme_wall) && show "$f"; else show "$w"; fi ;;
   --menu)
-          pick=$( { echo "󰸉  Theme gradient"; echo "  Random"; find -L "$DIR" -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) -printf '%f\n' | sort; } | tux-menu wallpaper) || exit 0
+          t=$(current_theme)
+          # "folder/name" for each image, the current theme's first.
+          list=$( { images "$DIR/$t" | sort; images "$DIR" | grep -v "^$DIR/$t/" | sort; } | sed "s|^$DIR/||")
+          pick=$( { echo "󰸉  Theme gradient"; echo "  Random ($t)"; printf '%s\n' "$list"; } | grep . | tux-menu wallpaper) || exit 0
           case $pick in
             *"Theme gradient") exec "$0" theme ;;
-            *Random) exec "$0" random ;;
-            *) exec "$0" set "$(find -L "$DIR" -type f -name "$pick" | head -n1)" ;;
+            *"Random ("*) exec "$0" random ;;
+            *) [[ -f $DIR/$pick ]] && exec "$0" set "$DIR/$pick" ;;
           esac ;;
+  -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unknown command '$1' (try --help)" >&2; exit 1 ;;
 esac
