@@ -3,6 +3,7 @@
 t="tux-term --class tux-float -e" T="tux-term --class tux-float-big -e"
 vm='' gpu=''; [[ -f /etc/tuxcraft/gamevm.conf ]] && vm="󰊴  Gaming VM (Windows)"
 void=''; command -v xbps-install >/dev/null && void="󰇚  Fastest package mirror"
+auto="󰍁  Auto login (locked) at boot: switch on"; [[ -f /etc/tuxcraft/autologin ]] && auto="󰍁  Auto login (locked) at boot: switch off"
 warm="󱐋  Fast app start: switch off"; grep -qs '^ENABLED=0' "$HOME/.config/tuxcraft/warm.conf" && warm="󱐋  Fast app start: switch on"
 # Hybrid laptops: the dGPU serves either Linux games or the VM (switch takes a logout).
 if grep -qs '^MODE=hybrid' /etc/tuxcraft/gamevm.conf; then
@@ -11,11 +12,12 @@ fi
 c=$(printf '%s\n' ${vm:+"$vm"} ${gpu:+"$gpu"} \
   "󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰚰  Update system (sysup)" "󰚰  Update tuxcraft" "󰆓  Snapshots" \
   "󰋊  Drives: automount" "󰁯  Back up to external drive" "󰖩  Network" "󰂯  Bluetooth" "󰕾  Audio mixer" "󰓃  Audio output" "󰑓  Restart audio" "󰐪  Printers" "󰝚  Music folder" \
-  ${void:+"$void"} "$warm" "󰾅  Power profile" "󰖔  Night light toggle" "󰹑  Compositor on/off (i3)" "󰍹  Displays" \
+  ${void:+"$void"} "$warm" "$auto" "󰾅  Power profile" "󰖔  Night light toggle" "󰹑  Compositor on/off (i3)" "󰍹  Displays" \
   "󰌌  Keybindings" "󰋼  System info" "󰒃  Shutdown guard list" "󰐥  Power menu" | tux-menu system) || exit 0
 case $c in
   *"Gaming VM"*) tux-gamevm start ;;
   *"Fast app start"*) tux-warm toggle ;;
+  *"Auto login"*) tux-autologin --menu ;;
   *"GPU: use for"*)
     want=vm; [[ $c == *"Linux games"* ]] && want=linux
     if out=$(sudo -n /usr/local/bin/tux-gamevm gpu "$want" 2>&1); then

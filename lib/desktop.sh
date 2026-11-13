@@ -140,6 +140,8 @@ vt = 7
 command = "tuigreet --time --remember --asterisks --window-padding 2 --container-padding 2 --greeting 'Welcome to $TUX_HOSTNAME' --theme 'border=yellow;title=yellow;greet=white;text=white;prompt=yellow;input=white;time=bright-black;action=bright-black;button=yellow;container=black' --cmd tux-session"
 user = "$gu"
 EOF
+    # Auto login (tux-autologin on) survives updates: put its [initial_session] back.
+    /usr/local/bin/tux-autologin apply >/dev/null 2>&1 || true
     svc_enable greetd
     ok "greetd + tuigreet enabled (F2: commands, F3: pick session, F12: power)"
   else

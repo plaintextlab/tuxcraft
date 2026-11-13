@@ -362,6 +362,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-update` | update tuxcraft itself (tools, configs, fixes) with your saved choices; same as the `--update` one-liner. Also in the System menu → Update tuxcraft |
 | `tux-snap` | list / create / diff / restore a file / rollback / clean |
 | `tux-backup [mountpoint]` | backup to an external drive |
+| `tux-autologin [on\|off\|status]` | log in by itself at boot behind the lock screen, so the desktop and its autostart apps load while you type your password (System menu → Auto login). Uses greetd's one-time `[initial_session]`; after a logout the normal login screen is back. If the lock does not appear the session ends. The keyring asks for your password once, the first time an app needs it. Refuses on an unencrypted disk unless you add `--anyway` (the menu asks) |
 | `tux-drives [list\|on\|off NAME]` | choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
