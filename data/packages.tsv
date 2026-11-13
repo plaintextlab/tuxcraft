@@ -55,7 +55,7 @@ core	-	-	chrony cronie socklog-void
 # ---- x11: i3 session
 x11	xorg-server xorg-xinit xorg-xrandr xorg-xset xorg-xinput xorg-xprop xorg-xrdb xorg-xkill xorg-xsetroot	xserver-xorg-core xserver-xorg-input-libinput xinit x11-xserver-utils xinput	xorg-minimal xinit xrandr xset xinput xprop xrdb xkill xsetroot
 x11	i3-wm	i3-wm	i3
-x11	i3lock xss-lock	i3lock xss-lock	i3lock xss-lock
+x11	i3lock xss-lock xtrlock	i3lock xss-lock xtrlock	i3lock xss-lock xtrlock
 x11	polybar	polybar	polybar
 x11	picom	picom	picom
 x11	rofi	rofi	rofi

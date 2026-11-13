@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# tux-autologin — log in by itself at boot, locked: the desktop and everything that starts
+# with it load while you type your password on the lock screen.
+#
+#   tux-autologin [--menu]          switch it on/off from a menu (System menu → Auto login)
+#   tux-autologin status            on or off, and whether the disk is encrypted
+#   sudo tux-autologin on [USER]    switch on for USER (default: you)
+#   sudo tux-autologin off          back to the normal login screen
+#   sudo tux-autologin apply        rewrite the login screen config from the saved choice
+#                                   (the installer does this after it rewrites the config)
+#
+# How: greetd's [initial_session] starts your session once per boot without a password.
+# tux-autostart sees TUX_LOCK_AT_START=1 and locks the screen before anything else; if the
+# lock does not come up, it ends the session. After a logout you get the normal login screen.
+# Your keyring (saved passwords) is unlocked by the login password, so with this on it asks
+# for your password once, the first time an app needs it.
+# On a disk without encryption anyone who can switch the PC on reaches a running (locked)
+# session, so "on" refuses there unless you add --anyway.
+set -euo pipefail
+
+CONF=${TUX_AUTOLOGIN_GREETD:-/etc/greetd/config.toml}
+STATE=${TUX_AUTOLOGIN_STATE:-/etc/tuxcraft/autologin}
+
+say() { printf ':: %s\n' "$*"; }
+die() { printf 'tux-autologin: %s\n' "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "$1 needs root: sudo tux-autologin $1"; }
+
+saved_user() { [[ -f $STATE ]] && sed -n 's/^USER=//p' "$STATE" | head -n1; return 0; }
+
+# Is the root filesystem on an encrypted (LUKS) device?
+encrypted() {
+  local src
+  src=$(findmnt -no SOURCE / 2>/dev/null) || return 1
+  src=${src%%\[*}                                    # btrfs: /dev/mapper/root[/@] → device
+  [[ -b $src ]] || return 1
+  lsblk -s -no TYPE "$src" 2>/dev/null | grep -qx crypt
+}
+
+# Write the greetd config: everything except an old [initial_session] block, then ours.
+apply() {
+  local u tmp
+  [[ -f $CONF ]] || { say "no greetd login screen here ($CONF missing): nothing to do"; return 0; }
+  u=$(saved_user)
+  tmp=$(mktemp "${CONF%/*}/.config.toml.XXXXXX")
+  awk '/^\[initial_session\]/ {skip=1; next} /^\[/ {skip=0} !skip' "$CONF" |
+    sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' >"$tmp"     # drop trailing blank lines
+  if [[ -n $u ]]; then
+    printf '\n[initial_session]\n# tux-autologin: log in once per boot, locked at once (sudo tux-autologin off)\ncommand = "env TUX_LOCK_AT_START=1 /usr/local/bin/tux-session"\nuser = "%s"\n' \
+      "$u" >>"$tmp"
+  fi
+  chmod 644 "$tmp"; mv "$tmp" "$CONF"
+}
+
+cmd_on() {
+  need_root on
+  local anyway=0 u=''
+  for a in "$@"; do if [[ $a == --anyway ]]; then anyway=1; else u=$a; fi; done
+  u=${u:-${SUDO_USER:-${PKEXEC_UID:+$(id -un "$PKEXEC_UID")}}}
+  [[ -n $u && $u != root ]] || die "which user? sudo tux-autologin on USER"
+  local uid; uid=$(id -u "$u" 2>/dev/null) || die "no user '$u'"
+  (( uid >= 1000 )) || die "'$u' is a system account"
+  [[ -f $CONF ]] || die "this works with the greetd login screen only ($CONF is missing)"
+  if ! encrypted && ((anyway == 0)); then
+    die "the disk is not encrypted: anyone who switches the PC on gets a running session behind
+the lock screen. Add --anyway if that is fine for this machine."
+  fi
+  mkdir -p "${STATE%/*}"
+  printf '# tux-autologin: log this user in at boot, locked\nUSER=%s\n' "$u" >"$STATE"
+  apply
+  say "on: from the next boot $u is logged in at once, behind the lock screen"
+}
+
+cmd_off() {
+  need_root off
+  rm -f "$STATE"; apply
+  say "off: the normal login screen from the next boot"
+}
+
+cmd_status() {
+  local u; u=$(saved_user)
+  if [[ -n $u ]]; then echo "on for $u (logged in at boot, locked)"; else echo "off (normal login screen)"; fi
+  if encrypted; then echo "disk: encrypted"; else echo "disk: not encrypted"; fi
+}
+
+cmd_menu() {
+  local self=/usr/local/bin/tux-autologin pick enc=yes
+  [[ -x $self ]] || self=$(readlink -f "$0")
+  encrypted || enc=no
+  if [[ -n $(saved_user) ]]; then
+    pick=$(printf '%s\n' "󰍁  Switch off: normal login screen" "󰜺  Keep it on" |
+           tux-menu "Auto login is on (locked at boot)") || return 0
+    [[ $pick == *"Switch off"* ]] || return 0
+    tux-term --class tux-float -e bash -c "sudo '$self' off; read -rsn1 -p 'Press a key'"
+  else
+    local warn="󰌾  Switch on (disk is encrypted)" arg=''
+    [[ $enc == no ]] && { warn="󰀦  Switch on anyway (disk NOT encrypted: PC reaches a locked session without a password)"; arg=' --anyway'; }
+    pick=$(printf '%s\n' "$warn" "󰜺  Keep the normal login screen" |
+           tux-menu "Auto login: desktop loads while you type your password") || return 0
+    [[ $pick == *"Switch on"* ]] || return 0
+    tux-term --class tux-float -e bash -c "sudo '$self' on '$USER'$arg; read -rsn1 -p 'Press a key'"
+  fi
+}
+
+case ${1:---menu} in
+  --menu|menu) cmd_menu ;;
+  status) cmd_status ;;
+  on) shift; cmd_on "$@" ;;
+  off) cmd_off ;;
+  apply) need_root apply; apply ;;
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command '$1' (try --help)" ;;
+esac

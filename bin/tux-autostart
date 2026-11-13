@@ -3,6 +3,21 @@
 session=${1:-i3}
 log="$HOME/.local/state/tuxcraft/autostart.log"; mkdir -p "${log%/*}"; exec >>"$log" 2>&1
 echo "--- $(date) $session"
+
+# Logged in by itself at boot (tux-autologin): lock the screen before anything else starts, so
+# the desktop loads behind the lock while the password is typed. If no lock screen shows up
+# within 10 s, end the session rather than leave it open (the normal login screen follows).
+if [[ ${TUX_LOCK_AT_START:-} == 1 ]]; then
+  tux-lock &
+  (
+    for _ in $(seq 20); do
+      sleep 0.5
+      pgrep -u "$UID" -x i3lock >/dev/null || pgrep -u "$UID" -x swaylock >/dev/null && exit 0
+    done
+    echo "tux-autostart: no lock screen after autologin; ending the session"
+    if [[ $session == sway ]]; then swaymsg exit; else i3-msg exit; fi
+  ) &
+fi
 STATE="$HOME/.config/tuxcraft/state"; IDLE_LOCK_MIN=10
 # shellcheck source=/dev/null
 [[ -f $STATE ]] && . "$STATE"
