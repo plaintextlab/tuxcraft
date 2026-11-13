@@ -195,7 +195,7 @@ lines keep its built-in font) and the GRUB menu, which gets the same font as a G
 | Bar | polybar | waybar |
 | Launcher / menus | rofi | fuzzel |
 | Compositor | picom: Hyprland-style animations (springy open, gliding tiles, workspace crossfade) at the monitor's refresh rate | built in |
-| Lock / idle | i3lock + xss-lock | swaylock + swayidle |
+| Lock / idle | i3lock + xss-lock (xtrlock: see-through) | swaylock + swayidle |
 | Wallpaper | feh | swaybg |
 | Clipboard history | CopyQ | cliphist |
 | Screenshots / recording | maim, ffmpeg | grim, slurp, wf-recorder |
@@ -346,7 +346,8 @@ dead SSD — that is what `tux-backup` is for.
 | Super+Escape | **system menu** | Super+U | **update (sysup)** |
 | Super+V | clipboard history | Print / Super+Print | screenshot / capture menu |
 | Super+Ctrl+T / F / W | theme / font / wallpaper | Super+Ctrl+N / B / A / M | network / bluetooth / audio / btop |
-| Super+Shift+L | power menu | Super+Alt+L | lock |
+| Super+Shift+L | power menu | Super+L | lock |
+| Super+Alt+L | lock keys only: screen stays visible (xtrlock, i3; sway uses the normal lock) | | |
 | Super+1..0 | workspaces | Super+Shift+1..0 | move window |
 | Super+O | window switcher | Super+Tab / Shift+Tab | next / previous workspace |
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
