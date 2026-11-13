@@ -135,7 +135,21 @@ def con_ids(tree):
 
 def restore(cmd, tree, con, slot):
     cid, ids = con["id"], con_ids(tree)
-    steps = [f'[con_id={cid}] move container to workspace "{slot["ws"]}"']
+    # With workspace_auto_back_and_forth, "move container to workspace X" while X is the
+    # focused workspace sends the window to the previous one instead (Resolve jumped to 3 after
+    # the Cinema Viewer). So move it to a mark on the workspace itself, which never bounces;
+    # by name only when the workspace does not exist yet (then it cannot be the focused one).
+    now_ws = next((ws for c, _, ws in walk(tree) if c["id"] == cid), None)
+    ws_id = next((c["id"] for c, _, _ in walk(tree)
+                  if c.get("type") == "workspace" and c.get("name") == slot["ws"]), None)
+    if now_ws == slot["ws"]:
+        steps = []
+    elif ws_id:
+        steps = [f"[con_id={ws_id}] mark --add _tuxslot",
+                 f"[con_id={cid}] move container to mark _tuxslot",
+                 f"[con_id={ws_id}] unmark _tuxslot"]
+    else:
+        steps = [f'[con_id={cid}] move container to workspace "{slot["ws"]}"']
     if slot["left"] in ids:
         steps += [f"[con_id={slot['left']}] mark --add _tuxslot",
                   f"[con_id={cid}] move container to mark _tuxslot",
@@ -146,7 +160,7 @@ def restore(cmd, tree, con, slot):
                   f"[con_id={cid}] move container to mark _tuxslot",
                   f"[con_id={slot['right']}] unmark _tuxslot",
                   f"[con_id={cid}] move {back}"]
-    if slot["percent"] and slot["layout"] in ("splith", "splitv"):
+    if slot["percent"] and slot["percent"] < 0.995 and slot["layout"] in ("splith", "splitv"):
         dim = "width" if slot["layout"] == "splith" else "height"
         steps.append(f"[con_id={cid}] resize set {dim} {round(slot['percent'] * 100)} ppt")
     steps.append(f"[con_id={cid}] focus")
