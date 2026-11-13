@@ -11,14 +11,30 @@ if [[ ${1:-} == --see-through ]]; then
   why=''
   if [[ -n ${WAYLAND_DISPLAY:-} ]]; then why="sway cannot lock without covering the screen"
   elif ! command -v xtrlock >/dev/null; then why="xtrlock is not installed"
-  elif pgrep -u "$UID" -x xtrlock >/dev/null; then exit 0
+  elif pgrep -u "$UID" -x 'xtrlock(-pam)?' >/dev/null; then exit 0
   else
-    notify-send -a lock -t 4000 "Keys locked" "Type your password and press Enter to unlock"
-    xtrlock & p=$!
-    # xtrlock exits at once when it cannot read the password hash: lock normally instead.
-    sleep 1
-    if kill -0 "$p" 2>/dev/null; then wait "$p"; exit 0; fi
-    wait "$p"; why="xtrlock could not start (it needs to read your password hash)"
+    notify-send -a lock -t 4000 "Keys locked" "Type your password and press Enter to unlock (Esc starts over)"
+    # Started from a key binding, i3 still holds the keyboard until the keys are let go, so
+    # xtrlock's grab fails and it quits at once ("can't grab keyboard"): try again for ~3 s.
+    # It also quits at once when it cannot check passwords (no PAM / shadow access).
+    # xtrlock-pam (Arch, Void) covers the screen with the wallpaper unless told "-b none".
+    args=(); xtrlock -h 2>&1 | grep -q 'none, blank' && args=(-b none)
+    err="${XDG_RUNTIME_DIR:-/tmp}/tux-lock.err"
+    for _ in {1..10}; do
+      xtrlock "${args[@]}" 2>"$err" & p=$!
+      sleep 0.3
+      if kill -0 "$p" 2>/dev/null; then
+        rm -f "$err"
+        # Key repeat of the held L can reach xtrlock once it has the keyboard, putting "lll"
+        # before the password so the first Enter fails. Escape empties what it has typed.
+        command -v xdotool >/dev/null && xdotool key Escape
+        wait "$p"; exit 0
+      fi
+      wait "$p"
+      grep -qi grab "$err" || break
+    done
+    why="xtrlock could not start: $(tr '\n' ' ' <"$err")"; rm -f "$err"
+    [[ $why == *grab* ]] || why+="(it needs to check your password: PAM or shadow access)"
   fi
   notify-send -a lock "See-through lock unavailable" "$why — using the normal lock"
 fi
