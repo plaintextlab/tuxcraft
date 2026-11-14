@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# tux-watch CMD [ARGS...]  — start a program and show what it prints in a terminal window.
+# For big programs that take long to start or fail quietly (steam, resolve, a game): you see
+# the errors as they happen. The program runs on its own: close the terminal whenever you like
+# and the program keeps running. Everything is also saved to a log file.
+#   tux-watch steam          start Steam with its output in a terminal
+#   tux-watch --here steam   same, but in this terminal (Ctrl+C stops watching, not Steam)
+#   tux-watch --last         show the newest log again (after you closed the window)
+#   tux-watch --list         the saved logs, newest first
+# Error and warning lines are coloured. Logs: ~/.local/state/tuxcraft/watch (the last 20 kept).
+set -uo pipefail
+dir=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft/watch
+KEEP=20
+
+usage() { sed -n '2,10s/^# \{0,1\}//p' "$0"; exit "${1:-0}"; }
+
+# view LOG [PID]: print the log as it grows, until the program (PID) ends.
+view() {
+  local log=$1 pid=${2:-}
+  printf '\e[1m── %s ──\e[0m\n' "$log"
+  # Red: errors, yellow: warnings. sed -u so lines appear as soon as they are written.
+  # Line 1 is the command itself; t: a line gets one colour only.
+  tail -n +1 -F ${pid:+--pid="$pid"} "$log" 2>/dev/null | sed -u -E -e '1b' \
+    -e 's/^(.*([Ee]rror|ERROR|[Ff]ail|FAIL|[Ff]atal|FATAL|[Cc]rash|Segmentation fault|[Cc]ore dumped|[Nn]ot found|cannot|[Cc]ould not|Permission denied|killed by signal|exited with code [1-9]).*)$/\x1b[31m\1\x1b[0m/;t' \
+    -e 's/^(.*([Ww]arning|WARN|[Ww]arn:).*)$/\x1b[33m\1\x1b[0m/'
+}
+
+case ${1:-} in
+  ''|-h|--help) usage ;;
+  --list) ls -1t "$dir"/*.log 2>/dev/null || echo "No logs yet."; exit ;;
+  --last)
+    log=$(ls -1t "$dir"/*.log 2>/dev/null | head -n1)
+    [[ -n $log ]] || { echo "No logs yet." >&2; exit 1; }
+    [[ -t 1 ]] || exec tux-term --class tux-watch -e "$0" --last
+    view "$log"; exit ;;   # -F keeps following; Ctrl+C or close the window
+  --view)  # internal: the terminal window runs this
+    view "$2" "${3:-}"
+    printf '\n\e[1mPress Enter to close this window\e[0m (log: %s)\n' "$2"
+    read -r _; exit ;;
+  --here) here=1; shift ;;
+  *) here='' ;;
+esac
+(($#)) || usage 1
+command -v "$1" >/dev/null || { echo "tux-watch: $1: command not found" >&2; exit 127; }
+
+mkdir -p "$dir"
+log="$dir/$(basename "$1")-$(date +%Y%m%d-%H%M%S).log"
+# Keep only the newest logs.
+ls -1t "$dir"/*.log 2>/dev/null | tail -n +$KEEP | xargs -r rm -f --
+
+# The program in its own session (setsid): closing the terminal does not hang it up.
+# The wrapper notes how and when it ended, so a crash is the last thing in the log.
+{ printf '$ %s\n%s\n\n' "$*" "$(date)"; } >"$log"
+setsid bash -c '"$@"; rc=$?
+  if ((rc > 128)); then printf "\n── %s was killed by signal %d (%s) ──\n" "$1" $((rc-128)) "$(kill -l $((rc-128)))"
+  else printf "\n── %s exited with code %d ──\n" "$1" $rc; fi' tux-watch "$@" \
+  </dev/null >>"$log" 2>&1 &
+pid=$!
+disown
+
+if [[ -n $here ]]; then
+  trap 'printf "\nStopped watching; %s keeps running. Log: %s\n" "$1" "$log"; exit 0' INT
+  view "$log" "$pid"
+else
+  tux-term --class tux-watch -e "$0" --view "$log" "$pid" &
+  disown
+fi
