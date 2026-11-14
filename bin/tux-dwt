@@ -15,6 +15,9 @@ LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-dwt.$UID.lock
 MODS=' 37 105 50 62 64 108 133 134 66 '
 
 running() { pgrep -u "$UID" -f '^bash .*tux-dwt daemon' >/dev/null; }
+# An xinput left behind by a daemon that was killed keeps the root window's touch events, and X
+# gives those to one client only: every new "xinput test-xi2 --root" then fails with BadAccess.
+orphans() { pkill -u "$UID" -x -f 'xinput test-xi2 --root'; true; }
 
 # xinput ids of the touchpads (not the "Mouse" half some touchpads also show)
 pads() { xinput list 2>/dev/null | sed -n 's/.*[Tt]ouch[Pp]ad.*id=\([0-9]*\).*slave *pointer.*/\1/p'; }
@@ -28,20 +31,29 @@ daemon() {
   ((${#PADS[@]})) || compgen -G '/sys/class/power_supply/BAT*' >/dev/null || exit 0
   local secs off=0 key rc
   secs=$(printf '%d.%03d' $((DWT_MS / 1000)) $((DWT_MS % 1000)))
-  trap 'set_pads enable; exit 0' EXIT INT TERM HUP
-  # Raw key events reach every client no matter which window has focus. Only "detail: <keycode>"
-  # lines of key presses get through grep, so mouse motion never wakes this loop.
-  while :; do
-    if ((off)); then read -r -t "$secs" _ key; else read -r _ key; fi
-    rc=$?
-    if ((rc > 128)); then set_pads enable; off=0; continue   # quiet for DWT_MS
-    elif ((rc)); then break; fi                                # xinput has gone (X exited)
-    [[ $MODS == *" $key "* ]] && continue
-    # Look the touchpad up again at every burst of typing: after suspend/resume an I2C touchpad
-    # (HP OMEN 16 and most AMD laptops) comes back with a new xinput id, and the old one is gone.
-    ((off)) || { mapfile -t PADS < <(pads); set_pads disable; off=1; }
-  done < <(exec 9>&-; xinput test-xi2 --root 2>/dev/null |
-             grep --line-buffered -A2 '(RawKeyPress)' | grep --line-buffered -o 'detail: [0-9]*')
+  # setsid made this the leader of its own process group: take xinput and grep down with it.
+  local group=0; [[ $(ps -o pgid= -p $$) -eq $$ ]] && group=1
+  trap 'set_pads enable; trap "" TERM; ((group)) && kill -TERM 0 2>/dev/null; exit 0' EXIT INT TERM HUP
+  # Raw key events reach every client no matter which window has focus. Only the keycode of each
+  # key press gets through awk, so mouse motion never wakes this loop. Match "detail:" anywhere in
+  # the event: xinput 1.6.4 prints a "time:" line before it, older ones do not.
+  while xinput list >/dev/null 2>&1; do   # until X exits
+    while :; do
+      if ((off)); then read -r -t "$secs" key; else read -r key; fi
+      rc=$?
+      if ((rc > 128)); then set_pads enable; off=0; continue   # quiet for DWT_MS
+      elif ((rc)); then break; fi                                # xinput has stopped
+      [[ $MODS == *" $key "* ]] && continue
+      # Look the touchpad up again at every burst of typing: after suspend/resume an I2C touchpad
+      # (HP OMEN 16 and most AMD laptops) comes back with a new xinput id, and the old one is gone.
+      ((off)) || { mapfile -t PADS < <(pads); set_pads disable; off=1; }
+    done < <(exec 9>&-; xinput test-xi2 --root 2>/dev/null | awk '
+               /^EVENT/ { k = /\(RawKeyPress\)/; next }
+               k && $1 == "detail:" { print $2; fflush(); k = 0 }')
+    # xinput stopped while X is still up (another client held the events): listen again shortly.
+    set_pads enable; off=0
+    sleep 2
+  done
 }
 
 case ${1:-start} in
@@ -49,8 +61,8 @@ case ${1:-start} in
   start)
     [[ -n ${WAYLAND_DISPLAY:-} || -z ${DISPLAY:-} ]] && exit 0   # X11 only
     command -v xinput >/dev/null || { echo "tux-dwt: xinput is not installed" >&2; exit 1; }
-    running || setsid -f "$0" daemon >/dev/null 2>&1 ;;
-  stop) pkill -u "$UID" -f '^bash .*tux-dwt daemon'; true ;;
+    running || { orphans; setsid -f "$0" daemon >/dev/null 2>&1; } ;;
+  stop) pkill -u "$UID" -f '^bash .*tux-dwt daemon'; sleep 0.2; orphans ;;
   restart) "$0" stop; sleep 0.3; "$0" start ;;
   status)
     if running; then echo "on: touchpad off while typing, back ${DWT_MS} ms after the last key"
