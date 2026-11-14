@@ -20,6 +20,8 @@ core	pipewire-jack	pipewire-jack	libjack-pipewire
 core	libpulse	pulseaudio-utils	pulseaudio-utils
 core	alsa-utils rtkit	alsa-utils rtkit	alsa-utils rtkit
 core	libnotify	libnotify-bin	libnotify
+# gdbus: tux-awake (is a player playing?) and tux-battery (power profile)
+core	glib2	libglib2.0-bin	glib
 core	dunst	dunst	dunst
 core	kitty	kitty	kitty
 core	thunar thunar-archive-plugin thunar-volman tumbler exo xarchiver	thunar thunar-archive-plugin thunar-volman tumbler exo-utils xarchiver	Thunar thunar-archive-plugin thunar-volman tumbler exo xarchiver

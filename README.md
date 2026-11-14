@@ -395,6 +395,8 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-warm status` / `off` / `on` / `--edit` | fast app start: what is kept warm, switch it off/on, choose the apps |
 | `tux-winslot [--debug]` | keeps DaVinci Resolve in its workspace and tiling slot when the Cinema Viewer (Ctrl+F) hides and re-shows its window; restarts itself after `tux-update`. Log: `~/.local/state/tuxcraft/winslot.log`. For a big preview that never touches i3: Super+F (i3 fullscreen) plus Resolve's Enhanced Viewer (*Workspace ▸ Viewer Mode*) |
 | `tux-dwt status` / `restart` | touchpad off while typing (i3), back 600 ms after the last key; `DWT_MS=` in `~/.config/tuxcraft/state` changes the delay, `0` turns it off |
+| `tux-awake status` / `restart` | no screen lock or blanking while something plays (a video in the browser, mpv, VLC, music), on battery too: a media player says it is playing (MPRIS) or a program sends sound that is not paused. Started at login; a screen you lock yourself still goes dark. `AWAKE_MEDIA=off` in `~/.config/tuxcraft/state` turns it off. Log: `~/.local/state/tuxcraft/awake.log` |
+| `tux-battery status` / `restart` | laptops: a notification when the charger comes out (charge and time left) and again when it goes back in; unplugged switches the power profile to power-saver, plugged in brings the previous one back (unless you picked another meanwhile). `BATTERY_SAVER=off` in the state file keeps the profile as it is |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
 

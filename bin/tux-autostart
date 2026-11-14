@@ -65,6 +65,8 @@ command -v tux-firefox >/dev/null && { tux-firefox apply & }
 tux-wallpaper restore &
 # Fast start for browser, terminal and file manager (backs off when memory is tight or a game runs).
 tux-warm daemon "$session" &   # exits at once if one is already running
+# Laptop: battery saver and a notification when the charger comes out.
+tux-battery start
 
 idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))
 case $session in
@@ -87,6 +89,7 @@ case $session in
     if (( idle > 0 )); then
       xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
       once xss-lock --transfer-sleep-lock -- tux-lock --now
+      tux-awake start   # no lock or blanking while a video or music plays
     else
       xset s off -dpms
     fi
@@ -99,11 +102,8 @@ case $session in
     once waybar
     command -v kanshi >/dev/null && once kanshi
     once wl-paste --watch cliphist store
-    if (( idle > 0 )); then
-      once swayidle -w timeout "$idle" 'tux-lock --now' \
-        timeout $((idle + 300)) 'swaymsg "output * power off"' resume 'swaymsg "output * power on"' \
-        before-sleep 'tux-lock --now'
-    fi
+    # swayidle (lock after IDLE_LOCK_MIN, screens off 5 min later), paused while media plays.
+    (( idle > 0 )) && tux-awake start
     ;;
 esac
 # XDG autostart entries (~/.config/autostart and /etc/xdg/autostart). Those this script already

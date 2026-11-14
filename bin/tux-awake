@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# tux-awake [start|stop|restart|status] — no screen lock, blanking or idle sleep while something plays.
+#   A film or video in the browser, mpv, VLC, music: while any of them plays, the idle timer
+#   (IDLE_LOCK_MIN in ~/.config/tuxcraft/state) is held back, on battery too. Once nothing
+#   plays any more the timer starts again from zero.
+#   Playing means: a media player says so (MPRIS: Firefox, Chromium, mpv with mpris, VLC,
+#   Spotify...), or a program is sending sound that is not paused.
+#   A screen you locked yourself still goes dark as usual.
+#   AWAKE_MEDIA=off in the state file turns this off. tux-autostart starts it.
+#   i3: resets X's screen saver / DPMS timer. sway: runs swayidle itself and stops it while
+#   something plays. Both: holds an "idle" inhibitor in logind (systemd-inhibit) while playing.
+set -uo pipefail
+AWAKE_MEDIA=on IDLE_LOCK_MIN=10
+# shellcheck source=/dev/null
+[[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
+LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-awake.$UID.lock
+EVERY=30   # seconds between checks (X's timeout is at least 60 s)
+
+running() { pgrep -u "$UID" -f '^bash .*tux-awake daemon' >/dev/null; }
+locked() { pgrep -u "$UID" -x 'i3lock|swaylock|xtrlock(-pam)?' >/dev/null; }
+wayland() { [[ -n ${WAYLAND_DISPLAY:-} ]]; }
+
+# Media players that say they are playing (MPRIS), one name per line.
+players() {
+  local n
+  gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus \
+      --method org.freedesktop.DBus.ListNames 2>/dev/null | grep -o "org\.mpris\.MediaPlayer2\.[^']*" |
+  while read -r n; do
+    gdbus call --session --dest "$n" --object-path /org/mpris/MediaPlayer2 \
+        --method org.freedesktop.DBus.Properties.Get org.mpris.MediaPlayer2.Player PlaybackStatus \
+        2>/dev/null | grep -q Playing && { n=${n#org.mpris.MediaPlayer2.}; echo "${n%%.*}"; }
+  done
+}
+# Programs sending sound that is not paused. Leaves out PipeWire's own filter streams (the
+# "Speakers (louder)" filter plays a quiet tone all the time) and passive links.
+sounds() {
+  command -v pactl >/dev/null && command -v jq >/dev/null || return 0
+  pactl -f json list sink-inputs 2>/dev/null | jq -r '.[] | select(.corked == false) | .properties
+    | select((."node.passive" // "") != "true" and ((."node.name" // "") | startswith("tuxcraft.") | not)
+             and ((."application.process.binary" // "") | test("^(pipewire|wireplumber)$") | not))
+    | ."application.name" // ."application.process.binary" // "sound"' 2>/dev/null
+}
+playing() { { players; sounds; } | tr '[:upper:]' '[:lower:]' | sort -u | paste -sd, -; }
+
+# --- sway: swayidle runs only while nothing plays ---------------------------------------------
+swayidle_on() {
+  (( IDLE_LOCK_MIN > 0 )) && command -v swayidle >/dev/null || return 0
+  pgrep -u "$UID" -x swayidle >/dev/null && return
+  local idle=$(( IDLE_LOCK_MIN * 60 ))
+  swayidle -w timeout "$idle" 'tux-lock --now' \
+    timeout $((idle + 300)) 'swaymsg "output * power off"' resume 'swaymsg "output * power on"' \
+    before-sleep 'tux-lock --now' >/dev/null 2>&1 &
+}
+swayidle_off() { pkill -u "$UID" -x swayidle; }
+
+# --- logind idle inhibitor (for anything that watches logind's idle hint) ---------------------
+INHIBIT=
+inhibit_on() {
+  [[ -n $INHIBIT ]] && kill -0 "$INHIBIT" 2>/dev/null && return
+  local c; c=$(command -v systemd-inhibit || command -v elogind-inhibit) || return 0
+  "$c" --what=idle --who=tux-awake --why="Media is playing" --mode=block sleep infinity &
+  INHIBIT=$!
+}
+# Ending the sleep ends systemd-inhibit, which lets go of the inhibitor.
+inhibit_off() { [[ -n $INHIBIT ]] && { pkill -P "$INHIBIT" -x sleep; kill "$INHIBIT"; } 2>/dev/null; INHIBIT=; }
+
+daemon() {
+  exec 9>"$LOCK"; flock -n 9 || exit 0
+  if [[ $AWAKE_MEDIA == off ]]; then wayland && swayidle_on; exit 0; fi
+  trap 'inhibit_off; wayland && swayidle_on; exit 0' TERM INT
+  local was='' now awake=0
+  wayland && swayidle_on
+  while :; do
+    now=$(playing)
+    if [[ -n $now ]] && ! locked; then
+      [[ $now != "$was" ]] && echo "$(date '+%F %T') awake: $now"
+      if wayland; then swayidle_off; else xset s reset 2>/dev/null; fi
+      inhibit_on; awake=1
+    elif ((awake)); then
+      echo "$(date '+%F %T') idle timer back on"
+      inhibit_off; awake=0
+      # A fresh swayidle counts from zero, like X after the last reset.
+      wayland && swayidle_on
+    fi
+    was=$now
+    sleep "$EVERY" & wait $!
+  done
+}
+
+case ${1:-start} in
+  daemon) daemon ;;
+  start)
+    [[ -n ${WAYLAND_DISPLAY:-} || -n ${DISPLAY:-} ]] || exit 0
+    log=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft/awake.log; mkdir -p "${log%/*}"
+    running || setsid -f "$0" daemon >>"$log" 2>&1 ;;
+  stop) pkill -u "$UID" -f '^bash .*tux-awake daemon'; true ;;
+  restart) "$0" stop; sleep 0.3; "$0" start ;;
+  status)
+    if [[ $AWAKE_MEDIA == off ]]; then echo "off (AWAKE_MEDIA=off in ~/.config/tuxcraft/state)"
+    elif ! running; then echo "not running (tux-awake start)"
+    elif now=$(playing) && [[ -n $now ]]; then echo "on: keeping the screen awake for $now"
+    else echo "on: nothing playing, the idle timer runs (${IDLE_LOCK_MIN} min)"; fi ;;
+  *) sed -n '2,11s/^# \{0,1\}//p' "$0"; exit 1 ;;
+esac

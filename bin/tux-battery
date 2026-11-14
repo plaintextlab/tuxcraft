@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# tux-battery [start|stop|restart|status] — battery saver on by itself when the charger comes out.
+#   Unplugged: a notification ("On battery", with the charge and time left) and the power
+#   profile goes to power-saver. Plugged back in: a notification and the profile from before
+#   comes back (unless you picked another one meanwhile). Logging in on battery turns the
+#   saver on too, quietly.
+#   BATTERY_SAVER=off in ~/.config/tuxcraft/state keeps the profile as it is (the notifications
+#   stay). Needs power-profiles-daemon for the profile; tux-autostart starts this on laptops.
+set -uo pipefail
+BATTERY_SAVER=on
+# shellcheck source=/dev/null
+[[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
+LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-battery.$UID.lock
+PREV=${XDG_RUNTIME_DIR:-/tmp}/tux-battery.$UID.profile   # the profile before unplugging
+PS=/sys/class/power_supply
+EVERY=3
+
+running() { pgrep -u "$UID" -f '^bash .*tux-battery daemon' >/dev/null; }
+batteries() { compgen -G "$PS/BAT*"; }
+
+# 1 on a charger (any mains or USB-C supply online), 0 on battery.
+on_ac() {
+  local s t
+  for s in "$PS"/*; do
+    t=$(<"$s/type") 2>/dev/null || continue
+    [[ $t == Mains || $t == USB* ]] && [[ $(cat "$s/online" 2>/dev/null) == 1 ]] && { echo 1; return; }
+  done
+  echo 0
+}
+
+# "64%, about 3 h 10 min left" (the time when the battery reports it)
+charge() {
+  local b; b=$(batteries | head -n1) || return
+  local cap='' now='' rate='' full
+  if [[ -r $b/capacity ]]; then cap=$(<"$b/capacity")
+  elif [[ -r $b/energy_full ]] && full=$(<"$b/energy_full") && ((full > 0)); then cap=$(( $(<"$b/energy_now") * 100 / full ))
+  elif [[ -r $b/charge_full ]] && full=$(<"$b/charge_full") && ((full > 0)); then cap=$(( $(<"$b/charge_now") * 100 / full ))
+  fi
+  [[ -r $b/energy_now && -r $b/power_now ]] && now=$(<"$b/energy_now") rate=$(<"$b/power_now")
+  [[ -z $rate && -r $b/charge_now && -r $b/current_now ]] && now=$(<"$b/charge_now") rate=$(<"$b/current_now")
+  local out=${cap:+$cap%}
+  if [[ ${1:-} == left && -n $rate ]] && ((rate > 0)); then
+    local m=$(( now * 60 / rate ))
+    out+="${out:+, }about $((m / 60)) h $((m % 60)) min left"
+  fi
+  echo "$out"
+}
+
+# --- power profile: powerprofilesctl, else power-profiles-daemon over D-Bus --------------------
+ppd() {   # ppd get | ppd set PROFILE
+  if command -v powerprofilesctl >/dev/null; then powerprofilesctl "$@" 2>/dev/null; return; fi
+  local d p i
+  for d in org.freedesktop.UPower.PowerProfiles net.hadess.PowerProfiles; do
+    p=/${d//./\/}; i=$d
+    if [[ $1 == get ]]; then
+      gdbus call --system --dest "$d" --object-path "$p" --method org.freedesktop.DBus.Properties.Get \
+        "$i" ActiveProfile 2>/dev/null | grep -o "'[a-z-]*'" | tr -d "'" && return
+    else
+      gdbus call --system --dest "$d" --object-path "$p" --method org.freedesktop.DBus.Properties.Set \
+        "$i" ActiveProfile "<'$2'>" >/dev/null 2>&1 && return
+    fi
+  done
+  return 1
+}
+saver_on() {
+  [[ $BATTERY_SAVER == off ]] && return 1
+  local cur; cur=$(ppd get) || return 1
+  [[ $cur == power-saver ]] && { [[ -s $PREV ]] || echo balanced >"$PREV"; return 0; }
+  echo "$cur" >"$PREV"
+  ppd set power-saver
+}
+saver_off() {
+  [[ $BATTERY_SAVER == off || ! -s $PREV ]] && return 1
+  local want; want=$(<"$PREV"); rm -f "$PREV"
+  # Picked another profile while on battery: leave it.
+  [[ $(ppd get) == power-saver && $want != power-saver ]] || return 1
+  ppd set "$want" && echo "$want"
+}
+
+note() { notify-send -a battery "$@" 2>/dev/null; }
+
+daemon() {
+  exec 9>"$LOCK"; flock -n 9 || exit 0
+  local was now p
+  was=$(on_ac)
+  ((was)) || saver_on
+  while sleep "$EVERY"; do
+    now=$(on_ac)
+    [[ $now == "$was" ]] && continue
+    # A flaky charger or a USB-C hub can bounce for a moment: look again before acting.
+    sleep 1; now=$(on_ac); [[ $now == "$was" ]] && continue
+    if ((now)); then
+      p=$(saver_off) && p="Back to the $p profile" || p=''
+      note -u low -i battery-full-charging "Charging" "$(charge)${p:+ · $p}"
+      echo "$(date '+%F %T') plugged in${p:+, $p}"
+    else
+      sleep 2   # the rate settles once the charger is out, for the time left
+      if saver_on; then p="Battery saver on"; else p=''; fi
+      note -u normal -i battery "On battery" "$(charge left)${p:+ · $p}"
+      echo "$(date '+%F %T') unplugged${p:+, $p}"
+    fi
+    was=$now
+  done
+}
+
+case ${1:-start} in
+  daemon) daemon ;;
+  start)
+    batteries >/dev/null || exit 0   # desktop PC
+    log=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft/battery.log; mkdir -p "${log%/*}"
+    running || setsid -f "$0" daemon >>"$log" 2>&1 ;;
+  stop) pkill -u "$UID" -f '^bash .*tux-battery daemon'; true ;;
+  restart) "$0" stop; sleep 0.3; "$0" start ;;
+  status)
+    batteries >/dev/null || { echo "no battery"; exit 0; }
+    if (($(on_ac))); then echo -n "on the charger"; else echo -n "on battery"; fi
+    echo " ($(charge left)); profile: $(ppd get || echo 'unknown (power-profiles-daemon?)')"
+    if ! running; then echo "watcher not running (tux-battery start)"
+    elif [[ $BATTERY_SAVER == off ]]; then echo "battery saver on unplug: off (BATTERY_SAVER=off)"
+    else echo "battery saver on unplug: on"; fi ;;
+  *) sed -n '2,8s/^# \{0,1\}//p' "$0"; exit 1 ;;
+esac
