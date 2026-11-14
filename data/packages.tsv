@@ -121,7 +121,7 @@ printer-hp	hplip	hplip printer-driver-hpcups	hplip
 printer-epson	epson-inkjet-printer-escpr	printer-driver-escpr	epson-inkjet-printer-escpr
 printer-brother	brlaser	printer-driver-brlaser	-
 printer-samsung	-	printer-driver-splix	splix
-bluetooth	bluez bluez-utils	bluez	bluez
+bluetooth	bluez bluez-utils pipewire-audio	bluez libspa-0.2-bluetooth	bluez libspa-bluetooth
 laptop	power-profiles-daemon	power-profiles-daemon	power-profiles-daemon
 laptop	acpi	acpi	acpi
 gaming	steam gamemode lib32-gamemode mangohud lib32-mangohud	steam-installer gamemode mangohud	steam gamemode MangoHud
