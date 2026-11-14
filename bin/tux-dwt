@@ -24,7 +24,8 @@ daemon() {
   exec 9>"$LOCK"; flock -n 9 || exit 0
   ((DWT_MS > 0)) || exit 0
   mapfile -t PADS < <(pads)
-  ((${#PADS[@]})) || exit 0   # no touchpad (desktop PC)
+  # No touchpad and no battery: a desktop PC. A laptop's I2C touchpad can show up after login.
+  ((${#PADS[@]})) || compgen -G '/sys/class/power_supply/BAT*' >/dev/null || exit 0
   local secs off=0 key rc
   secs=$(printf '%d.%03d' $((DWT_MS / 1000)) $((DWT_MS % 1000)))
   trap 'set_pads enable; exit 0' EXIT INT TERM HUP
@@ -36,7 +37,9 @@ daemon() {
     if ((rc > 128)); then set_pads enable; off=0; continue   # quiet for DWT_MS
     elif ((rc)); then break; fi                                # xinput has gone (X exited)
     [[ $MODS == *" $key "* ]] && continue
-    ((off)) || { set_pads disable; off=1; }
+    # Look the touchpad up again at every burst of typing: after suspend/resume an I2C touchpad
+    # (HP OMEN 16 and most AMD laptops) comes back with a new xinput id, and the old one is gone.
+    ((off)) || { mapfile -t PADS < <(pads); set_pads disable; off=1; }
   done < <(exec 9>&-; xinput test-xi2 --root 2>/dev/null |
              grep --line-buffered -A2 '(RawKeyPress)' | grep --line-buffered -o 'detail: [0-9]*')
 }
