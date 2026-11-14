@@ -82,6 +82,8 @@ case $session in
     xset r rate 220 40
     # Touchpad off while typing, for longer than libinput's own guard (palm between words).
     tux-dwt start
+    # TV / monitor plugged in: mirror it (EXTERNAL_DISPLAY in the state file), unplugged: laptop only.
+    tux-display start
     if (( idle > 0 )); then
       xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
       once xss-lock --transfer-sleep-lock -- tux-lock --now

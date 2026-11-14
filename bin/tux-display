@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# tux-display [mirror|extend|tv|laptop|audio|status|start|stop|restart]  — external screens (i3 / X11).
+#   mirror    the TV / monitor shows the same picture as the laptop (default when one is plugged in)
+#   extend    the external screen is extra space, right of the laptop
+#   tv        only the external screen (laptop panel off)
+#   laptop    only the laptop panel (external screens off)
+#   status    the screens and what they show
+#   start     watch for screens being plugged in / out and apply EXTERNAL_DISPLAY (tux-autostart)
+# Plugged in: EXTERNAL_DISPLAY from ~/.config/tuxcraft/state (mirror, extend, tv; default mirror).
+# Unplugged: back to the laptop panel alone. Mirror uses the laptop's resolution on the TV when the
+# TV offers it, otherwise the TV's own resolution with the laptop picture scaled to fill it.
+# Sound follows the picture: plugged in, the screen's HDMI / DisplayPort sound becomes the output
+# (running streams move along); unplugged, the output from before comes back.
+# EXTERNAL_AUDIO=off in the state file leaves the sound alone. tux-display audio [on|off] does it now.
+# Follows X's RandR events (xev; else asks X every 2 s), never probes the outputs (no dGPU wake-ups).
+set -uo pipefail
+EXTERNAL_DISPLAY=mirror EXTERNAL_AUDIO=on
+# shellcheck source=/dev/null
+[[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
+LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-display.$UID.lock
+PREV_SINK=${XDG_RUNTIME_DIR:-/tmp}/tux-display.$UID.sink   # the output before the screen took over
+
+usage() { sed -n '2,15s/^# \{0,1\}//p' "$0"; exit "${1:-0}"; }
+
+# --- sound ------------------------------------------------------------------------------------
+# Every connected screen's sound output as "card sink": the sound card's ELD says which HDMI pin has
+# a screen on it (eld#C.N = pin N). UCM cards (HiFi profile) call it HDMI<N+1>, the older profiles
+# hdmi-stereo / hdmi-stereo-extra<N>.
+screen_sinks() {
+  local e n id pci sinks s
+  sinks=$(pactl list short sinks 2>/dev/null | cut -f2)
+  for e in /proc/asound/card*/eld#*; do
+    grep -qE 'monitor_present[[:space:]]+1' "$e" 2>/dev/null || continue
+    n=${e##*.}; id=${e%/eld#*}; id=${id##*/card}
+    pci=$(basename "$(readlink -f "/sys/class/sound/card$id/device")"); pci=${pci//:/_}
+    for s in "HiFi__HDMI$((n + 1))__sink" "hdmi-stereo$( ((n)) && echo "-extra$n")"; do
+      s=$(grep -m1 -F "pci-$pci.$s" <<<"$sinks") && { echo "alsa_card.pci-$pci $s"; break; }
+    done || echo "alsa_card.pci-$pci -"
+  done
+}
+# The card of a connected screen has no outputs while its profile is off: switch on the best one.
+card_on() {
+  local p
+  for p in HiFi output:hdmi-stereo; do pactl set-card-profile "$1" "$p" 2>/dev/null && return; done
+}
+move_to() {
+  local i
+  pactl set-default-sink "$1" || return
+  for i in $(pactl list short sink-inputs 2>/dev/null | cut -f1); do pactl move-sink-input "$i" "$1" 2>/dev/null; done
+}
+audio_on() {
+  [[ $EXTERNAL_AUDIO == on ]] && command -v pactl >/dev/null || return 0
+  local try card sink cur
+  # The sound side of a screen shows up a moment after the picture.
+  for try in {1..20}; do
+    read -r card sink < <(screen_sinks)
+    [[ -n ${sink:-} && $sink != - ]] && break
+    [[ -n ${card:-} ]] && card_on "$card"
+    sleep 0.5
+  done
+  [[ -n ${sink:-} && $sink != - ]] || { echo "tux-display: the screen has no sound output" >&2; return 1; }
+  cur=$(pactl get-default-sink 2>/dev/null)
+  [[ $cur == "$sink" ]] && return
+  # Remember the output to go back to, unless that is a screen too (one TV swapped for another).
+  [[ $cur == *HDMI* || $cur == *hdmi* ]] || echo "$cur" >"$PREV_SINK"
+  move_to "$sink" && echo "Sound: $sink"
+}
+audio_off() {
+  [[ $EXTERNAL_AUDIO == on ]] && command -v pactl >/dev/null || return 0
+  [[ -s $PREV_SINK ]] || return 0   # never switched: WirePlumber already fell back by itself
+  local prev; prev=$(<"$PREV_SINK"); rm -f "$PREV_SINK"
+  pactl list short sinks | cut -f2 | grep -qxF "$prev" && move_to "$prev" && echo "Sound: $prev"
+}
+say() { echo "tux-display: $*"; command -v notify-send >/dev/null && notify-send -a Display -t 3000 "Display" "$*" 2>/dev/null; true; }
+
+# Connected outputs; the laptop panel is eDP / LVDS / DSI.
+connected() { xrandr --current | awk '/ connected/{print $1}'; }
+internal() { connected | grep -m1 -E '^(eDP|LVDS|DSI)'; }
+externals() { connected | grep -vE '^(eDP|LVDS|DSI)'; }
+# Outputs X still drives although nothing is plugged in (after unplugging).
+stale() { xrandr --current | awk '/ disconnected [0-9]+x[0-9]+\+/{print $1}'; }
+# Mode names an output offers, and its preferred one ("+").
+modes() { xrandr --current | awk -v o="$1" '$1 == o {f = 1; next} f && /^[^ ]/ {exit} f {print $1}'; }
+preferred() { xrandr --current | awk -v o="$1" '$1 == o {f = 1; next} f && /^[^ ]/ {exit} f && /\+/ {print $1; exit}'; }
+# The internal panel's native mode (its preferred one, else its first).
+native() { local m; m=$(preferred "$1"); [[ -n $m ]] || m=$(modes "$1" | head -1); echo "$m"; }
+
+off_stale() { local o; for o in $(stale); do xrandr --output "$o" --off; done; }
+
+apply() {
+  local mode=$1 int ext res m
+  int=$(internal)
+  mapfile -t ext < <(externals)
+  off_stale
+  if ((${#ext[@]} == 0)) || [[ $mode == laptop ]]; then
+    for m in "${ext[@]}"; do xrandr --output "$m" --off; done
+    [[ -n $int ]] && xrandr --output "$int" --auto --primary --pos 0x0 --scale 1x1
+    return
+  fi
+  if [[ -z $int ]]; then   # lid-closed docking or a desktop: just light the screens up
+    for m in "${ext[@]}"; do xrandr --output "$m" --auto; done; return
+  fi
+  res=$(native "$int")
+  case $mode in
+    mirror)
+      xrandr --output "$int" --mode "$res" --primary --pos 0x0 --scale 1x1
+      for m in "${ext[@]}"; do
+        if modes "$m" | grep -qx "$res"; then
+          xrandr --output "$m" --mode "$res" --scale 1x1 --same-as "$int"
+        else
+          xrandr --output "$m" --mode "$(preferred "$m")" --scale-from "$res" --same-as "$int"
+        fi
+      done ;;
+    extend)
+      xrandr --output "$int" --auto --primary --pos 0x0 --scale 1x1
+      local prev=$int
+      for m in "${ext[@]}"; do xrandr --output "$m" --auto --scale 1x1 --right-of "$prev"; prev=$m; done ;;
+    tv)
+      xrandr --output "${ext[0]}" --auto --primary --pos 0x0 --scale 1x1 --output "$int" --off ;;
+    *) echo "tux-display: unknown mode $mode" >&2; return 2 ;;
+  esac
+}
+
+status() {
+  xrandr --current | awk '/ connected/{print}'
+  echo "When a screen is plugged in: $EXTERNAL_DISPLAY  (EXTERNAL_DISPLAY in ~/.config/tuxcraft/state)"
+  pgrep -u "$UID" -f '^bash .*tux-display daemon' >/dev/null && echo "Watcher: running" || echo "Watcher: not running"
+  command -v pactl >/dev/null && echo "Sound: $(pactl get-default-sink 2>/dev/null)  (follows the screen: EXTERNAL_AUDIO=$EXTERNAL_AUDIO)"
+}
+
+daemon() {
+  exec 9>"$LOCK"; flock -n 9 || exit 0
+  # X itself notices a plug (RandR events); without xev, ask X every 2 s (no probing, no wake-ups).
+  events() { if command -v xev >/dev/null; then xev -root -event randr 2>/dev/null
+             else while xrandr --current >/dev/null 2>&1; do echo RRNotify; sleep 2; done; fi; }
+  local last now line
+  last=$(externals | sort | tr '\n' ' ')
+  # A screen plugged in before login: apply once now.
+  [[ -n $last ]] && { apply "$EXTERNAL_DISPLAY"; audio_on & }
+  trap 'trap "" TERM; kill -TERM 0 2>/dev/null; exit 0' EXIT INT TERM HUP
+  while read -r line; do
+    [[ $line == RRNotify* || $line == RRScreenChangeNotify* ]] || continue
+    while read -r -t 1 _; do :; done   # one plug sends a burst of events
+    now=$(externals | sort | tr '\n' ' ')
+    [[ $now == "$last" ]] && { off_stale; continue; }
+    if [[ -z $now ]]; then apply laptop; audio_off; say "Screen unplugged: laptop only"
+    else apply "$EXTERNAL_DISPLAY"; audio_on & say "Screen connected (${now% }): $EXTERNAL_DISPLAY"; fi
+    last=$now
+  done < <(events)
+}
+
+case ${1:-status} in
+  mirror|extend|tv|laptop) [[ -n ${DISPLAY:-} ]] || { echo "tux-display: no X display" >&2; exit 1; }
+    apply "$1"; if [[ $1 == laptop ]]; then audio_off; else audio_on; fi ;;
+  audio) EXTERNAL_AUDIO=on; if [[ ${2:-on} == off ]]; then audio_off; else audio_on; fi ;;
+  status) status ;;
+  daemon) daemon ;;
+  start) pgrep -u "$UID" -f '^bash .*tux-display daemon' >/dev/null || setsid -f "$0" daemon >/dev/null 2>&1 </dev/null ;;
+  stop) pkill -u "$UID" -f '^bash .*tux-display daemon'; true ;;
+  restart) "$0" stop; sleep 0.3; "$0" start ;;
+  -h|--help) usage ;;
+  *) usage 2 ;;
+esac
