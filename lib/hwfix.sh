@@ -52,6 +52,24 @@ EOF
 # The patch file only applies to the codec it names, so listing it for every card is safe.
 options snd-hda-intel patch=$fw,$fw,$fw,$fw
 EOF
+  # The kernel lights the LED from the sound chip's Master switch only, so it stayed dark when
+  # Bluetooth earbuds (or HDMI) were the output and got muted. tux-mute-led (started by PipeWire)
+  # drives it from the current output's mute instead: take it off the kernel trigger and let the
+  # audio group write it.
+  write_file /etc/udev/rules.d/70-tuxcraft-mute-led.rules <<'EOF'
+# tuxcraft: HP OMEN 16 mute-key LED follows the current output (tux-mute-led), not just the speakers
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="hda::mute", ATTR{trigger}="none", RUN+="/bin/chgrp audio /sys/class/leds/%k/brightness", RUN+="/bin/chmod g+w /sys/class/leds/%k/brightness"
+EOF
+  if udevadm control --reload 2>/dev/null; then
+    udevadm trigger --subsystem-match=leds --sysname-match='hda::mute' --action=add 2>/dev/null || true
+  fi
+  write_file "$TUX_HOME/.config/pipewire/pipewire.conf.d/61-tuxcraft-mute-led.conf" <<'EOF'
+# tuxcraft: the HP OMEN 16 mute-key LED follows the mute of the current output (speakers,
+# headphones, Bluetooth, HDMI); the kernel alone only follows the speakers/headphone jack.
+# Remove this file to stop it (the LED then stays as it was until the next boot).
+context.exec = [ { path = "/usr/local/bin/tux-mute-led" args = "" } ]
+EOF
+  chown -R "$TUX_USER:" "$TUX_HOME/.config/pipewire"
 
   pkg_install swh-plugins
   local pci

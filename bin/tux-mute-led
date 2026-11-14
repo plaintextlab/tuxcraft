@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# tux-mute-led — the HP OMEN 16 (8A44) mute-key LED follows the mute of the current output,
+# whatever it is (speakers, wired headphones, Bluetooth, HDMI).
+# The kernel lights the LED from the laptop sound chip's own Master switch only, so muting
+# Bluetooth earbuds (or any other output) left it dark. A udev rule (lib/hwfix.sh) takes the LED
+# off the kernel's audio-mute trigger and lets the audio group write it; this sets it from the
+# default output's mute state on every change.
+# Started by PipeWire (context.exec in pipewire.conf.d/61-tuxcraft-mute-led.conf) and exits with it.
+led=/sys/class/leds/hda::mute/brightness
+ppid=$PPID
+
+[[ -w $led ]] || exit 0
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/tux-mute-led.lock"
+flock -n 9 || exit 0   # one copy only
+
+apply() {
+  local m v=0
+  m=$(pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null) || return
+  [[ $m == *yes* ]] && v=1
+  [[ $v == "${last:-}" ]] && return
+  echo "$v" >"$led" 2>/dev/null && last=$v
+}
+
+while kill -0 "$ppid" 2>/dev/null; do
+  apply
+  pactl subscribe 2>/dev/null | while read -r line; do
+    [[ $line == *" on sink "* || $line == *" on server"* ]] || continue
+    while read -r -t 0.1 _; do :; done
+    apply
+  done
+  sleep 1   # pipewire-pulse not up yet, or restarting
+done
