@@ -268,9 +268,16 @@ default_apps() {
   for m in image/png image/jpeg image/gif image/webp image/bmp image/tiff image/svg+xml image/avif image/heif image/jxl; do
     as_user xdg-mime default "$iv" "$m" 2>/dev/null || true
   done
-  for m in video/mp4 video/x-matroska video/webm audio/mpeg audio/flac audio/ogg; do
-    as_user xdg-mime default mpv.desktop "$m" 2>/dev/null || true
+  # mpv for every video and audio type its .desktop file lists (mov, avi, ts, m4v, wmv, flv, mpeg,
+  # 3gp …), not just a handful: anything left out opened in VLC or whatever else claimed it.
+  local mpv_types=(video/mp4 video/x-matroska video/webm video/quicktime audio/mpeg audio/flac audio/ogg)
+  for d in /usr/share/applications /usr/local/share/applications; do
+    [[ -f $d/mpv.desktop ]] || continue
+    mapfile -t -O "${#mpv_types[@]}" mpv_types < <(sed -n 's/^MimeType=//p' "$d/mpv.desktop" | tr ';' '\n' |
+      grep -E '^(video/|audio/|application/(ogg|x-ogg|x-matroska|mxf|vnd\.rn-realmedia))')
   done
+  mapfile -t mpv_types < <(printf '%s\n' "${mpv_types[@]}" | sort -u)
+  as_user xdg-mime default mpv.desktop "${mpv_types[@]}" 2>/dev/null || true
   if command -v zathura >/dev/null; then as_user xdg-mime default org.pwmt.zathura.desktop application/pdf 2>/dev/null || true; fi
   # Outside a desktop session xdg-settings often gives up (exit 4, which tripped the error trap
   # on every --update): then set the same MIME types it would have set.
