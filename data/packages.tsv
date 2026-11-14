@@ -127,7 +127,7 @@ bluetooth	bluez bluez-utils pipewire-audio	bluez libspa-0.2-bluetooth	bluez libs
 laptop	power-profiles-daemon	power-profiles-daemon	power-profiles-daemon
 laptop	acpi	acpi	acpi
 gaming	steam gamemode lib32-gamemode mangohud lib32-mangohud	steam-installer gamemode mangohud	steam gamemode MangoHud
-gaming	-	-	MangoHud-32bit libgamemode-32bit vulkan-loader-32bit gamescope wine winetricks protontricks vkBasalt vkBasalt-32bit libdrm-32bit sqlite-32bit psmisc Vulkan-Tools
+gaming	-	-	MangoHud-32bit libgamemode-32bit vulkan-loader-32bit gamescope wine winetricks protontricks vkBasalt vkBasalt-32bit libdrm-32bit mesa-dri-32bit libva-32bit libpulseaudio-32bit sqlite-32bit psmisc Vulkan-Tools
 office	libreoffice-fresh	libreoffice	libreoffice
 office	zathura zathura-pdf-mupdf	zathura	zathura zathura-pdf-mupdf
 #
