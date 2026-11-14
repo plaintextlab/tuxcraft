@@ -73,12 +73,13 @@ ensure() {
       progress "$name" "Installing…" 100
       mkdir -p "$UFONTS/${src#nerd:}"
       tar -xJf "$t/f.txz" -C "$UFONTS/${src#nerd:}"; rm -rf "$t"
-      fc-cache -f "$UFONTS" >/dev/null
+      fc-cache -f "$UFONTS" >/dev/null 2>&1 || :   # a stale cache is not worth failing over
       progress "$name" "Installed" '' finished
       return 0 ;;
-    bundled:*) install -Dm644 "$SHARE/assets/fonts/${src#bundled:}" "$UFONTS/bundled/${src#bundled:}" ;;
+    bundled:*) cmp -s "$SHARE/assets/fonts/${src#bundled:}" "$UFONTS/bundled/${src#bundled:}" ||
+                 install -Dm644 "$SHARE/assets/fonts/${src#bundled:}" "$UFONTS/bundled/${src#bundled:}" ;;
   esac
-  fc-cache -f "$UFONTS" >/dev/null
+  fc-cache -f "$UFONTS" >/dev/null 2>&1 || :
 }
 
 apply() {  # apply key [size]

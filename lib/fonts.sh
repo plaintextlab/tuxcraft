@@ -29,7 +29,11 @@ font_install() {  # font_install key
       fi
       rm -rf "$t" ;;
     bundled:*)
-      install -Dm644 "$TUX_SRC/assets/fonts/${src#bundled:}" "$FONT_DIR/bundled/${src#bundled:}" ;;
+      # Copy only when it changed: rewriting it on every update touches the directory, and
+      # fc-cache then finds the directory newer than the cache it has just written.
+      local f=${src#bundled:}
+      cmp -s "$TUX_SRC/assets/fonts/$f" "$FONT_DIR/bundled/$f" ||
+        install -Dm644 "$TUX_SRC/assets/fonts/$f" "$FONT_DIR/bundled/$f" ;;
     system:*) : ;;
   esac
 }
@@ -51,6 +55,22 @@ fonts_stage() {
   done
   font_install jetbrains
   font_install "$TUX_FONT"
-  run fc-cache -f
+  fonts_cache || warn "Font cache not rebuilt: fonts still work, apps just start a little slower"
   ok "Fonts ready ($(font_field "$TUX_FONT" 2))"
+}
+
+# fc-cache prints "<dir>: failed to write cache" and exits non-zero when a directory's mtime does
+# not match the cache it has just written: a directory dated in the future (made while the clock
+# was wrong: Windows dual boot, before NTP), or a lock left by an interrupted run. Fix both, try
+# again, and never stop the install over it: fontconfig scans directories that have no cache.
+fonts_cache() {
+  local d
+  for d in /usr/local/share/fonts /usr/share/fonts; do
+    [[ -d $d ]] || continue
+    find "$d" -type d -newermt now -exec touch {} + 2>/dev/null || :
+  done
+  find /var/cache/fontconfig -maxdepth 1 -name '*.LCK' -mmin +1 -delete 2>/dev/null || :
+  run fc-cache -f && return 0
+  sleep 1
+  run fc-cache -f
 }
