@@ -392,6 +392,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
 | `tux-guard --list` / `--edit` | what would block a shutdown right now / edit the watch list |
 | `tux-warm status` / `off` / `on` / `--edit` | fast app start: what is kept warm, switch it off/on, choose the apps |
+| `tux-winslot [--debug]` | keeps DaVinci Resolve in its workspace and tiling slot when the Cinema Viewer (Ctrl+F) hides and re-shows its window; restarts itself after `tux-update`. Log: `~/.local/state/tuxcraft/winslot.log`. For a big preview that never touches i3: Super+F (i3 fullscreen) plus Resolve's Enhanced Viewer (*Workspace ▸ Viewer Mode*) |
 | `tux-dwt status` / `restart` | touchpad off while typing (i3), back 600 ms after the last key; `DWT_MS=` in `~/.config/tuxcraft/state` changes the delay, `0` turns it off |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |

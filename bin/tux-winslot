@@ -11,7 +11,7 @@ split. When the window comes back it is put into the same slot at the same size.
 Started by tux-autostart. Standard library only; talks to the WM's IPC socket directly.
 Log: ~/.local/state/tuxcraft/winslot.log (more detail with --debug).
 """
-import glob, json, os, re, select, socket, struct, sys, time
+import glob, json, os, re, select, socket, struct, sys, time, traceback
 
 # (X11 class regex, main-window title regex, program name as in argv[0]). Only the main window is tracked;
 # popups, dialogs and the Cinema Viewer window are left alone. A hidden window's slot is
@@ -23,6 +23,17 @@ POLL = 1.0          # seconds between layout snapshots while a tracked window ex
 KEEP = 4 * 3600     # forget a hidden window's slot after this long
 DEBUG = "--debug" in sys.argv
 LOG = os.path.expanduser("~/.local/state/tuxcraft/winslot.log")
+SELF = os.path.realpath(sys.argv[0])
+
+
+def mtime(path):
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None   # mid-install: try again next round
+
+
+SELF_MTIME = mtime(SELF)
 MAGIC = b"i3-ipc"
 COMMAND, SUBSCRIBE, GET_TREE = 0, 2, 4
 
@@ -108,20 +119,41 @@ def running(cls):
     return False
 
 
+def busy(tree):
+    """X classes of tracked apps that have a fullscreen window (the Cinema Viewer) right now."""
+    return {(c.get("window_properties") or {}).get("class") for c, _, _ in walk(tree)
+            if tracked(c) and c.get("fullscreen_mode")}
+
+
 def snapshot(tree):
-    """Slots of the tracked main windows that are tiled now, keyed by X window id."""
-    slots = {}
+    """Slots of the tracked main windows that are tiled now, keyed by X window id.
+
+    The slot is taken at the level that holds the window's share of the screen: i3 often wraps a
+    window in split containers of its own (after a resize or a move), and those vanish when the
+    window hides. So climb through containers that hold nothing else, up to the first one that
+    has neighbours, and remember that one's share and neighbours.
+    """
+    slots, parent_of = {}, {}
+    for con, parent, _ in walk(tree):
+        parent_of[con["id"]] = parent
     for con, parent, ws in walk(tree):
         if tracked(con) != "main" or not parent or con.get("type") != "con" or not ws or ws.startswith("__"):
             continue
-        sibs = parent.get("nodes", [])
-        if con not in sibs:          # floating: nothing to restore
+        if parent.get("type") == "floating_con" or con not in parent.get("nodes", []):
+            continue                                     # floating: nothing to restore
+        node = con
+        while parent.get("type") != "workspace" and len(parent.get("nodes", [])) == 1:
+            node, parent = parent, parent_of.get(parent["id"])
+            if parent is None:
+                break
+        if parent is None or node not in parent.get("nodes", []):
             continue
-        i = sibs.index(con)
+        sibs = parent.get("nodes", [])
+        i = sibs.index(node)
         slots[con["window"]] = {
             "ws": ws,
             "layout": parent.get("layout"),
-            "percent": con.get("percent"),
+            "percent": node.get("percent"),
             "left": sibs[i - 1]["id"] if i > 0 else None,
             "right": sibs[i + 1]["id"] if i + 1 < len(sibs) else None,
             "class": (con.get("window_properties") or {}).get("class"),
@@ -133,42 +165,88 @@ def con_ids(tree):
     return {con["id"] for con, _, _ in walk(tree)}
 
 
-def restore(cmd, tree, con, slot):
-    cid, ids = con["id"], con_ids(tree)
-    # With workspace_auto_back_and_forth, "move container to workspace X" while X is the
-    # focused workspace sends the window to the previous one instead (Resolve jumped to 3 after
-    # the Cinema Viewer). So move it to a mark on the workspace itself, which never bounces;
-    # by name only when the workspace does not exist yet (then it cannot be the focused one).
-    now_ws = next((ws for c, _, ws in walk(tree) if c["id"] == cid), None)
+def where(tree, cid):
+    return next((ws for c, _, ws in walk(tree) if c["id"] == cid), None)
+
+
+def to_workspace(tree, cid, name):
+    """Commands that put con cid on workspace `name` without ever bouncing elsewhere."""
+    # "move container to workspace X" while X is the focused workspace can send the window to
+    # the previous workspace instead (Resolve went to 1 or 3 after the Cinema Viewer, every other
+    # time). A mark on the workspace itself never bounces; by name only when the workspace does
+    # not exist yet (then it cannot be the focused one).
+    if where(tree, cid) == name:
+        return []
     ws_id = next((c["id"] for c, _, _ in walk(tree)
-                  if c.get("type") == "workspace" and c.get("name") == slot["ws"]), None)
-    if now_ws == slot["ws"]:
-        steps = []
-    elif ws_id:
-        steps = [f"[con_id={ws_id}] mark --add _tuxslot",
-                 f"[con_id={cid}] move container to mark _tuxslot",
-                 f"[con_id={ws_id}] unmark _tuxslot"]
-    else:
-        steps = [f'[con_id={cid}] move container to workspace "{slot["ws"]}"']
+                  if c.get("type") == "workspace" and c.get("name") == name), None)
+    if ws_id:
+        return [f"[con_id={ws_id}] mark --add _tuxslot",
+                f"[con_id={cid}] move container to mark _tuxslot",
+                f"[con_id={ws_id}] unmark _tuxslot"]
+    return [f'[con_id={cid}] move container to workspace "{name}"']
+
+
+def find(tree, cid):
+    return next((c for c, _, _ in walk(tree) if c["id"] == cid), None)
+
+
+def place_next_to(cmd, get_tree, cid, nid, before, layout):
+    """Put con cid right after (or before) con nid, as its sibling."""
+    back = "up" if layout == "splitv" else "left"
+    tree = get_tree()
+    n = find(tree, nid)
+    if n is None:
+        return
+    if n.get("window"):
+        # A window: "move to mark" puts cid next to it.
+        run_steps(cmd, [f"[con_id={nid}] mark --add _tuxslot",
+                        f"[con_id={cid}] move container to mark _tuxslot",
+                        f"[con_id={nid}] unmark _tuxslot"] +
+                  ([f"[con_id={cid}] move {back}"] if before else []))
+        return
+    # A split container (say a file manager and a terminal stacked): "move to mark" would go
+    # inside it. Open an empty placeholder next to it instead, swap the window into the
+    # placeholder's place, and close the placeholder.
+    known = con_ids(tree)
+    run_steps(cmd, [f"[con_id={nid}] focus", "open"])
+    tree = get_tree()
+    hole = next((c["id"] for c, _, _ in walk(tree)
+                 if c["id"] not in known and c.get("type") == "con" and not c.get("window")
+                 and not c.get("nodes")), None)
+    if hole is None:
+        log("  no placeholder opened next to", nid)
+        return
+    run_steps(cmd, ([f"[con_id={hole}] move {back}"] if before else []) +
+              [f"[con_id={cid}] swap container with con_id {hole}",
+               f"[con_id={hole}] kill"])
+
+
+def restore(cmd, get_tree, tree, con, slot):
+    cid, ids = con["id"], con_ids(tree)
+    run_steps(cmd, to_workspace(tree, cid, slot["ws"]))
     if slot["left"] in ids:
-        steps += [f"[con_id={slot['left']}] mark --add _tuxslot",
-                  f"[con_id={cid}] move container to mark _tuxslot",
-                  f"[con_id={slot['left']}] unmark _tuxslot"]
+        place_next_to(cmd, get_tree, cid, slot["left"], False, slot["layout"])
     elif slot["right"] in ids:
-        back = "up" if slot["layout"] == "splitv" else "left"
-        steps += [f"[con_id={slot['right']}] mark --add _tuxslot",
-                  f"[con_id={cid}] move container to mark _tuxslot",
-                  f"[con_id={slot['right']}] unmark _tuxslot",
-                  f"[con_id={cid}] move {back}"]
+        place_next_to(cmd, get_tree, cid, slot["right"], True, slot["layout"])
     if slot["percent"] and slot["percent"] < 0.995 and slot["layout"] in ("splith", "splitv"):
         dim = "width" if slot["layout"] == "splith" else "height"
-        steps.append(f"[con_id={cid}] resize set {dim} {round(slot['percent'] * 100)} ppt")
-    steps.append(f"[con_id={cid}] focus")
+        run_steps(cmd, [f"[con_id={cid}] resize set {dim} {round(slot['percent'] * 100)} ppt"])
+    # Check where it really ended up (assign rules, the app re-mapping, i3 quirks) and fix it.
+    # Focusing the window last also brings the view back to its workspace.
+    tree = get_tree()
+    if where(tree, cid) not in (slot["ws"], None):
+        log("  landed on workspace", where(tree, cid), "- moving it back to", slot["ws"])
+        run_steps(cmd, to_workspace(tree, cid, slot["ws"]))
+    run_steps(cmd, [f"[con_id={cid}] focus"])
+    log("restored", slot["class"], "to workspace", where(get_tree(), cid) or slot["ws"],
+        f"at {round((slot['percent'] or 0) * 100)}%")
+
+
+def run_steps(cmd, steps):
     for s in steps:
         res = cmd(s)
         if DEBUG or not all(r.get("success") for r in res):
             log("  ", s, "->", res)
-    log("restored", slot["class"], "to workspace", slot["ws"], f"at {round((slot['percent'] or 0) * 100)}%")
 
 
 def main():
@@ -181,10 +259,18 @@ def main():
     log("started on", path)
 
     slots, pending = snapshot(get_tree()), {}   # pending: x window id -> (slot, time hidden)
+    hold = {}   # X class -> time until which its layout is not learned
     next_poll = 0.0
     while True:
         ready, _, _ = select.select([events.s], [], [], POLL)
         now = time.time()
+        # tux-update installed a new version: switch to it, but never while a window is hidden
+        # (its slot lives only in this process).
+        new = mtime(SELF)
+        if not pending and SELF_MTIME and new not in (SELF_MTIME, None) and now - new > 2:
+            log("new version installed, restarting")
+            # argv[0] "python3" keeps tux-autostart's pgrep '^python3 .*/tux-winslot' matching.
+            os.execv(sys.executable, ["python3", SELF] + sys.argv[1:])
         event = events.read()[1] if ready else None
         # Poll only while something is tracked; otherwise just wait for window events.
         if not event and (now < next_poll or not (slots or pending)):
@@ -193,7 +279,13 @@ def main():
         change = event.get("change") if event else None
         con = event.get("container", {}) if event else {}
         tree = get_tree()
-        current = snapshot(tree)
+        # The Cinema Viewer maps (and takes a share of the split) a moment before the main window
+        # goes, so a layout seen then is already wrong: learn nothing while another window of
+        # the app just appeared or one of its windows is fullscreen.
+        if change == "new" and tracked(con) == "other":
+            hold[(con.get("window_properties") or {}).get("class")] = now + 3
+        frozen = busy(tree) | {c for c, t in hold.items() if t > now}
+        current = {w: s for w, s in snapshot(tree).items() if s["class"] not in frozen}
 
         if change == "close" and con.get("window") in slots:
             wid = con["window"]
@@ -209,7 +301,7 @@ def main():
                  if s["class"] == (con.get("window_properties") or {}).get("class")), None)
             if key is not None:
                 slot, _ = pending.pop(key)
-                restore(cmd, tree, con, slot)
+                restore(cmd, get_tree, tree, con, slot)
                 current = snapshot(get_tree())
 
         # Learn the layout only while the window is mapped, and keep the last good slot otherwise:
@@ -237,4 +329,8 @@ if __name__ == "__main__":
             time.sleep(2)
         except KeyboardInterrupt:
             break
+        except Exception:   # a bug must not end the watcher: log it and start over
+            fails = 0 if time.time() - started > 60 else fails + 1
+            log("crashed:", traceback.format_exc().strip().replace("\n", " | "))
+            time.sleep(2)
     log("exit")
