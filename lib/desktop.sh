@@ -306,10 +306,29 @@ nvim_stage() {
     warn "Neovim plugins not fully installed yet; they finish on first start"
 }
 
+# Thunar's own "Set as wallpaper" (thunar-wallpaper-plugin) only talks to xfdesktop, which
+# tuxcraft never runs, so it does nothing. Our custom action (tux-wallpaper set) replaces it:
+# delete the plugin and tell the package manager not to bring it back on upgrades.
+thunar_no_wallpaper_plugin() {
+  case $DISTRO in
+    void)
+      mkdir -p /etc/xbps.d
+      echo 'noextract=/usr/lib/thunarx-3/thunar-wallpaper-plugin.so' >/etc/xbps.d/30-tuxcraft-thunar.conf ;;
+    debian)
+      mkdir -p /etc/dpkg/dpkg.cfg.d
+      echo 'path-exclude=/usr/lib/*/thunarx-3/thunar-wallpaper-plugin.so' >/etc/dpkg/dpkg.cfg.d/tuxcraft-thunar ;;
+    arch)
+      grep -q 'thunar-wallpaper-plugin' /etc/pacman.conf ||
+        sed -i '/^\[options\]/a NoExtract = usr/lib/thunarx-3/thunar-wallpaper-plugin.so' /etc/pacman.conf ;;
+  esac
+  rm -f /usr/lib/thunarx-3/thunar-wallpaper-plugin.so /usr/lib/*/thunarx-3/thunar-wallpaper-plugin.so
+}
+
 desktop_stage() {
   desktop_packages
   extras_stage
   install_runtime
+  thunar_no_wallpaper_plugin
   void_pipewire
   desktop_services
   fonts_stage
