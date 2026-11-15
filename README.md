@@ -400,6 +400,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-battery status` / `restart` | laptops: a notification when the charger comes out (charge and time left) and again when it goes back in; unplugged switches the power profile to power-saver, plugged in brings the previous one back (unless you picked another meanwhile). `BATTERY_SAVER=off` in the state file keeps the profile as it is |
 | `tux-control` | the system menu from a terminal |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
+| `tux-davincibox` | DaVinci Resolve (Studio) in a container: install or upgrade from Blackmagic's zip, plus a file manager for the box (see below) |
 
 ## Claude Desktop
 
@@ -426,6 +427,37 @@ published fingerprint), exports **Claude** to the app menu, and fixes what break
 Sign-in and settings stay in `~/.config/Claude` on the host. Sign-in is saved only if a keyring
 (gnome-keyring) runs in your session. **Cowork** needs KVM: be in the `kvm` group and load
 `vhost_vsock` (`doctor` prints the commands). Options: `--name` (default `tux-debian`), `--image`.
+
+## DaVinci Resolve (`tux-davincibox`)
+
+Resolve needs glibc-era libraries that no rolling distro keeps around, so tuxcraft runs it in a
+distrobox built from the [davincibox](https://github.com/zelikos/davincibox) image (Fedora):
+
+```sh
+tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_21.2_Linux.zip   # first install, or upgrade
+tux-davincibox files [--root]          # browse the box in Thunar (as you, or as root in the box)
+tux-davincibox doctor                  # box, GPU, Resolve version, file manager, menu entries
+tux-davincibox menu                    # (re)create the menu entries
+```
+
+Download the zip from Blackmagic and pass its path; nothing else to unpack. The same command
+installs the first time (creating the box) and later upgrades Resolve in place: it reads the
+version from the zip, compares it with the box (`tux-davincibox version`) and asks before a
+reinstall or downgrade. Projects, the database, settings and the Studio activation live in your
+home, so they survive an upgrade. Unpacking needs about 25 GB free in `~/.cache`.
+
+- **GPU:** NVIDIA boxes get the host driver (`--nvidia`, or the container toolkit's CDI device
+  when `nvidia-ctk` is installed); AMD/Intel use the `davincibox-opencl` image. On a hybrid
+  laptop the launchers add PRIME offload so Resolve renders on the NVIDIA GPU.
+- **Menu:** DaVinci Resolve, Blackmagic RAW Player/Speed Test, Control Panels Setup and Remote
+  Monitor, plus **Davincibox Files** and **Davincibox Files (root)**. The file manager (Thunar;
+  `--fm nemo` for Nemo) runs on its own D-Bus so it shows the box, not the host. Root in the
+  box is you on the host (rootless podman): it can change the box's `/opt`, `/usr`, `/etc`, not
+  the host's system files.
+- **Updates:** `sysup` upgrades the box's Fedora packages; Resolve itself only from a new zip.
+
+Deactivate Studio (*Help ▸ DaVinci Resolve Studio License*) before `install --recreate` or
+`remove`, or you may use up an activation. Options: `--name` (default `davincibox`), `--fm`.
 
 ## Gaming VM (`tux-gamevm`)
 

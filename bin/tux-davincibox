@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# tux-davincibox — DaVinci Resolve (Studio or free) in a distrobox built from the davincibox image
+# (Fedora, all of Resolve's runtime libraries), with menu entries, a file manager for the box,
+# and one command to install or upgrade from the zip Blackmagic gives you.
+#   tux-davincibox FILE.zip|FILE.run          install Resolve, or upgrade it in place
+#   tux-davincibox install FILE [--recreate]   same; --recreate throws the box away first
+#   tux-davincibox files [--root] [DIR]        browse the box (as you, or as root in the box)
+#   tux-davincibox menu                        (re)create the menu entries (rofi/fuzzel)
+#   tux-davincibox version                     the Resolve version installed in the box
+#   tux-davincibox update                      dnf upgrade inside the box (sysup does this too)
+#   tux-davincibox doctor                      check box, GPU, Resolve, file manager, entries
+#   tux-davincibox remove                      delete the box and its menu entries
+# Options: --name NAME (default davincibox)  --fm thunar|nemo (default thunar)  --yes
+# Projects, database, settings and the Studio activation live in your home, so an upgrade keeps
+# them. Deactivate Studio (Help ▸ License) before --recreate or remove.
+set -euo pipefail
+
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft
+CONF=${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/davincibox.conf
+MARK=$STATE/davincibox.box   # the box name; sysup looks for it to update the box
+APPS=${XDG_DATA_HOME:-$HOME/.local/share}/applications
+LOG=$STATE/davincibox.log
+NAME=davincibox FM=thunar
+# shellcheck source=/dev/null
+[[ -f $CONF ]] && . "$CONF"
+IMG_NVIDIA=ghcr.io/zelikos/davincibox:latest
+IMG_OPENCL=ghcr.io/zelikos/davincibox-opencl:latest
+
+b=$'\e[1m' g=$'\e[32m' y=$'\e[33m' r=$'\e[31m' c=$'\e[36m' n=$'\e[0m'
+step() { printf '\n%s==> %s%s\n' "$c$b" "$*" "$n"; }
+ok()   { printf '%s ok%s %s\n' "$g$b" "$n" "$*"; }
+warn() { printf '%s !%s %s\n' "$y$b" "$n" "$*"; }
+die()  { printf '%s x%s %s\n' "$r$b" "$n" "$*" >&2; exit 1; }
+ask()  { ((YES)) && return 0; read -r -p "$b? $1$n [y/N] " x; [[ ${x,,} == y* ]]; }
+
+# Rootless podman: the box belongs to you; a sudo run would look for a different one.
+[[ $EUID -ne 0 ]] || die "Run this as your normal user, not with sudo."
+
+cmd=${1:-}; [[ -z $cmd || $cmd == -* ]] && cmd=help || shift
+# A path as the first word: install or upgrade from it.
+[[ $cmd == *.zip || $cmd == *.run || -f $cmd ]] && { set -- "$cmd" "$@"; cmd=install; }
+YES=0 RECREATE=0 ROOT=0 ARGS=()
+while (($#)); do
+  case $1 in
+    --name) NAME=$2; shift ;;
+    --fm) FM=$2; shift ;;
+    --yes|-y) YES=1 ;;
+    --recreate) RECREATE=1 ;;
+    --root) ROOT=1 ;;
+    *) ARGS+=("$1") ;;
+  esac
+  shift
+done
+case $FM in thunar|nemo) ;; *) die "--fm must be thunar or nemo" ;; esac
+mkdir -p "$STATE" "${CONF%/*}"
+
+box_exists() { podman container exists "$NAME" 2>/dev/null; }
+inbox() { distrobox enter --name "$NAME" -- "$@"; }
+# Root inside a rootless box is you on the host, so this needs no password and cannot touch
+# anything outside your own files. podman exec works where sudo in the box cannot.
+asroot() { podman start "$NAME" >/dev/null; podman exec -i -u root "$NAME" "$@"; }
+resolve_version() {
+  box_exists || return 1
+  podman start "$NAME" >/dev/null 2>&1 || return 1
+  podman exec "$NAME" sh -c 'grep -m1 -oE "DaVinci Resolve( Studio)? [0-9]+(\.[0-9]+)+" /opt/resolve/docs/ReadMe.html' 2>/dev/null \
+    | grep -oE '[0-9]+(\.[0-9]+)+$'
+}
+installed() { [[ -n $(resolve_version) ]]; }
+save_conf() { printf 'NAME=%q\nFM=%q\n' "$NAME" "$FM" >"$CONF"; echo "$NAME" >"$MARK"; }
+self() { command -v tux-davincibox >/dev/null 2>&1 && echo tux-davincibox || readlink -f "$0"; }
+
+# NVIDIA wins; NVIDIA next to another GPU is a hybrid laptop and needs PRIME offload.
+gpus() { cat /sys/class/drm/card*/device/vendor 2>/dev/null | sort -u; }
+gpu() {
+  local v; v=$(gpus)
+  if grep -qx 0x10de <<<"$v"; then echo nvidia
+  elif grep -qx 0x1002 <<<"$v"; then echo amd
+  elif grep -qx 0x8086 <<<"$v"; then echo intel
+  else echo unknown; fi
+}
+hybrid() { [[ $(gpu) == nvidia ]] && (($(gpus | wc -l) > 1)); }
+
+host_deps() {
+  local need=()
+  command -v distrobox >/dev/null || need+=(distrobox)
+  command -v podman >/dev/null || need+=(podman)
+  command -v unzip >/dev/null || need+=(unzip)
+  if ((${#need[@]})); then
+    step "Installing ${need[*]} on the host"
+    if command -v tux-pkg >/dev/null; then tux-pkg install "${need[@]}"
+    elif command -v pacman >/dev/null; then sudo pacman -S --needed "${need[@]}"
+    elif command -v xbps-install >/dev/null; then sudo xbps-install -S "${need[@]}"
+    elif command -v apt-get >/dev/null; then sudo apt-get install -y "${need[@]}"
+    else die "Install ${need[*]}, then run this again."; fi
+  fi
+  # Rootless podman needs subordinate ids; Void does not create them.
+  grep -q "^$USER:" /etc/subuid 2>/dev/null ||
+    { sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$USER"; podman system migrate || true; }
+  local grp missing=()
+  for grp in video render; do
+    getent group "$grp" >/dev/null || continue
+    id -nG "$USER" | tr ' ' '\n' | grep -qx "$grp" || missing+=("$grp")
+  done
+  if ((${#missing[@]})); then
+    sudo usermod -aG "$(IFS=,; echo "${missing[*]}")" "$USER"
+    die "Added you to ${missing[*]} (GPU access). Log out and back in, then run this again."
+  fi
+}
+
+create_box() {
+  local image flags=()
+  case $(gpu) in
+    nvidia)
+      nvidia-smi >/dev/null 2>&1 || die "NVIDIA GPU, but the host driver does not answer (nvidia-smi). Install it and reboot first."
+      image=$IMG_NVIDIA
+      # The container toolkit's CDI device is what davincibox upstream uses; without it
+      # distrobox bind-mounts the host's NVIDIA libraries (--nvidia), which works here too.
+      if command -v nvidia-ctk >/dev/null; then
+        [[ -f /etc/cdi/nvidia.yaml ]] || { sudo mkdir -p /etc/cdi; sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml; }
+        flags=(--additional-flags "--device nvidia.com/gpu=all")
+      else
+        flags=(--nvidia)
+      fi ;;
+    amd|intel) image=$IMG_OPENCL
+      [[ $(gpu) == amd && ! -e /dev/kfd ]] && warn "/dev/kfd missing: ROCm will not work (is amdgpu loaded?)" ;;
+    *) die "No GPU found under /sys/class/drm; Resolve needs one." ;;
+  esac
+  step "Creating distrobox $NAME from $image"
+  podman pull "$image"
+  distrobox create --yes --name "$NAME" --image "$image" "${flags[@]}"
+  inbox true   # first enter runs distrobox's own setup; keep its output separate
+  step "Updating the box"
+  asroot dnf -y update
+}
+
+# Blackmagic's zip holds one DaVinci_Resolve[_Studio]_X.Y_Linux.run (an AppImage).
+file_version() { grep -oE '[0-9]+(\.[0-9]+)+' <<<"${1##*/}" | head -1; }
+
+do_install() {
+  local src=${ARGS[0]:-}
+  [[ -n $src ]] || die "Give the Resolve zip (or .run) you downloaded: tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_X.Y_Linux.zip"
+  src=$(readlink -e -- "$src") || die "File not found: ${ARGS[0]}"
+  [[ $src == *.zip || $src == *.run ]] || die "Expected the .zip (or the .run inside it) from Blackmagic."
+  host_deps
+
+  local inner=$src
+  if [[ $src == *.zip ]]; then
+    inner=$(unzip -Z1 "$src" | grep -m1 -E '^([^/]*/)?DaVinci_Resolve[^/]*_Linux\.run$') ||
+      die "No DaVinci_Resolve*_Linux.run inside $src"
+  fi
+  local new old; new=$(file_version "$inner"); old=$(resolve_version || true)
+  [[ ${inner##*/} == *Studio* ]] || warn "This is the free Resolve, not Studio."
+
+  if box_exists && ((RECREATE)); then
+    warn "This deletes the box '$NAME' and Resolve inside it (projects and settings in your home stay)."
+    warn "Deactivate Studio first (Help ▸ DaVinci Resolve Studio License ▸ Deactivate) or you may lose an activation."
+    ask "Delete and rebuild '$NAME'?" || exit 0
+    unexport
+    distrobox rm --force "$NAME"; old=
+  fi
+  if [[ -n $old ]]; then
+    if [[ $new == "$old" ]]; then ask "Resolve $old is already installed. Install it again?" || exit 0
+    elif [[ $(printf '%s\n' "$old" "$new" | sort -V | tail -1) == "$old" ]]; then
+      warn "The box has Resolve $old; this is $new (older)."; ask "Downgrade?" || exit 0
+    else ok "Upgrading Resolve $old → $new (projects, settings and activation stay)"; fi
+  fi
+  box_exists || create_box
+  save_conf
+
+  # The box shares your home, so stage there. The zip's .run is ~11 GB and its extracted tree
+  # about as much again; the .run is deleted as soon as it is extracted.
+  local cache=${XDG_CACHE_HOME:-$HOME/.cache}/tuxcraft
+  mkdir -p "$cache"
+  local stage; stage=$(mktemp -d "$cache/resolve-install.XXXXXX")
+  # shellcheck disable=SC2064
+  trap "rm -rf -- '$stage'" EXIT
+  local free; free=$(df -Pk "$stage" | awk 'NR==2{print int($4/1048576)}')
+  ((free >= 25)) || warn "Only $free GB free in $cache; unpacking needs about 25 GB."
+  local run=$src
+  if [[ $src == *.zip ]]; then
+    step "Unpacking ${src##*/}"
+    unzip -p "$src" "$inner" >"$stage/resolve.run"
+    run=$stage/resolve.run
+  fi
+  chmod +x "$run" 2>/dev/null || { cp "$run" "$stage/resolve.run"; run=$stage/resolve.run; chmod +x "$run"; }
+
+  step "Extracting the installer inside the box"
+  # Inside the box: works on musl Void and needs no FUSE on the host.
+  inbox bash -c 'cd "$1" && "$2" --appimage-extract >/dev/null' _ "$stage" "$run"
+  [[ $run == "$stage"/* ]] && rm -f "$run"
+  [[ -x $stage/squashfs-root/AppRun ]] || die "Extraction failed (no squashfs-root/AppRun)."
+
+  step "Installing Resolve ${new:-} (davincibox's setup-davinci)"
+  # setup-davinci runs Blackmagic's installer, patches the binaries so no LD_PRELOAD is needed,
+  # and parks the BRAW OpenCL decoders that crash the companion apps. Its launcher question
+  # gets "n": the launchers are made below as you, not as root.
+  echo n | asroot env HOME=/root /usr/bin/setup-davinci "$stage/squashfs-root/AppRun" distrobox
+  rm -rf -- "$stage"; trap - EXIT
+  local now; now=$(resolve_version || true)
+  [[ -n $now ]] || die "Resolve did not install (no /opt/resolve in the box). See the installer's output above."
+  [[ -z $new || $now == "$new" ]] || die "The box still reports Resolve $now, not $new. See the installer's output above."
+  ok "DaVinci Resolve $now"
+
+  install_fm
+  do_menu
+}
+
+install_fm() {
+  local pkgs
+  # dbus-daemon brings dbus-run-session: see do_files.
+  case $FM in thunar) pkgs=(Thunar tumbler gvfs dbus-daemon) ;; nemo) pkgs=(nemo gvfs dbus-daemon) ;; esac
+  if podman exec "$NAME" sh -c "command -v $FM && command -v dbus-run-session" >/dev/null 2>&1; then
+    ok "$FM is in the box"; return
+  fi
+  step "Installing $FM in the box"
+  # No weak deps: they bring udisks and a dozen filesystem tools whose scriptlets fail in a box.
+  asroot dnf -y install --setopt=install_weak_deps=False "${pkgs[@]}"
+}
+
+desktop() { # file name exec icon comment [extra lines]
+  local f=$APPS/$1; mkdir -p "$APPS"
+  { printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nIcon=%s\nComment=%s\nTerminal=false\n' "$2" "$3" "$4" "$5"
+    [[ -n ${6:-} ]] && printf '%s\n' "$6"; } >"$f"
+}
+
+do_menu() {
+  box_exists || die "No box '$NAME'. Run: tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_X.Y_Linux.zip"
+  step "Menu entries"
+  if installed; then
+    # davincibox's own launcher script: Resolve, BRAW Player/Speed Test, Control Panels Setup, Remote Monitor.
+    inbox /usr/bin/add-davinci-launcher distrobox >/dev/null
+    # The box name is fixed in that script; follow --name.
+    [[ $NAME == davincibox ]] || sed -i "s|distrobox enter -n davincibox --|distrobox enter -n $NAME --|" "$APPS"/{blackmagicraw,DaVinci}*.desktop
+    if hybrid; then
+      # Hybrid laptop: render on the NVIDIA GPU, or Resolve runs on the iGPU and refuses to start.
+      sed -i 's|-- /usr/bin/run-davinci|-- env __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia /usr/bin/run-davinci|' \
+        "$APPS"/{blackmagicraw,DaVinci}*.desktop
+      ok "NVIDIA PRIME offload in the launchers (hybrid graphics)"
+    fi
+    ok "DaVinci Resolve, Blackmagic RAW Player/Speed Test, Control Panels, Remote Monitor"
+  else
+    warn "Resolve is not installed in $NAME yet; only the file manager entries are made"
+  fi
+  install_fm
+  local me icon; me=$(self)
+  icon=system-file-manager
+  desktop "$NAME-files.desktop" "Davincibox Files" "$me files" "$icon" \
+    "Browse the DaVinci Resolve box ($FM)" "Categories=System;FileManager;"$'\n'"Keywords=davinci;resolve;files;container;"
+  desktop "$NAME-files-root.desktop" "Davincibox Files (root)" "$me files --root" "$icon" \
+    "Browse the DaVinci Resolve box as its root user ($FM)" "Categories=System;FileManager;"$'\n'"Keywords=davinci;resolve;files;container;root;sudo;"
+  update-desktop-database "$APPS" 2>/dev/null || true
+  ok "Davincibox Files, Davincibox Files (root)"
+}
+
+unexport() {
+  rm -f "$APPS/$NAME-files.desktop" "$APPS/$NAME-files-root.desktop"
+  box_exists && inbox /usr/bin/add-davinci-launcher remove >/dev/null 2>&1 || true
+  return 0
+}
+
+do_files() {
+  box_exists || die "No box '$NAME'. Run: tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_X.Y_Linux.zip"
+  install_fm >/dev/null
+  local dir=${ARGS[0]:-} bin=$FM
+  # Thunar and Nemo are single-instance over D-Bus: on the shared session bus the box's copy
+  # hands the window to the host's file manager, which shows the host, not the box. A private
+  # bus keeps it in the box.
+  if ((ROOT)); then
+    podman start "$NAME" >/dev/null
+    setsid -f podman exec -u root -e DISPLAY -e XAUTHORITY -e WAYLAND_DISPLAY -e HOME=/root -w / "$NAME" \
+      dbus-run-session -- "$bin" "${dir:-/}" >>"$LOG" 2>&1 </dev/null
+  else
+    setsid -f distrobox enter --name "$NAME" -- dbus-run-session -- "$bin" "${dir:-$HOME}" >>"$LOG" 2>&1 </dev/null
+  fi
+}
+
+do_update() {
+  box_exists || die "No box '$NAME'."
+  asroot dnf -y upgrade --refresh
+}
+
+do_remove() {
+  box_exists || { ok "Nothing to remove"; rm -f "$MARK"; return; }
+  warn "Deactivate Studio first (Help ▸ DaVinci Resolve Studio License ▸ Deactivate) or you may lose an activation."
+  ask "Delete the box '$NAME' and Resolve inside it?" || exit 0
+  unexport
+  distrobox rm --force "$NAME"
+  rm -f "$MARK"
+  ok "Removed. Projects and settings stay in ~/.local/share/DaVinciResolve; free the image with: podman image prune -a"
+}
+
+# shellcheck disable=SC2015  # pass/fail always succeed
+do_doctor() {
+  local p=0 f=0 v
+  pass() { ok "$*"; p=$((p+1)); }
+  fail() { warn "$*"; f=$((f+1)); }
+  command -v distrobox >/dev/null && pass "distrobox $(distrobox version 2>/dev/null | awk '{print $NF}')" || fail "distrobox missing"
+  box_exists && pass "box $NAME ($(podman inspect "$NAME" --format '{{.ImageName}}'))" || { fail "no box $NAME"; return 1; }
+  v=$(resolve_version || true); [[ -n $v ]] && pass "DaVinci Resolve $v" || fail "Resolve not installed in the box"
+  pass "GPU: $(gpu)$(hybrid && echo ' (hybrid: PRIME offload)')"
+  if [[ $(gpu) == nvidia ]]; then
+    podman exec "$NAME" nvidia-smi -L >/dev/null 2>&1 && pass "NVIDIA GPU visible in the box" || fail "nvidia-smi fails in the box (rebuild with --recreate)"
+  fi
+  podman exec "$NAME" sh -c "command -v $FM && command -v dbus-run-session" >/dev/null 2>&1 && pass "$FM in the box" || fail "$FM missing: tux-davincibox menu"
+  [[ -f $APPS/DaVinciResolve.desktop ]] && pass "Resolve menu entry" || fail "no Resolve menu entry: tux-davincibox menu"
+  if hybrid; then
+    grep -q __NV_PRIME_RENDER_OFFLOAD "$APPS/DaVinciResolve.desktop" 2>/dev/null && pass "launcher renders on NVIDIA (PRIME)" || fail "launcher lacks PRIME offload: tux-davincibox menu"
+  fi
+  [[ -f $APPS/$NAME-files.desktop && -f $APPS/$NAME-files-root.desktop ]] && pass "file manager menu entries" || fail "no file manager entries: tux-davincibox menu"
+  printf '\n%d ok, %d to look at\n' "$p" "$f"
+}
+
+case $cmd in
+  install) do_install
+           printf '\nStart it from the menu (DaVinci Resolve). Upgrade later: tux-davincibox NEW.zip\n' ;;
+  files)   do_files ;;
+  menu)    save_conf; do_menu ;;
+  version) v=$(resolve_version) || die "Resolve is not installed in $NAME"; echo "$v" ;;
+  update)  do_update ;;
+  doctor)  do_doctor ;;
+  remove)  do_remove ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; [[ $cmd == help ]] || exit 1 ;;
+esac

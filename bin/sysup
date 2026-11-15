@@ -133,6 +133,14 @@ if [[ -n $user && -f $(getent passwd "$user" | cut -d: -f6)/.local/state/tuxcraf
   sudo -u "$user" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" tux-claude-desktop update || warn "Claude Desktop update had problems"
 fi
 
+# DaVinci Resolve's box (tux-davincibox): its Fedora libraries. Resolve itself is upgraded with
+# the zip from Blackmagic: tux-davincibox NEW.zip
+if [[ -n $user && -f $(getent passwd "$user" | cut -d: -f6)/.local/state/tuxcraft/davincibox.box ]] &&
+   command -v tux-davincibox >/dev/null; then
+  step "DaVinci Resolve box (distrobox)"
+  sudo -u "$user" -H env XDG_RUNTIME_DIR="/run/user/$(id -u "$user")" tux-davincibox update || warn "davincibox update had problems"
+fi
+
 # Apps installed into boxes by "ii" (tux-pkg): update each box (and the AUR in the Arch box).
 if [[ -n $user ]] && command -v distrobox >/dev/null &&
    sudo -u "$user" podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^tux-' >/dev/null; then
