@@ -3,7 +3,7 @@
 # Turn ble.sh off: touch ~/.config/tuxcraft/no-blesh
 bleopt exec_errexit_mark=        # starship already shows a failed exit code
 bleopt exec_elapsed_mark=        # ... and how long a slow command took
-bleopt edit_bell=                # no beep, no flash
+bleopt edit_abell=               # no beep (the flash, edit_vbell, is off by default)
 bleopt complete_menu_style=align-nowrap
 # Paths that exist keep ble.sh's colours but are not underlined (its defaults, minus underline).
 ble-face -s filename_directory        fg=33
