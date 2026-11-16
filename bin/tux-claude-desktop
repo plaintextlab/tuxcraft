@@ -68,12 +68,12 @@ installed() { box_exists && inbox sh -c 'command -v claude-desktop' >/dev/null 2
 
 host_deps() {
   command -v distrobox >/dev/null && { command -v podman >/dev/null || command -v docker >/dev/null; } && return
-  step "Installing distrobox and podman on the host"
-  if command -v tux-pkg >/dev/null; then tux-pkg install distrobox podman
-  elif command -v pacman >/dev/null; then sudo pacman -S --needed distrobox podman
-  elif command -v xbps-install >/dev/null; then sudo xbps-install -S distrobox podman
-  elif command -v apt-get >/dev/null; then sudo apt-get install -y distrobox podman
-  else die "Install distrobox and podman, then run this again."; fi
+  # tux-pkg's box setup: also covers Void (no distrobox package: pinned upstream release) and
+  # podman without systemd. "tux-pkg install distrobox podman" searched for distrobox only
+  # (one name per call) and offered it from Arch/Debian/Fedora boxes, which need distrobox.
+  step "Setting up podman + distrobox on the host"
+  command -v tux-pkg >/dev/null || die "tux-pkg missing: run tux-update, then this again."
+  tux-pkg box-tools || die "podman/distrobox setup failed"
 }
 
 do_install() {
