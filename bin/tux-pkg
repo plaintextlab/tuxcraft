@@ -5,6 +5,8 @@
 #   tux-pkg search WORDS        search the host repo and Flathub
 #   tux-pkg list                what tux-pkg installed outside the host repo
 #   tux-pkg info NAME | list-files NAME   (host packages)
+#   tux-pkg box-tools           set up podman + distrobox only (also on Void, where
+#                               distrobox is not packaged); used by tux-davincibox
 #
 # Sources, best first: the host repo, Flathub, a vendor's own repo (data/vendor-repos.tsv),
 # Arch, Debian and Fedora repos, the AUR. Non-host packages go into distrobox containers
@@ -313,7 +315,8 @@ case $cmd in
   search) cmd_search "$@" ;;
   list) cmd_list ;;
   upgrade-boxes) cmd_upgrade_boxes ;;
+  box-tools) ensure_box_tools ;;
   info) native info "$@" ;;
   list-files) native list-files "$@" ;;
-  *) sed -n '2,8p' "$0" | sed 's/^# //'; exit 1 ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# //'; exit 1 ;;
 esac

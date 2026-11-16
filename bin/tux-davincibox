@@ -81,17 +81,20 @@ gpu() {
 hybrid() { [[ $(gpu) == nvidia ]] && (($(gpus | wc -l) > 1)); }
 
 host_deps() {
-  local need=()
-  command -v distrobox >/dev/null || need+=(distrobox)
-  command -v podman >/dev/null || need+=(podman)
-  command -v unzip >/dev/null || need+=(unzip)
-  if ((${#need[@]})); then
-    step "Installing ${need[*]} on the host"
-    if command -v tux-pkg >/dev/null; then tux-pkg install "${need[@]}"
-    elif command -v pacman >/dev/null; then sudo pacman -S --needed "${need[@]}"
-    elif command -v xbps-install >/dev/null; then sudo xbps-install -S "${need[@]}"
-    elif command -v apt-get >/dev/null; then sudo apt-get install -y "${need[@]}"
-    else die "Install ${need[*]}, then run this again."; fi
+  # podman + distrobox: tux-pkg's box setup, which also covers Void (distrobox is not in its
+  # repo: pinned upstream release) and podman without systemd. "tux-pkg install distrobox"
+  # would instead offer distrobox from Arch/Debian/Fedora boxes, which need distrobox first.
+  if ! command -v distrobox >/dev/null || ! command -v podman >/dev/null; then
+    step "Setting up podman + distrobox on the host"
+    command -v tux-pkg >/dev/null || die "tux-pkg missing: run tux-update, then this again."
+    tux-pkg box-tools || die "podman/distrobox setup failed"
+  fi
+  if ! command -v unzip >/dev/null; then
+    step "Installing unzip on the host"
+    if command -v pacman >/dev/null; then sudo pacman -S --needed --noconfirm unzip
+    elif command -v xbps-install >/dev/null; then sudo xbps-install -Sy unzip
+    elif command -v apt-get >/dev/null; then sudo apt-get install -y unzip
+    else die "Install unzip, then run this again."; fi
   fi
   # Rootless podman needs subordinate ids; Void does not create them.
   grep -q "^$USER:" /etc/subuid 2>/dev/null ||
