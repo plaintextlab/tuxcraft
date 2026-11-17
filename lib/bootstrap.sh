@@ -152,7 +152,15 @@ live_prereqs() {
   case $HOST_DISTRO in
     arch)
       [[ $DISTRO == debian ]] && need+=(debootstrap debian-archive-keyring)
-      ((IS_TUXISO)) || run pacman -Sy --needed --noconfirm "${need[@]}" ;;
+      # Only what the ISO lacks: '--needed' still upgrades an outdated package, and on an older
+      # ISO that is a partial upgrade (e.g. a newer cryptsetup pulling an openssl soname bump
+      # that breaks pacman, curl and sudo on the live system).
+      if ((!IS_TUXISO)); then
+        local -a missing=()
+        local p
+        for p in "${need[@]}"; do pacman -Qq "$p" >/dev/null 2>&1 || missing+=("$p"); done
+        ((${#missing[@]} == 0)) || run pacman -Sy --noconfirm "${missing[@]}"
+      fi ;;
     debian)
       run apt-get update
       run apt-get install -y debootstrap "${need[@]}" parted ;;
