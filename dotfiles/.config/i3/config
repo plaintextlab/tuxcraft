@@ -27,8 +27,6 @@ bindsym $mod+Shift+q exec --no-startup-id xkill
 # ---- window rules (X11 classes)
 # Every window gets the border, also apps that ask for none (Electron, CSD); rules below may still override.
 for_window [class=".*"] border pixel 2
-# Easy mode (tux-easymode on): titlebars with close / minimise / maximise buttons, written there.
-include ~/.config/i3/easymode.d/*.conf
 for_window [class="^tux-float$"] floating enable, resize set 1100 700, move position center
 for_window [class="^tux-float-big$"] floating enable, resize set 1400 860, move position center
 for_window [window_role="pop-up"] floating enable

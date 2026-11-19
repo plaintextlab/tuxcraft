@@ -51,16 +51,14 @@ watch_monitors() {
 supervise() {
   echo "$BASHPID" >"$pidfile"
   trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM INT HUP
-  local monitors primary m bar kind started watcher why delay=1
+  local monitors primary m bar started watcher why delay=1
   while xset q >/dev/null 2>&1; do   # X gone (logged out): stop
     monitors=$(polybar --list-monitors 2>/dev/null)
     if [[ -z $monitors ]]; then sleep 2; continue; fi   # screen asleep / switching: wait for it
     primary=$(awk -F: '/primary/{print $1; exit}' <<<"$monitors")
     [[ -z $primary ]] && primary=$(head -n1 <<<"$monitors" | cut -d: -f1)
     for m in $(cut -d: -f1 <<<"$monitors"); do
-      # Easy mode (tux-easymode): the taskbar layout instead.
-      kind=main; grep -qsE '^EASY_MODE="?1' "$HOME/.config/tuxcraft/state" && kind=easy
-      bar=$kind; [[ $m == "$primary" ]] && bar=$kind-tray
+      bar=main; [[ $m == "$primary" ]] && bar=main-tray
       MONITOR=$m polybar --reload "$bar" >>"$log" 2>&1 &
     done
     started=$SECONDS

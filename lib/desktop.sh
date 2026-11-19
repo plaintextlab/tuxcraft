@@ -39,6 +39,8 @@ install_runtime() {
   fi
   local f
   for f in "$TUX_SHARE"/bin/*; do install -m755 "$f" "/usr/local/bin/$(basename "$f")"; done
+  # Commands tuxcraft no longer has: an update takes them out too (copying alone would leave them).
+  for f in tux-easymode; do rm -f "/usr/local/bin/$f"; done
   mkdir -p "$TUX_ETC"
   cat >"$TUX_ETC/session.conf" <<EOF
 # Written by tuxcraft. tux-session reads this at login.
