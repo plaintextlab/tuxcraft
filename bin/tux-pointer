@@ -4,6 +4,7 @@
 #   workspace and you go with it (left edge: the previous workspace).
 #   Easy mode (tux-easymode on): clicks on the titlebar buttons (close / minimise / maximise),
 #   right-click a titlebar for the window menu, middle-click to close.
+#   A maximised window that gets dragged goes straight back to filling the screen.
 # i3 does not report where a drag ends, and a press on a titlebar starts i3's own drag, so this
 # listens to X's raw input events: they arrive even while i3 holds the mouse, and nothing is
 # grabbed or changed, so focusing and dragging windows work as always.
@@ -31,7 +32,7 @@ on_drop() {  # Super + drag ended at X: next / previous workspace when at the sc
   i3-msg -q "move container to workspace number $n, workspace number $n" >/dev/null 2>&1
 }
 
-super=0 dragging=0 px=-99 py=-99 X=0 Y=0 SCREEN=0 WINDOW=0
+super=0 dragging=0 moved=0 px=-99 py=-99 X=0 Y=0 SCREEN=0 WINDOW=0
 # xinput prints every event over several lines; awk keeps the key and button ones as
 # "type detail" (13/14 key press/release, 15/16 button press/release).
 xinput test-xi2 --root 2>/dev/null | awk '
@@ -46,7 +47,11 @@ while read -r type detail; do
         [[ $detail == 1 ]] && dragging=$super ;;
     16) ((detail >= 1 && detail <= 3)) || continue
         eval "$(xdotool getmouselocation --shell 2>/dev/null)"
+        moved=$(( (X - px) ** 2 + (Y - py) ** 2 > 9 ))
         if [[ $detail == 1 ]] && ((dragging && super)); then on_drop
+        fi
+        # Easy mode: a maximised window that was dragged (or resized) goes back to filling the screen.
+        if [[ $detail == 1 ]] && ((moved)) && easy; then tux-easymode keepmax &
         elif ((!super)) && (( (X - px) ** 2 + (Y - py) ** 2 <= 9 )) && easy; then
           # A click (press and release at the same spot), not a drag: maybe a titlebar button.
           case $detail in 1) tux-easymode click & ;; 2) tux-easymode click close & ;; 3) tux-easymode click menu & ;; esac

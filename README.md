@@ -362,15 +362,22 @@ dead SSD — that is what `tux-backup` is for.
 For a more familiar desktop without leaving i3: **System menu → Easy mode**, or `tux-easymode on`
 (`off` to go back; nothing else changes).
 
-- **Titlebars** get three buttons on the left, like a Mac: red closes, yellow minimises, green
-  maximises (fills the screen above the bar; again: back to how it was). Right-click a titlebar
-  for the window menu (minimise, maximise, float / tile, move to workspace, close), middle-click
-  closes. Dragging and focusing windows work as before.
+- **Titlebars** get three buttons on the left, drawn like Windows' (✕ close, – minimise,
+  □ maximise) in the titlebar's own colours. Maximise fills the screen above the bar, and its
+  button turns into restore (back to how it was); a maximised window stays put (dragged, it goes
+  straight back) until you restore it. Right-click a titlebar for the window menu (minimise,
+  maximise, float / tile, move to workspace, close), middle-click closes. Other windows drag as
+  before.
+- **Click to focus**, like Windows: a window gets focus when you click it, not when the mouse
+  passes over it (plain i3 goes back to focus-follows-mouse).
+- **Minimise glides** the window down into the bottom centre of the screen, and bringing it back
+  grows it out of there to where it was (with picom running; tuxcraft starts it).
 - **The bar moves to the bottom** and becomes a taskbar, like Windows XP: **Start** (the app
   menu), the workspaces, then one entry per window on this workspace plus every minimised one
-  (dimmed, in brackets). Click: focus it (the focused one: minimise it, a minimised one: bring
-  it back); middle-click: close; right-click: the window menu. Tray, volume, network and clock on
-  the right.
+  (dimmed, in brackets), in the order they were opened: entries keep their place when a window
+  is minimised, maximised or focused. Click: focus it (the focused one: minimise it, a
+  minimised one: bring it back); middle-click: close; right-click: the window menu. Tray,
+  volume, network and clock on the right.
 - **Minimised** windows go to i3's scratchpad, so Super+- also brings them back; switching easy
   mode off brings them all back.
 
