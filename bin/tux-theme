@@ -72,6 +72,17 @@ render() {
     sed -f "$sedf" "$tpl" >"$out.tux-tmp" && mv "$out.tux-tmp" "$out"
   done < <(find "$SHARE/templates" -type f -print0)
   rm -f "$sedf"
+  # Apps in a distrobox (Claude Desktop from tux-debian, ...) look for adw-gtk3 in the box's own
+  # /usr/share/themes, which lacks it, and fall back to plain GTK. ~/.themes is shared with every
+  # box: link the host's theme there through /run/host (where boxes see the host). On the host the
+  # link leads nowhere and GTK skips it, going on to /usr/share/themes as before.
+  local t
+  for t in adw-gtk3 adw-gtk3-dark; do
+    [[ -d /usr/share/themes/$t/gtk-3.0 ]] || continue
+    [[ -e $HOME/.themes/$t/gtk-3.0 && ! -L $HOME/.themes/$t/gtk-3.0 ]] && continue   # a real one of yours
+    mkdir -p "$HOME/.themes/$t"
+    ln -sfn "/run/host/usr/share/themes/$t/gtk-3.0" "$HOME/.themes/$t/gtk-3.0"
+  done
 }
 
 # Push settings to running apps. Silent no-ops outside a graphical session.
