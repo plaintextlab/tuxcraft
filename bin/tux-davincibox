@@ -225,9 +225,10 @@ do_install() {
   do_menu
 }
 
-# Folders Resolve creates in /opt/resolve at its first start, as you, not root. Without them
-# it quits at once ("Failed to create application support directories"; Resolve 21: Immersive).
-RESOLVE_DIRS=("Immersive" "Apple Immersive")
+# Folders Resolve writes in /opt/resolve as you, not root. Without them it quits at once
+# ("Failed to create application support directories"; Resolve 21: Immersive), and Studio
+# cannot save its activation (.license: "Cannot validate license key, please try again later").
+RESOLVE_DIRS=("Immersive" "Apple Immersive" ".license")
 fix_dirs() {
   local d
   for d in "${RESOLVE_DIRS[@]}"; do
