@@ -9,11 +9,17 @@ mkdir -p "${log%/*}"   # without it the >> redirect fails and no bar starts, sil
 pidfile=${XDG_RUNTIME_DIR:-/tmp}/polybar-launch.$UID.pid
 
 # Stop the previous supervisor first, or it would start the bars we are about to kill again.
+# Every one of ours, not only the one in the pid file: /run/user is emptied at logout, so after
+# logging out and back in (or via Xfce) the file is gone while an old supervisor may still run.
 if [[ -f $pidfile ]]; then
   old=$(<"$pidfile")
   [[ $old =~ ^[0-9]+$ ]] && kill -TERM -- "-$old" 2>/dev/null
   rm -f "$pidfile"
 fi
+for old in $(pgrep -u "$UID" -f '^bash -c supervise$'); do
+  old=$(ps -o pgid= "$old" | tr -d ' ')
+  [[ $old =~ ^[0-9]+$ ]] && kill -TERM -- "-$old" 2>/dev/null
+done
 # A bar can hang while quitting (its i3 module keeps reconnecting to an i3 that is gone,
 # e.g. after logging out), so wait at most 2 s and then kill it outright.
 pkill -u "$UID" -x polybar
@@ -52,7 +58,11 @@ supervise() {
   echo "$BASHPID" >"$pidfile"
   trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM INT HUP
   local monitors primary m bar started watcher why delay=1
-  while xset q >/dev/null 2>&1; do   # X gone (logged out): stop
+  # Stop with the session it was started for: X gone, or (i3) its i3 gone. Only checking X let a
+  # supervisor outlive its i3 when the next session came up on the same display, and keep
+  # starting a second bar for an i3 that no longer exists.
+  local sock=${I3SOCK:-}
+  while xset q >/dev/null 2>&1 && [[ -z $sock || -S $sock ]]; do
     monitors=$(polybar --list-monitors 2>/dev/null)
     if [[ -z $monitors ]]; then sleep 2; continue; fi   # screen asleep / switching: wait for it
     primary=$(awk -F: '/primary/{print $1; exit}' <<<"$monitors")
