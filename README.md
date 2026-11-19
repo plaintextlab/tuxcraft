@@ -467,7 +467,8 @@ distrobox built from the [davincibox](https://github.com/zelikos/davincibox) ima
 tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_21.2_Linux.zip   # first install, or upgrade
 tux-davincibox files [--root]          # browse the box in Thunar (as you, or as root in the box)
 tux-davincibox doctor                  # box, GPU, Resolve version, file manager, menu entries
-tux-davincibox menu                    # (re)create the menu entries
+tux-davincibox menu                    # (re)create the menu entries, repair Resolve's start-up folders
+tux-davincibox uninstall [--purge]     # remove everything; asks before deleting your projects
 ```
 
 Download the zip from Blackmagic and pass its path; nothing else to unpack. The same command
@@ -485,9 +486,15 @@ home, so they survive an upgrade. Unpacking needs about 25 GB free in `~/.cache`
   box is you on the host (rootless podman): it can change the box's `/opt`, `/usr`, `/etc`, not
   the host's system files.
 - **Updates:** `sysup` upgrades the box's Fedora packages; Resolve itself only from a new zip.
+- **Install log:** `~/.local/state/tuxcraft/davincibox.log`. Blackmagic's installer sometimes stops
+  halfway on a fresh box; tux-davincibox notices (no Resolve in `/opt/resolve`) and runs it once more.
+- **Uninstall:** `tux-davincibox uninstall` removes the box, its container image, the menu entries,
+  icons and tuxcraft's settings for it. Your projects, database and preferences
+  (`~/.local/share/DaVinciResolve`) are deleted only if you type `delete` when asked, or with
+  `--purge`. `remove` deletes just the box (to rebuild it).
 
-Deactivate Studio (*Help ▸ DaVinci Resolve Studio License*) before `install --recreate` or
-`remove`, or you may use up an activation. Options: `--name` (default `davincibox`), `--fm`.
+Deactivate Studio (*Help ▸ DaVinci Resolve Studio License*) before `install --recreate`,
+`remove` or `uninstall`, or you may use up an activation. Options: `--name` (default `davincibox`), `--fm`.
 
 ## Gaming VM (`tux-gamevm`)
 

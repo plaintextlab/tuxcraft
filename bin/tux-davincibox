@@ -9,10 +9,14 @@
 #   tux-davincibox version                     the Resolve version installed in the box
 #   tux-davincibox update                      dnf upgrade inside the box (sysup does this too)
 #   tux-davincibox doctor                      check box, GPU, Resolve, file manager, entries
-#   tux-davincibox remove                      delete the box and its menu entries
+#   tux-davincibox remove                      delete the box and its menu entries (to rebuild)
+#   tux-davincibox uninstall [--purge]         remove everything: box, image, menu entries, icons,
+#                                              settings; asks before deleting your projects
+#                                              (--purge deletes them without asking)
 # Options: --name NAME (default davincibox)  --fm thunar|nemo (default thunar)  --yes
-# Projects, database, settings and the Studio activation live in your home, so an upgrade keeps
-# them. Deactivate Studio (Help ▸ License) before --recreate or remove.
+# Projects, database and settings live in your home, so an upgrade keeps them. Deactivate
+# Studio (Help ▸ License) before --recreate, remove or uninstall.
+# Install log: ~/.local/state/tuxcraft/davincibox.log
 set -euo pipefail
 
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/tuxcraft
@@ -39,7 +43,7 @@ ask()  { ((YES)) && return 0; read -r -p "$b? $1$n [y/N] " x; [[ ${x,,} == y* ]]
 cmd=${1:-}; [[ -z $cmd || $cmd == -* ]] && cmd=help || shift
 # A path as the first word: install or upgrade from it.
 [[ $cmd == *.zip || $cmd == *.run || -f $cmd ]] && { set -- "$cmd" "$@"; cmd=install; }
-YES=0 RECREATE=0 ROOT=0 ARGS=()
+YES=0 RECREATE=0 ROOT=0 PURGE=0 ARGS=()
 while (($#)); do
   case $1 in
     --name) NAME=$2; shift ;;
@@ -47,6 +51,7 @@ while (($#)); do
     --yes|-y) YES=1 ;;
     --recreate) RECREATE=1 ;;
     --root) ROOT=1 ;;
+    --purge) PURGE=1 ;;
     *) ARGS+=("$1") ;;
   esac
   shift
@@ -144,6 +149,9 @@ do_install() {
   [[ -n $src ]] || die "Give the Resolve zip (or .run) you downloaded: tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_X.Y_Linux.zip"
   src=$(readlink -e -- "$src") || die "File not found: ${ARGS[0]}"
   [[ $src == *.zip || $src == *.run ]] || die "Expected the .zip (or the .run inside it) from Blackmagic."
+  # Everything from here on also goes to the log, so a failed install can be looked at later.
+  exec > >(tee -a "$LOG") 2>&1
+  printf '\n===== %s  install %s\n' "$(date '+%F %T')" "$src"
   host_deps
 
   local inner=$src
@@ -197,15 +205,34 @@ do_install() {
   # setup-davinci runs Blackmagic's installer, patches the binaries so no LD_PRELOAD is needed,
   # and parks the BRAW OpenCL decoders that crash the companion apps. Its launcher question
   # gets "n": the launchers are made below as you, not as root.
-  echo n | asroot env HOME=/root /usr/bin/setup-davinci "$stage/squashfs-root/AppRun" distrobox
+  # It says nothing when Blackmagic's installer fails (it just skips the rest), and on a fresh
+  # box that first run has been seen to stop halfway while a second one works: so check, and
+  # run it once more before giving up.
+  local now try
+  for try in 1 2; do
+    echo n | asroot env HOME=/root /usr/bin/setup-davinci "$stage/squashfs-root/AppRun" distrobox || true
+    now=$(resolve_version || true)
+    [[ -n $now && ( -z $new || $now == "$new" ) ]] && break
+    ((try == 1)) && warn "Blackmagic's installer did not finish (box reports: ${now:-nothing}). Trying once more…"
+  done
   rm -rf -- "$stage"; trap - EXIT
-  local now; now=$(resolve_version || true)
-  [[ -n $now ]] || die "Resolve did not install (no /opt/resolve in the box). See the installer's output above."
-  [[ -z $new || $now == "$new" ]] || die "The box still reports Resolve $now, not $new. See the installer's output above."
+  [[ -n $now ]] || die "Resolve did not install (no /opt/resolve in the box). Installer output: $LOG"
+  [[ -z $new || $now == "$new" ]] || die "The box still reports Resolve $now, not $new. Installer output: $LOG"
+  fix_dirs
   ok "DaVinci Resolve $now"
 
   install_fm
   do_menu
+}
+
+# Folders Resolve creates in /opt/resolve at its first start, as you, not root. Without them
+# it quits at once ("Failed to create application support directories"; Resolve 21: Immersive).
+RESOLVE_DIRS=("Immersive" "Apple Immersive")
+fix_dirs() {
+  local d
+  for d in "${RESOLVE_DIRS[@]}"; do
+    asroot sh -c 'mkdir -p "/opt/resolve/$1" && chmod 0777 "/opt/resolve/$1"' _ "$d"
+  done
 }
 
 install_fm() {
@@ -230,6 +257,7 @@ do_menu() {
   box_exists || die "No box '$NAME'. Run: tux-davincibox ~/Downloads/DaVinci_Resolve_Studio_X.Y_Linux.zip"
   step "Menu entries"
   if installed; then
+    fix_dirs   # also repairs an install made before this fix
     # davincibox's own launcher script: Resolve, BRAW Player/Speed Test, Control Panels Setup, Remote Monitor.
     inbox /usr/bin/add-davinci-launcher distrobox >/dev/null
     # The box name is fixed in that script; follow --name.
@@ -292,6 +320,56 @@ do_remove() {
   ok "Removed. Projects and settings stay in ~/.local/share/DaVinciResolve; free the image with: podman image prune -a"
 }
 
+# Everything tux-davincibox and davincibox put on this machine. Projects and the database
+# (~/.local/share/DaVinciResolve) only after a separate yes, or with --purge.
+do_uninstall() {
+  local data=${XDG_DATA_HOME:-$HOME/.local/share}
+  local projects=$data/DaVinciResolve cache=${XDG_CACHE_HOME:-$HOME/.cache}/tuxcraft
+  warn "This removes DaVinci Resolve completely: the box '$NAME', its image, menu entries, icons and tuxcraft's settings for it."
+  warn "Deactivate Studio first (Help ▸ DaVinci Resolve Studio License ▸ Deactivate) or you may lose an activation."
+  ask "Uninstall DaVinci Resolve?" || exit 0
+  local del_projects=0
+  if [[ -d $projects ]]; then
+    if ((PURGE)); then del_projects=1
+    elif ((!YES)); then
+      warn "Your projects, media database and preferences are in ${projects/#$HOME/\~}."
+      read -r -p "$b? Delete them too? This cannot be undone. Type 'delete' to delete, Enter to keep:$n " x
+      [[ $x == delete ]] && del_projects=1
+    fi
+  fi
+
+  step "Menu entries and icons"
+  unexport
+  # The same files when the box is already gone (add-davinci-launcher remove needs the box).
+  rm -f "$APPS"/{blackmagicraw,DaVinci}*.desktop "$APPS/$NAME.desktop"
+  rm -rf "$data/resolve"
+  local i
+  for i in apps/blackmagicraw-player apps/blackmagicraw-speedtest mimetypes/application-x-braw-clip mimetypes/application-x-braw-sidecar; do
+    rm -f "$data/icons/hicolor/"{48x48,256x256}"/$i.png"
+  done
+  rm -f "$data/icons/distrobox/$NAME".* 2>/dev/null
+  update-desktop-database "$APPS" 2>/dev/null || true
+  ok "removed"
+
+  if box_exists; then
+    step "Box $NAME"
+    distrobox rm --force "$NAME"
+  fi
+  step "Container image"
+  for i in "$IMG_NVIDIA" "$IMG_OPENCL"; do
+    podman image exists "$i" 2>/dev/null && { podman image rm "$i" >/dev/null && ok "removed $i" || warn "$i is still used by another container; kept"; }
+  done
+  rm -rf "$cache"/resolve-install.* 2>/dev/null
+  rm -f "$CONF" "$MARK"
+  if ((del_projects)); then
+    rm -rf -- "$projects"
+    ok "Projects and settings deleted"
+  elif [[ -d $projects ]]; then
+    ok "Kept your projects and settings in ${projects/#$HOME/\~} (a new install picks them up again)"
+  fi
+  printf '\n%sDaVinci Resolve is uninstalled.%s podman and distrobox stay (other boxes use them).\n' "$g$b" "$n"
+}
+
 # shellcheck disable=SC2015  # pass/fail always succeed
 do_doctor() {
   local p=0 f=0 v
@@ -300,6 +378,15 @@ do_doctor() {
   command -v distrobox >/dev/null && pass "distrobox $(distrobox version 2>/dev/null | awk '{print $NF}')" || fail "distrobox missing"
   box_exists && pass "box $NAME ($(podman inspect "$NAME" --format '{{.ImageName}}'))" || { fail "no box $NAME"; return 1; }
   v=$(resolve_version || true); [[ -n $v ]] && pass "DaVinci Resolve $v" || fail "Resolve not installed in the box"
+  if [[ -n $v ]]; then
+    local d m bad=()
+    for d in "${RESOLVE_DIRS[@]}"; do
+      m=$(podman exec "$NAME" stat -c %a "/opt/resolve/$d" 2>/dev/null || true)
+      [[ ${m: -3} == 777 ]] || bad+=("$d")
+    done
+    ((${#bad[@]} == 0)) && pass "Resolve's start-up folders are writable" ||
+      fail "/opt/resolve/{${bad[*]}} not writable: Resolve quits at start. Fix: tux-davincibox menu"
+  fi
   pass "GPU: $(gpu)$(hybrid && echo ' (hybrid: PRIME offload)')"
   if [[ $(gpu) == nvidia ]]; then
     podman exec "$NAME" nvidia-smi -L >/dev/null 2>&1 && pass "NVIDIA GPU visible in the box" || fail "nvidia-smi fails in the box (rebuild with --recreate)"
@@ -322,5 +409,6 @@ case $cmd in
   update)  do_update ;;
   doctor)  do_doctor ;;
   remove)  do_remove ;;
-  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; [[ $cmd == help ]] || exit 1 ;;
+  uninstall) do_uninstall ;;
+  *) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; [[ $cmd == help ]] || exit 1 ;;
 esac
