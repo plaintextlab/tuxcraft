@@ -243,8 +243,15 @@ install_fm() {
     ok "$FM is in the box"; return
   fi
   step "Installing $FM in the box"
-  # No weak deps: they bring udisks and a dozen filesystem tools whose scriptlets fail in a box.
-  asroot dnf -y install --setopt=install_weak_deps=False "${pkgs[@]}"
+  # No weak deps: they bring a dozen filesystem tools whose scriptlets fail in a box.
+  # gvfs still needs udisks2, whose scriptlet (udevadm trigger) fails in a container: dnf then
+  # says "Transaction failed" although every package is in. So judge by what is there, or the
+  # install would stop here, before the menu entries.
+  asroot dnf -y install --setopt=install_weak_deps=False "${pkgs[@]}" ||
+    warn "dnf reported an error (usually udisks2's setup, harmless in a box); checking what got installed"
+  podman exec "$NAME" sh -c "command -v $FM && command -v dbus-run-session" >/dev/null 2>&1 ||
+    { warn "$FM did not install in the box; Davincibox Files will not work"; return 0; }
+  ok "$FM is in the box"
 }
 
 desktop() { # file name exec icon comment [extra lines]
