@@ -13,7 +13,7 @@ c=$(printf '%s\n' ${vm:+"$vm"} ${gpu:+"$gpu"} \
   "󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰚰  Update system (sysup)" "󰚰  Update tuxcraft" "󰆓  Snapshots" \
   "󰋊  Drives: automount" "󰁯  Back up to external drive" "󰖩  Network" "󰂯  Bluetooth" "󰕾  Audio mixer" "󰓃  Audio output" "󰑓  Restart audio" "󰐪  Printers" "󰝚  Music folder" \
   ${void:+"$void"} "$warm" "$auto" "󰾅  Power profile" "󰖔  Night light toggle" "󰹑  Compositor on/off (i3)" "󰍹  Displays" \
-  "󰌌  Keybindings" "󰋼  System info" "󰒃  Shutdown guard list" "󰐥  Power menu" | tux-menu system) || exit 0
+  "󰊤  GitHub sign-in (git)" "󰌌  Keybindings" "󰋼  System info" "󰒃  Shutdown guard list" "󰐥  Power menu" | tux-menu system) || exit 0
 case $c in
   *"Gaming VM"*) tux-gamevm start ;;
   *"Fast app start"*) tux-warm toggle ;;
@@ -44,6 +44,7 @@ case $c in
   *Night*) tux-nightlight toggle ;;
   *Compositor*) if pgrep -x picom >/dev/null; then pkill -x picom; else __GL_MaxFramesAllowed=1 setsid -f picom; fi ;;
   *Displays) if [[ -n ${WAYLAND_DISPLAY:-} ]]; then $t bash -c 'swaymsg -t get_outputs; echo; echo "Edit ~/.config/kanshi/config to persist."; read -n1'; else arandr; fi ;;
+  *GitHub*) $T bash -c 'tux-gitsetup; read -rsn1 -p "Press a key to close."' ;;
   *Keybindings) tux-keys ;;
   *info) $t bash -c 'fastfetch; read -n1 -rp ""' ;;
   *guard*) tux-guard --edit ;;

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# tux-gitsetup — sign in to GitHub once; then git clone / pull / push works for every repo
+# without a password or token prompt.
+#   tux-gitsetup            install gh if needed, sign in (browser + one-time code), make git use
+#                           it, and set your git name and email if they are not set yet
+#   tux-gitsetup status     what is set up
+#   tux-gitsetup logout     sign out again (git asks for credentials again afterwards)
+#
+# How: "gh auth login" stores a GitHub token in the keyring (gnome-keyring), and
+# "gh auth setup-git" makes gh git's credential helper for github.com. HTTPS remotes
+# (https://github.com/owner/repo) then just work. Your password is never typed into a terminal.
+set -uo pipefail
+b=$'\e[1m' d=$'\e[2m' n=$'\e[0m'
+say() { printf '%s::%s %s\n' "$b" "$n" "$*"; }
+die() { printf 'tux-gitsetup: %s\n' "$*" >&2; exit 1; }
+
+install_gh() {
+  command -v gh >/dev/null && return 0
+  say "Installing the GitHub CLI (gh); needs sudo"
+  if command -v xbps-install >/dev/null; then sudo xbps-install -Sy github-cli
+  elif command -v pacman >/dev/null; then sudo pacman -S --needed --noconfirm github-cli
+  elif command -v apt-get >/dev/null; then sudo apt-get install -y gh
+  fi
+  command -v gh >/dev/null || die "could not install gh"
+}
+
+identity() {  # git's author name/email: kept when set, else asked (GitHub's private address offered)
+  local name email login id def_name def_email
+  name=$(git config --global user.name || true); email=$(git config --global user.email || true)
+  if [[ -n $name && -n $email ]]; then say "git commits are signed as: $name <$email>"; return 0; fi
+  login=$(gh api user --jq .login 2>/dev/null || true); id=$(gh api user --jq .id 2>/dev/null || true)
+  def_name=${name:-$(gh api user --jq '.name // empty' 2>/dev/null || true)}; def_name=${def_name:-$login}
+  # GitHub's no-reply address keeps your real email out of public commit history.
+  def_email=$email; [[ -z $def_email && -n $id && -n $login ]] && def_email="$id+$login@users.noreply.github.com"
+  echo
+  read -r -e -p "${b}Name for your commits:${n} " -i "$def_name" name </dev/tty
+  read -r -e -p "${b}Email for your commits${n} ${d}(the no-reply one keeps yours private)${n}: " -i "$def_email" email </dev/tty
+  [[ -n $name && -n $email ]] || die "name and email are needed for commits"
+  git config --global user.name "$name"
+  git config --global user.email "$email"
+  say "git commits are signed as: $name <$email>"
+}
+
+setup() {
+  command -v git >/dev/null || die "git is not installed"
+  install_gh
+  if gh auth status --hostname github.com >/dev/null 2>&1; then
+    say "Already signed in to GitHub as $(gh api user --jq .login 2>/dev/null)"
+  else
+    say "Signing in to GitHub: copy the one-time code, then approve it in the browser"
+    gh auth login --hostname github.com --git-protocol https --web || die "sign-in did not finish"
+  fi
+  gh auth setup-git --hostname github.com || die "could not make git use gh"
+  # The first push of a new branch sets its upstream by itself (no --set-upstream needed).
+  git config --global push.autoSetupRemote true
+  [[ -n $(git config --global init.defaultBranch) ]] || git config --global init.defaultBranch main
+  identity
+  echo
+  say "Done. Every GitHub repo now works without a password: git clone https://github.com/OWNER/REPO"
+  printf '   %sSSH remotes (git@github.com:...) still use SSH keys; switch one with:%s\n' "$d" "$n"
+  printf '   %sgit remote set-url origin https://github.com/OWNER/REPO%s\n' "$d" "$n"
+}
+
+case ${1:-} in
+  ""|setup) setup ;;
+  status)
+    command -v gh >/dev/null || { echo "gh is not installed (run: tux-gitsetup)"; exit 1; }
+    gh auth status --hostname github.com
+    echo "git credential helper: $(git config --global --get-all credential.https://github.com.helper | tail -n1)"
+    echo "git identity: $(git config --global user.name) <$(git config --global user.email)>" ;;
+  logout) gh auth logout --hostname github.com ;;
+  -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try: tux-gitsetup --help)" ;;
+esac

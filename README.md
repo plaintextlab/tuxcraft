@@ -418,6 +418,7 @@ entry works too, but without tuxcraft's environment).
 | `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-xfce install` / `remove` | add Xfce next to i3 later, or take it out again ([Xfce](#xfce-next-to-or-instead-of-i3)) |
+| `tux-gitsetup` | sign in to GitHub once (browser + one-time code, also in the System menu): every repo then clones, pulls and pushes without a password; also sets your commit name and email (offers GitHub's private no-reply address). `status`, `logout` |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
