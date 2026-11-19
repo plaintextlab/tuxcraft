@@ -423,7 +423,7 @@ entry works too, but without tuxcraft's environment).
 | Super+Z | **recent files** (films, music, documents, pictures …; pick one to reopen it) | Super+Shift+Z | **recent programs** (pick one to start it again) |
 | Super+Alt+Tab / +Shift | next / previous window in this workspace | Alt+Tab (hold Alt) | **workspace switcher**, most recent first (tap: last workspace) |
 | Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
-| Super + drag a window to the right / left screen edge | move it to the next / previous workspace and go there | Bar: Tile / Float button | tile every window, or float them all |
+| Super + drag a window to the right / left screen edge | move it to the next / previous workspace and go there | Bar: tile / float icon | this workspace: float every window, click again: tile them all |
 
 ## Commands
 
@@ -440,7 +440,7 @@ entry works too, but without tuxcraft's environment).
 | `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-xfce install` / `remove` | add Xfce next to i3 later, or take it out again ([Xfce](#xfce-next-to-or-instead-of-i3)) |
-| `tux-easymode on` / `off` | titlebar buttons + a Windows-style taskbar on i3 ([Easy mode](#easy-mode-titlebar-buttons-and-a-taskbar-on-i3)); `arrange` tiles or floats every window (the bar's Tile / Float button) |
+| `tux-easymode on` / `off` | titlebar buttons + a Windows-style taskbar on i3 ([Easy mode](#easy-mode-titlebar-buttons-and-a-taskbar-on-i3)); `arrange` floats or tiles every window of this workspace (the bar's tile / float icon) |
 | `tux-gitsetup` | sign in to GitHub once (browser + one-time code, also in the System menu): every repo then clones, pulls and pushes without a password; also sets your commit name and email (offers GitHub's private no-reply address). `status`, `logout` |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |

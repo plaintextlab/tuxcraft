@@ -6,7 +6,7 @@
 #   tux-easymode menu [ID]        window menu (right-click a titlebar or a taskbar entry)
 #   tux-easymode activate|minimise|maximise|restore|close ID   (what the buttons and taskbar do)
 #   tux-easymode taskbar          the taskbar's contents, for polybar
-#   tux-easymode arrange          tile every window, or (again) float them all (bar button)
+#   tux-easymode arrange          this workspace: float every window, or (again) tile them all (bar button)
 # Titlebar:  red = close, yellow = minimise, green = maximise / restore. Right-click: menu,
 #            middle-click: close.
 # Taskbar:   click = focus (focused window: minimise, minimised: bring back), middle = close,
@@ -223,31 +223,39 @@ menu() {
 }
 
 # ------------------------------------------------------------------------- tile / float all
-# The bar's layout button: every window (not the minimised ones) tiled, or every one floating,
-# fanned out a little per workspace so they can all be seen. Works with easy mode on or off.
-ARRANGE=${XDG_RUNTIME_DIR:-/tmp}/tux-arrange.$UID
+# The bar's layout button, for the workspace shown on that bar's monitor (MONITOR, from
+# polybar; else the focused one): when any of its windows is tiled, float them all (fanned out
+# a little so each can be seen); when all float, tile them all. Easy mode on or off.
+bar_ws() {
+  i3-msg -t get_workspaces | jq -r --arg m "${MONITOR:-}" '
+    [ .[] | select(if $m == "" then .focused else (.visible and .output == $m) end) ][0].name // empty'
+}
+ws_windows() {  # "id floating(yes/no)" for every window on workspace $1
+  tree | jq -r --arg ws "$1" '
+    .. | objects | select(.type == "workspace" and .name == $ws)
+    | .. | objects | select(.window != null)
+    | "\(.id) \(if (.floating // "" | test("on")) then "yes" else "no" end)"'
+}
 arrange() {
-  local now; now=$(cat "$ARRANGE" 2>/dev/null || echo tile)
+  local ws; ws=$(bar_ws); [[ -n $ws ]] || return 0
+  local rows; rows=$(ws_windows "$ws"); [[ -n $rows ]] || return 0
   local cmds
-  if [[ $now == tile ]]; then
-    cmds=$(tree | jq -r '
-      .. | objects | select(.type == "workspace" and .name != "__i3_scratch") as $ws
-      | [ $ws | .. | objects | select(.window != null) | .id ] | to_entries[]
-      | ($ws.rect) as $r
+  if grep -q ' no$' <<<"$rows"; then
+    cmds=$(tree | jq -r --arg ws "$ws" '
+      .. | objects | select(.type == "workspace" and .name == $ws) as $w
+      | ($w.rect) as $r
+      | [ $w | .. | objects | select(.window != null) | .id ] | to_entries[]
       | "[con_id=\(.value)] floating enable, resize set \($r.width * 0.6 | floor) px \($r.height * 0.65 | floor) px, move position \($r.x + 40 + .key * 36) px \($r.y + 30 + .key * 36) px"')
-    echo float >"$ARRANGE"
   else
-    cmds=$(tree | jq -r '
-      .. | objects | select(.type == "workspace" and .name != "__i3_scratch")
-      | .. | objects | select(.window != null) | "[con_id=\(.id)] floating disable"')
-    echo tile >"$ARRANGE"
+    cmds=$(awk '{ print "[con_id=" $1 "] floating disable" }' <<<"$rows")
   fi
-  [[ -n $cmds ]] && i3-msg -q "$(paste -sd';' <<<"$cmds")" >/dev/null 2>&1
+  i3-msg -q "$(paste -sd';' <<<"$cmds")" >/dev/null 2>&1
   return 0
 }
-# The button's face: the layout a click switches to.
+# The button's face, for polybar: the layout a click gives this workspace (icon only).
 arrange_status() {
-  if [[ $(cat "$ARRANGE" 2>/dev/null) == float ]]; then printf ' Tile\n'; else printf ' Float\n'; fi
+  local ws rows; ws=$(bar_ws); rows=$([[ -n $ws ]] && ws_windows "$ws")
+  if [[ -n $rows ]] && ! grep -q ' no$' <<<"$rows"; then printf '\n'; else printf '\n'; fi
 }
 
 # ------------------------------------------------------------------------------ taskbar
