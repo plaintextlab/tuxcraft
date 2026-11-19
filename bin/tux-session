@@ -1,5 +1,5 @@
 #!/bin/sh
-# tux-session [i3|sway] — started by the login screen. Sets up the environment, then
+# tux-session [i3|sway|xfce] — started by the login screen. Sets up the environment, then
 # launches i3 (through startx) or sway. Log: ~/.local/state/tuxcraft/session.log
 [ -f /etc/tuxcraft/session.conf ] && . /etc/tuxcraft/session.conf
 session=${1:-${SESSION:-i3}}
@@ -38,6 +38,19 @@ case $session in
     fi
     # shellcheck disable=SC2086
     exec $wrap sway $extra
+    ;;
+  xfce)
+    # Optional Xfce session (tux-xfce install), same theme and apps as i3.
+    export XDG_CURRENT_DESKTOP=XFCE XDG_SESSION_DESKTOP=xfce XDG_SESSION_TYPE=x11
+    command -v tux-xfce >/dev/null && tux-xfce seed   # first panel, before the panel starts
+    if [ -n "$DISPLAY" ]; then
+      # shellcheck disable=SC2086
+      exec $wrap xfce4-session
+    fi
+    vt=''
+    [ -n "$XDG_VTNR" ] && vt="vt$XDG_VTNR"
+    # shellcheck disable=SC2086
+    exec $wrap startx "$HOME/.xinitrc" xfce -- $vt -keeptty
     ;;
   *)
     export XDG_CURRENT_DESKTOP=i3 XDG_SESSION_DESKTOP=i3 XDG_SESSION_TYPE=x11

@@ -94,6 +94,8 @@ reload_all() {
     gsettings set $gi cursor-theme "${CURSOR_THEME:-Adwaita}"
   fi 2>/dev/null || true
   pkill -HUP -x xsettingsd 2>/dev/null || true
+  # Xfce session (tux-xfce): the same values into xfsettingsd, live there too.
+  command -v tux-xfce >/dev/null && command -v xfce4-session >/dev/null && { tux-xfce look >/dev/null 2>&1 || true; }
   [[ -n ${DISPLAY:-} ]] && command -v xrdb >/dev/null && xrdb -merge "$HOME/.Xresources" 2>/dev/null
   [[ -n ${DISPLAY:-} && -z ${WAYLAND_DISPLAY:-} ]] && command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr 2>/dev/null
   if [[ -n ${SWAYSOCK:-} ]]; then

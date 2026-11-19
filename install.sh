@@ -281,9 +281,11 @@ wizard() {
 
   local nv_note=''
   has_word "$GPU_VENDORS" nvidia && nv_note=' (sway on NVIDIA works, but i3 is smoother)'
-  choose TUX_SESSION "Display server$nv_note" i3 \
-    "i3|X11 + i3|most compatible: screen sharing, games, old apps just work" \
-    "sway|Wayland + sway|same keys & look, smoother, tear-free, newer"
+  choose TUX_SESSION "Desktop$nv_note" i3 \
+    "i3|X11 + i3|tiling, keyboard-driven, TUI apps; most compatible: screen sharing, games, old apps" \
+    "sway|Wayland + sway|same keys & look as i3, smoother, tear-free, newer" \
+    "xfce|X11 + Xfce|classic desktop: panel, menus, GUI apps; same theme and fonts" \
+    "i3+xfce|i3 and Xfce|both, pick one at login (F3); i3 lists TUI apps, Xfce GUI apps"
 
   if has_word "$GPU_VENDORS" nvidia; then
     choose TUX_NVIDIA "NVIDIA GPU found ($NVIDIA_GEN). Install the proprietary driver?" yes \

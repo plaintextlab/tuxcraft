@@ -1,0 +1,16 @@
+# Launchers shown in one session only, when the Xfce session is installed (tux-xfce).
+# desktop-id<TAB>side    i3 = TUI app, hidden in Xfce    xfce = GUI app, hidden in i3 and sway
+# Your own additions: ~/.config/tuxcraft/session-apps.tsv (same format), then: tux-xfce apply
+# Not listed = shown in both: browser, Steam, LibreOffice, mpv, Thunar, Mousepad…
+yazi.desktop	i3
+btop.desktop	i3
+htop.desktop	i3
+nvim.desktop	i3
+micro.desktop	i3
+org.xfce.taskmanager.desktop	xfce
+xfce4-taskmanager.desktop	xfce
+pavucontrol.desktop	xfce
+org.pulseaudio.pavucontrol.desktop	xfce
+blueman-manager.desktop	xfce
+blueman-adapters.desktop	xfce
+nm-connection-editor.desktop	xfce

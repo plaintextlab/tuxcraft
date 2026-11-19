@@ -50,5 +50,8 @@ assign [class="(?i)resolve|kdenlive"] workspace number 4
 assign [class="qBittorrent"] workspace number 8
 
 exec --no-startup-id tux-autostart i3
+# exec_always: also runs on Super+Shift+R (i3 restart). After a restart the old bars keep a dead
+# i3 socket and stop drawing their modules (only the tray is left), so start them fresh.
+exec_always --no-startup-id ~/.config/polybar/launch.sh
 
 include ~/.config/i3/local.d/*.conf

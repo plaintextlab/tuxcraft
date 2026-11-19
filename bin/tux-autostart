@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# tux-autostart i3|sway — everything a session needs, started once. Called from the WM config.
+# tux-autostart i3|sway|xfce — everything a session needs, started once. Called from the WM
+# config (i3, sway) or Xfce's autostart (/etc/xdg/autostart/tuxcraft-xfce.desktop).
 session=${1:-i3}
 log="$HOME/.local/state/tuxcraft/autostart.log"; mkdir -p "${log%/*}"; exec >>"$log" 2>&1
 echo "--- $(date) $session"
@@ -15,7 +16,7 @@ if [[ ${TUX_LOCK_AT_START:-} == 1 ]]; then
       pgrep -u "$UID" -x i3lock >/dev/null || pgrep -u "$UID" -x swaylock >/dev/null && exit 0
     done
     echo "tux-autostart: no lock screen after autologin; ending the session"
-    if [[ $session == sway ]]; then swaymsg exit; else i3-msg exit; fi
+    case $session in sway) swaymsg exit ;; xfce) xfce4-session-logout --logout ;; *) i3-msg exit ;; esac
   ) &
 fi
 STATE="$HOME/.config/tuxcraft/state"; IDLE_LOCK_MIN=10
@@ -48,23 +49,32 @@ rm -f "${XDG_RUNTIME_DIR:-/tmp}/tux-dim" "${XDG_RUNTIME_DIR:-/tmp}/tux-nightligh
 [[ -s /run/tux-gamevm.notice ]] && { sleep 3; notify-send -u critical "Gaming VM" "$(cat /run/tux-gamevm.notice)"; } &
 # Volume popup for changes made anywhere (bar scroll, mixers), not only the volume keys.
 pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
-# Put apps that hide and re-show their main window (Resolve's Cinema Viewer) back in their tiling slot.
-pgrep -u "$UID" -f '^python3 .*/tux-winslot' >/dev/null || { tux-winslot & }
-# Thumbnails for the workspace overview (Super+O).
-tux-overview watch &   # exits at once if one is already running
-tux-recent watch &     # programs list for Super+Shift+Z (one per session too)
+# Xfce installed (tux-xfce): its look follows the theme, and each session lists its own apps.
+command -v tux-xfce >/dev/null && command -v xfce4-session >/dev/null && tux-xfce apply
+if [[ $session != xfce ]]; then   # these follow i3/sway windows and workspaces
+  # Put apps that hide and re-show their main window (Resolve's Cinema Viewer) back in their tiling slot.
+  pgrep -u "$UID" -f '^python3 .*/tux-winslot' >/dev/null || { tux-winslot & }
+  # Thumbnails for the workspace overview (Super+O).
+  tux-overview watch &   # exits at once if one is already running
+  tux-recent watch &     # programs list for Super+Shift+Z (one per session too)
+fi
 # Music daemon for rmpc (folder: tux-music folder).
 command -v mpd >/dev/null && tux-music start
 # First login with printing set up but no printer yet: add the ones found on the network / USB.
 command -v lpadmin >/dev/null && { sleep 15; tux-printer --auto; } &
-once nm-applet --indicator
+# No nm-applet tray icon: the bar's net module (tux-net) handles Wi-Fi. Its XDG autostart entry
+# is hidden below, so dex does not start it either.
 command -v udiskie >/dev/null && once udiskie --smart-tray --notify
 tux-theme-gsettings 2>/dev/null || true
 # Firefox profiles made since the last theme change (e.g. the first start) get the theme too.
 command -v tux-firefox >/dev/null && { tux-firefox apply & }
-tux-wallpaper restore &
-# Fast start for browser, terminal and file manager (backs off when memory is tight or a game runs).
-tux-warm daemon "$session" &   # exits at once if one is already running
+if [[ $session == xfce ]]; then
+  { sleep 3; tux-wallpaper restore; } &   # into xfdesktop, once it has started
+else
+  tux-wallpaper restore &
+  # Fast start for browser, terminal and file manager (backs off when memory is tight or a game runs).
+  tux-warm daemon "$session" &   # exits at once if one is already running
+fi
 # Laptop: battery saver and a notification when the charger comes out.
 tux-battery start
 
@@ -96,7 +106,7 @@ case $session in
     if command -v copyq >/dev/null; then once copyq
     elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &
     fi
-    "$HOME/.config/polybar/launch.sh"
+    # polybar is started by the i3 config (exec_always), so an i3 restart starts it again too.
     ;;
   sway)
     once waybar
@@ -105,17 +115,32 @@ case $session in
     # swayidle (lock after IDLE_LOCK_MIN, screens off 5 min later), paused while media plays.
     (( idle > 0 )) && tux-awake start
     ;;
+  xfce)
+    # Started by xfce4-session (tuxcraft-xfce.desktop autostart). xfwm4, the panel, xfdesktop and
+    # xfsettingsd (theme, displays, keyboard; values from tux-xfce) come from Xfce itself.
+    command -v numlockx >/dev/null && numlockx on
+    tux-dwt start
+    if (( idle > 0 )); then
+      xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
+      once xss-lock --transfer-sleep-lock -- tux-lock --now
+      tux-awake start
+    fi
+    # GUI side: Wi-Fi icon in the panel's tray, clipboard manager.
+    once nm-applet
+    if command -v copyq >/dev/null; then once copyq
+    elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &
+    fi
+    ;;
 esac
 # XDG autostart entries (~/.config/autostart and /etc/xdg/autostart). Those this script already
-# started get a Hidden=true override, or dex starts a second picom / polkit agent / nm-applet
-# that only fails noisily ("Another composite manager is already running").
-if command -v dex >/dev/null; then
-  mkdir -p "$HOME/.config/autostart"
-  for a in picom compton polkit-mate-authentication-agent-1 polkit-gnome-authentication-agent-1 \
-           lxpolkit nm-applet autorandr udiskie copyq com.github.hluk.copyq; do
-    f=$HOME/.config/autostart/$a.desktop
-    [[ -e $f || ! -e /etc/xdg/autostart/$a.desktop ]] && continue
-    printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n# tux-autostart starts this itself\n' "$a" >"$f"
-  done
-  dex --autostart --environment "$session" &
-fi
+# started get a Hidden=true override, or dex (i3) / xfce4-session starts a second picom /
+# polkit agent / nm-applet that only fails noisily ("Another composite manager is already running").
+mkdir -p "$HOME/.config/autostart"
+for a in picom compton polkit-mate-authentication-agent-1 polkit-gnome-authentication-agent-1 \
+         lxpolkit nm-applet autorandr udiskie copyq com.github.hluk.copyq; do
+  f=$HOME/.config/autostart/$a.desktop
+  [[ -e $f || ! -e /etc/xdg/autostart/$a.desktop ]] && continue
+  printf '[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n# tux-autostart starts this itself\n' "$a" >"$f"
+done
+# xfce4-session runs the XDG autostart entries itself.
+[[ $session != xfce ]] && command -v dex >/dev/null && { dex --autostart --environment "$session" & }

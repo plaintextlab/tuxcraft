@@ -59,7 +59,7 @@ native() {  # native install|remove|search|info|list-files ARGS
 }
 
 # ------------------------------------------------------------------------- remote lookups
-fetch() { curl -fsS --max-time 8 "$@" 2>/dev/null; }
+fetch() { curl -fsS --connect-timeout 3 --max-time 6 "$@" 2>/dev/null; }
 json() { python3 -c "import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -192,15 +192,19 @@ recorded() { [[ -f $DB ]] && awk -F'\t' -v q="$1" '$1 == q' "$DB" | tail -n1; }
 
 # ------------------------------------------------------------------------------- install
 # Candidates are "source<TAB>ref<TAB>version<TAB>extra", best first.
+# All sources are asked at the same time (each into its own file), then printed in this order:
+# one after the other, a search took the sum of every lookup (Flathub + 4 web APIs).
 candidates() {
-  local q=$1 v id ver line fam setup
-  v=$(native_version "$q"); [[ -n $v ]] && printf 'native\t%s\t%s\t\n' "$q" "$v"
-  while read -r id ver; do [[ -n $id ]] && printf 'flatpak\t%s\t%s\t\n' "$id" "${ver:--}"; done < <(flatpak_hits "$q")
-  while IFS=$'\t' read -r fam setup; do [[ -n $fam ]] && printf 'vendor-%s\t%s\tvendor repo\t%s\n' "$fam" "$q" "$setup"; done < <(vendor_rows "$q")
-  [[ $HOST != arch ]] && { v=$(ver_arch "$q"); [[ -n $v ]] && printf 'arch\t%s\t%s\t\n' "$q" "$v"; }
-  [[ $HOST != debian ]] && { v=$(ver_debian "$q"); [[ -n $v ]] && printf 'debian\t%s\t%s\t\n' "$q" "$v"; }
-  v=$(ver_fedora "$q"); [[ -n $v ]] && printf 'fedora\t%s\t%s\t\n' "$q" "$v"
-  [[ $HOST != arch ]] && while read -r line ver; do [[ -n $line ]] && printf 'aur\t%s\t%s\t\n' "$line" "$ver"; done < <(aur_names "$q")
+  local q=$1 t; t=$(mktemp -d)
+  { v=$(native_version "$q"); [[ -n $v ]] && printf 'native\t%s\t%s\t\n' "$q" "$v"; } >"$t/1" &
+  { while read -r id ver; do [[ -n $id ]] && printf 'flatpak\t%s\t%s\t\n' "$id" "${ver:--}"; done < <(flatpak_hits "$q"); } >"$t/2" &
+  { while IFS=$'\t' read -r fam setup; do [[ -n $fam ]] && printf 'vendor-%s\t%s\tvendor repo\t%s\n' "$fam" "$q" "$setup"; done < <(vendor_rows "$q"); } >"$t/3" &
+  [[ $HOST != arch ]] && { v=$(ver_arch "$q"); [[ -n $v ]] && printf 'arch\t%s\t%s\t\n' "$q" "$v"; } >"$t/4" &
+  [[ $HOST != debian ]] && { v=$(ver_debian "$q"); [[ -n $v ]] && printf 'debian\t%s\t%s\t\n' "$q" "$v"; } >"$t/5" &
+  { v=$(ver_fedora "$q"); [[ -n $v ]] && printf 'fedora\t%s\t%s\t\n' "$q" "$v"; } >"$t/6" &
+  [[ $HOST != arch ]] && { while read -r line ver; do [[ -n $line ]] && printf 'aur\t%s\t%s\t\n' "$line" "$ver"; done < <(aur_names "$q"); } >"$t/7" &
+  wait
+  cat "$t"/[1-7] 2>/dev/null; rm -rf "$t"
 }
 label() {
   case $1 in

@@ -35,7 +35,12 @@ core	imv	imv	imv
 core	mpv	mpv	mpv
 core	ffmpeg	ffmpeg	ffmpeg
 core	playerctl	playerctl	playerctl
-core	brightnessctl	brightnessctl	brightnessctl
+core	lutris	lutris	lutris
+core	mousepad	mousepad	mousepad
+# Brightness keys (tux-osd), picked by hardware: a screen with a backlight (laptop) uses
+# brightnessctl; without one (desktop) the monitor is set over DDC/CI with ddcutil.
+backlight	brightnessctl	brightnessctl	brightnessctl
+ddc	ddcutil	ddcutil	ddcutil
 core	gammastep	gammastep	gammastep
 core	imagemagick	imagemagick	ImageMagick
 core	jq	jq	jq
@@ -54,12 +59,12 @@ core	greetd greetd-tuigreet	greetd tuigreet	greetd tuigreet
 core	-	-	dbus elogind
 core	-	-	chrony cronie socklog-void
 #
-# ---- x11: i3 session
+# ---- x11: every X11 session (i3, Xfce); i3: the i3 session only (i3, its bar, compositor)
 x11	xorg-server xorg-xinit xorg-xrandr xorg-xset xorg-xinput xorg-xprop xorg-xrdb xorg-xkill xorg-xsetroot	xserver-xorg-core xserver-xorg-input-libinput xinit x11-xserver-utils xinput	xorg-minimal xinit xrandr xset xinput xprop xrdb xkill xsetroot
-x11	i3-wm	i3-wm	i3
+i3	i3-wm	i3-wm	i3
 x11	i3lock xss-lock xtrlock	i3lock xss-lock xtrlock	i3lock xss-lock xtrlock
-x11	polybar	polybar	polybar
-x11	picom	picom	picom
+i3	polybar	polybar	polybar
+i3	picom	picom	picom
 x11	rofi	rofi	rofi
 x11	feh	feh	feh
 x11	dex	dex	dex
@@ -79,6 +84,11 @@ wayland	grim slurp wl-clipboard cliphist wf-recorder	grim slurp wl-clipboard cli
 wayland	xdg-desktop-portal-wlr	xdg-desktop-portal-wlr	xdg-desktop-portal-wlr
 wayland	xorg-xwayland	xwayland	xorg-server-xwayland
 wayland	kanshi	kanshi	kanshi
+#
+# ---- xfce: optional Xfce session next to i3 (tux-xfce install / remove; wizard: "Xfce session")
+# Only Xfce's core: Thunar, kitty, dunst, tux-lock and tux-battery do the rest in both sessions.
+# xfconf is left out on purpose: Thunar needs it, so "tux-xfce remove" must not take it away.
+xfce	xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman	xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman	xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman
 #
 # ---- tui: the terminal app suite
 tui	btop	btop	btop

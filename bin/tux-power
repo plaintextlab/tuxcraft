@@ -7,7 +7,9 @@ choice=$(echo -e "$opts" | tux-menu "power") || exit 0
 case $choice in
   *Lock)     tux-lock ;;
   *Logout)   tux-guard Logout || exit 0
-             if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; else i3-msg exit; fi ;;
+             if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit
+             elif [[ ${XDG_CURRENT_DESKTOP:-} == XFCE ]]; then xfce4-session-logout --logout
+             else i3-msg exit; fi ;;
   *Suspend)  tux-lock & sleep 1; ctl suspend ;;
   *Reboot)   tux-guard Reboot && ctl reboot ;;
   *Shutdown) tux-guard Shutdown && ctl poweroff ;;

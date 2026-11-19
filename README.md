@@ -154,7 +154,7 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    encrypted disk spares you a second prompt. Snapshots and rollback work the same.
 4. Computer name, user, password, timezone, keyboard. The timezone is **not** looked up online
    unless you say yes (that sends your IP address to ipapi.co).
-5. **X11 + i3** or **Wayland + sway** — same keys, same look either way
+5. **Desktop**: **X11 + i3** (default), **Wayland + sway**, **X11 + Xfce**, or **i3 and Xfce** — same theme and fonts in every one ([Xfce](#xfce-next-to-or-instead-of-i3))
 6. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
 7. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
 8. **Font** (previews below) and size
@@ -202,7 +202,11 @@ lines keep its built-in font) and the GRUB menu, which gets the same font as a G
 | Monitors | autorandr / arandr | kanshi |
 
 Shared by both: **kitty** (via `tux-term`), dunst, PipeWire, NetworkManager, polkit agent, gnome-keyring,
-udiskie, gammastep (night light), xdg portals, Papirus icons, adw-gtk3.
+udiskie, gammastep (night light), xdg portals, Papirus icons, adw-gtk3, Thunar and Mousepad, **Lutris**
+and **ProtonPlus** (Flathub: installs Proton-GE / Wine-GE for Steam, Lutris and Heroic). Brightness
+keys use **brightnessctl** when the screen has a backlight (laptops) and **ddcutil** when it has none
+(desktops: the monitor itself is set over DDC/CI; tuxcraft loads `i2c-dev` and adds you to the `i2c`
+group so it can reach it).
 
 **Copying to USB sticks shows the real progress:** USB disks and SD cards may hold at most 16 MiB
 of unwritten data in RAM, so a copy no longer jumps to 100% and then hangs while the data is
@@ -353,6 +357,30 @@ dead SSD — that is what `tux-backup` is for.
    `tux-snap rollback <n>` and reboot.
 3. Later: `tux-snap clean` removes the broken root that was set aside.
 
+## Xfce, next to or instead of i3
+
+The installer's **Desktop** question offers i3 (default), sway, **Xfce**, or **i3 and Xfce**;
+only what you pick is installed. To add Xfce to an i3 system later: `tux-xfce install`. Then log
+out, press **F3** on the login screen and pick **tuxcraft (Xfce)** (the stock "Xfce Session"
+entry works too, but without tuxcraft's environment).
+
+- **Same look:** Xfce gets the values tux-theme gives i3 (GTK theme, icons, cursor, UI and
+  monospace font, antialiasing), the same wallpaper, kitty, dunst, Qt and Firefox theming.
+  Changing the theme, font or wallpaper in either session changes both. Window borders use
+  xfwm4's Default theme, which takes its colours from the GTK theme.
+- **Only Xfce's core** is installed (session, xfwm4, panel, desktop, settings, task
+  manager, pavucontrol, blueman). Thunar, kitty, dunst, tux-lock and tux-battery serve both
+  sessions, so nothing runs twice.
+- **With both installed, each lists its own utilities:** i3 shows the TUI ones (yazi, btop,
+  nvim…), Xfce the GUI ones (task manager, pavucontrol, blueman, network editor…). Everything
+  else shows in both, Thunar and Mousepad included, and opens the same files the same way. The
+  list: `data/session-apps.tsv`; your own additions in `~/.config/tuxcraft/session-apps.tsv`.
+  Only launchers are hidden: every app still runs, and i3's keys are unchanged.
+- **Removing it:** from i3 (not from inside Xfce), run `tux-xfce remove`. It removes the Xfce
+  packages, its login entry and the split launchers, and moves `~/.config/xfce4` to
+  `~/.local/state/tuxcraft/xfce-backup-<date>/`. i3 is not touched. When Xfce is the only
+  desktop, re-run the installer with "i3 and Xfce" first.
+
 ## Keys (Super = Windows key)
 
 `Super+K` shows the complete list. The essentials:
@@ -389,6 +417,7 @@ dead SSD — that is what `tux-backup` is for.
 | `tux-autologin [on\|off\|status]` | log in by itself at boot behind the lock screen, so the desktop and its autostart apps load while you type your password (System menu → Auto login). Uses greetd's one-time `[initial_session]`; after a logout the normal login screen is back. If the lock does not appear the session ends. The keyring asks for your password once, the first time an app needs it. Refuses on an unencrypted disk unless you add `--anyway` (the menu asks) |
 | `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
+| `tux-xfce install` / `remove` | add Xfce next to i3 later, or take it out again ([Xfce](#xfce-next-to-or-instead-of-i3)) |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |
 | `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |

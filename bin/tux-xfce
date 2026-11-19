@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+# tux-xfce — an Xfce session next to i3, with the same theme, fonts, cursor and wallpaper.
+# The installer asks for it ("Desktop": i3, sway, Xfce, or i3 and Xfce); this adds it later.
+#   tux-xfce install   install Xfce (needs sudo) and set it up; pick "tuxcraft (Xfce)" with F3 at login
+#   tux-xfce remove    take Xfce out again: its packages, session entry and settings
+#   tux-xfce apply     sync the look into Xfce, split the menus (run at every login, and by tux-theme)
+#   tux-xfce status
+#
+# Same look: tux-theme renders ~/.config/xsettingsd/xsettingsd.conf for i3; in Xfce, xfsettingsd
+# does that job, so "apply" copies the same values into Xfce's settings (xfconf). Same fonts,
+# GTK/icon/cursor theme, Qt (qt5ct) and kitty/dunst configs, and the same wallpaper.
+# Split menus: utilities with a TUI twin appear on one side only (data/session-apps.tsv):
+# i3 lists yazi, btop, nvim…; Xfce lists pavucontrol, blueman… Thunar, Mousepad, the
+# browser, Steam or LibreOffice show in both. Only launchers are hidden: everything still runs.
+set -uo pipefail
+SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+# shellcheck source=/dev/null
+. /etc/tuxcraft/session.conf 2>/dev/null
+HOST=${DISTRO:-$(command -v xbps-install >/dev/null && echo void || { command -v pacman >/dev/null && echo arch || echo debian; })}
+APPS=$HOME/.local/share/applications
+MARK=X-Tuxcraft-Session-Split
+XSESSION=/usr/share/xsessions/tuxcraft-xfce.desktop
+AUTOSTART=/etc/xdg/autostart/tuxcraft-xfce.desktop
+ANSWERS=/etc/tuxcraft/answers.conf
+say() { printf '\e[1m::\e[0m %s\n' "$*"; }
+die() { printf 'tux-xfce: %s\n' "$*" >&2; exit 1; }
+installed() { command -v xfce4-session >/dev/null; }
+
+# Package names for this distro from the "xfce" group of packages.tsv.
+pkgs() {
+  local col; case $HOST in arch) col=2 ;; debian) col=3 ;; void) col=4 ;; esac
+  awk -F'\t' -v c="$col" '$1 == "xfce" && $c != "-" { print $c }' "$SHARE/data/packages.tsv" | tr ' ' '\n' | sed '/^$/d'
+}
+pkg_has() {  # available in the repo
+  case $HOST in
+    arch)   pacman -Si "$1" &>/dev/null ;;
+    debian) apt-cache policy "$1" 2>/dev/null | grep 'Candidate: [^(]' >/dev/null ;;
+    void)   xbps-query -R "$1" &>/dev/null ;;
+  esac
+}
+pkg_is_installed() {
+  case $HOST in
+    arch)   pacman -Q "$1" &>/dev/null ;;
+    debian) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed' ;;
+    void)   xbps-query "$1" &>/dev/null ;;
+  esac
+}
+
+other_desktop() { command -v i3 >/dev/null || command -v sway >/dev/null; }
+
+# The desktop choice in the saved answers (i3 | sway | xfce | i3+xfce), so tux-update and
+# re-runs of the installer keep it. Removing Xfce from i3+xfce leaves i3.
+answers_session() {  # answers_session add|del
+  [[ -f $ANSWERS ]] || return 0
+  local cur new
+  cur=$(TUX_SESSION=''; . "$ANSWERS" 2>/dev/null; echo "${TUX_SESSION:-i3}")
+  case $1:$cur in
+    add:i3) new=i3+xfce ;;
+    del:i3+xfce|del:xfce) new=i3 ;;
+    *) return 0 ;;
+  esac
+  sed -i "s/^TUX_SESSION=.*/TUX_SESSION=$(printf '%q' "$new")/" "$ANSWERS"
+  # Login without a pick (and auto login) starts this one.
+  [[ $1 == del ]] && sed -i 's/^SESSION=xfce$/SESSION=i3/' /etc/tuxcraft/session.conf 2>/dev/null
+  return 0
+}
+
+# ------------------------------------------------------------------- system side (root)
+system_install() {
+  [[ $EUID -eq 0 ]] || die "system: run as root"
+  local p want=()
+  [[ $HOST == void ]] && xbps-install -S >/dev/null 2>&1
+  [[ $HOST == debian ]] && apt-get update -qq
+  for p in $(pkgs); do
+    pkg_is_installed "$p" && continue
+    if pkg_has "$p"; then want+=("$p"); else echo "tux-xfce: not in the $HOST repo, skipped: $p" >&2; fi
+  done
+  if ((${#want[@]})); then
+    say "Installing: ${want[*]}"
+    case $HOST in
+      arch)   pacman -S --needed --noconfirm "${want[@]}" ;;
+      # Without recommends: those would bring Xfce's own notifier, screensaver and power
+      # manager, which do the same jobs as dunst, tux-lock and tux-battery.
+      debian) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${want[@]}" ;;
+      void)   xbps-install -y "${want[@]}" ;;
+    esac || die "package install failed"
+  fi
+  mkdir -p "${XSESSION%/*}" "${AUTOSTART%/*}"
+  printf '[Desktop Entry]\nName=tuxcraft (Xfce)\nComment=Xfce with the tuxcraft theme\nExec=tux-session xfce\nType=Application\n' >"$XSESSION"
+  # Started by xfce4-session only (OnlyShowIn), never by dex in i3.
+  printf '[Desktop Entry]\nType=Application\nName=tuxcraft session services\nExec=tux-autostart xfce\nOnlyShowIn=XFCE;\nNoDisplay=true\nX-GNOME-Autostart-Phase=Initialization\n' >"$AUTOSTART"
+  answers_session add
+}
+
+system_remove() {
+  [[ $EUID -eq 0 ]] || die "system-remove: run as root"
+  local p have=()
+  for p in $(pkgs); do pkg_is_installed "$p" && have+=("$p"); done
+  if ((${#have[@]})); then
+    say "Removing: ${have[*]}"
+    case $HOST in
+      arch)   pacman -Rns --noconfirm "${have[@]}" ;;
+      debian) DEBIAN_FRONTEND=noninteractive apt-get purge -y "${have[@]}" && apt-get autoremove --purge -y ;;
+      void)   xbps-remove -Ry "${have[@]}" ;;
+    esac || die "package removal failed (nothing else was changed)"
+  fi
+  rm -f "$XSESSION" "$AUTOSTART"
+  answers_session del
+}
+
+# --------------------------------------------------------------------- user side
+xq() { xfconf-query -c "$1" -p "$2" -n -t "$3" -s "$4" 2>/dev/null; }
+
+# Same values tux-theme gave xsettingsd (theme, icons, cursor, font, antialiasing) into xfsettingsd.
+sync_look() {
+  command -v xfconf-query >/dev/null && [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
+  local key val conf=$HOME/.config/xsettingsd/xsettingsd.conf
+  [[ -f $conf ]] || return 0
+  while read -r key val; do
+    [[ -z $key || $key == \#* ]] && continue
+    if [[ $val == \"*\" ]]; then val=${val#\"}; xq xsettings "/$key" string "${val%\"}"
+    else xq xsettings "/$key" int "$val"; fi
+  done <"$conf"
+  local FONT='JetBrainsMono Nerd Font' FONT_SIZE=11 TERM_FONT='JetBrainsMono Nerd Font' TERM_FONT_SIZE=12
+  # shellcheck source=/dev/null
+  [[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
+  xq xsettings /Gtk/MonospaceFontName string "$TERM_FONT $TERM_FONT_SIZE"
+  # Window borders: xfwm4's Default theme takes its colours from the GTK theme.
+  xq xfwm4 /general/theme string Default
+  xq xfwm4 /general/title_font string "$FONT Bold $FONT_SIZE"
+  # Same key repeat and lock screen as in i3.
+  xq keyboards /Default/KeyRepeat bool true
+  xq keyboards /Default/KeyRepeat/Delay int 220
+  xq keyboards /Default/KeyRepeat/Rate int 40
+  xq xfce4-session /general/LockCommand string "tux-lock --now"
+  local gtk dark=false
+  gtk=$(sed -n 's/^Net\/ThemeName "\(.*\)"/\1/p' "$conf"); [[ $gtk == *dark* ]] && dark=true
+  xq xfce4-panel /panels/dark-mode bool "$dark"
+}
+
+# A first panel (menu, windows, tray, volume, clock, session) instead of Xfce's "which panel?"
+# question. Only when there is none yet: after that the panel is yours to change.
+seed_panel() {
+  local f=$HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml
+  [[ -e $f ]] && return 0
+  mkdir -p "${f%/*}" && cp "$SHARE/data/xfce/xfce4-panel.xml" "$f"
+}
+
+# Launchers in ~/.local/share/applications (they win over the system ones) with the same
+# entry plus OnlyShowIn/NotShowIn. Made fresh at every login, so package updates come through.
+split_menus() {
+  local f
+  for f in "$APPS"/*.desktop; do [[ -f $f ]] && grep -q "^$MARK=" "$f" && rm -f "$f"; done
+  installed && other_desktop || return 0   # Xfce alone: nothing to split, everything shows
+  mkdir -p "$APPS"
+  local id side src d dirs key
+  IFS=: read -ra dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  dirs+=(/var/lib/flatpak/exports/share "$HOME/.local/share/flatpak/exports/share")
+  while IFS=$'\t' read -r id side; do
+    [[ -z $id || $id == \#* ]] && continue
+    [[ -e $APPS/$id ]] && continue   # your own launcher: left alone
+    src=''
+    for d in "${dirs[@]}"; do [[ -f $d/applications/$id ]] && { src=$d/applications/$id; break; }; done
+    [[ -n $src ]] || continue
+    # TUI apps: not in Xfce. GUI apps: not in i3 or sway.
+    if [[ $side == i3 ]]; then key='NotShowIn=XFCE;'; else key='NotShowIn=i3;sway;'; fi
+    awk -v key="$key" -v mark="$MARK=true" '
+      /^\[/ { grp = $0 }
+      grp == "[Desktop Entry]" && /^(OnlyShowIn|NotShowIn)=/ { next }
+      { print }
+      $0 == "[Desktop Entry]" { print key; print mark }' "$src" >"$APPS/$id"
+  done < <(cat "$HOME/.config/tuxcraft/session-apps.tsv" "$SHARE/data/session-apps.tsv" 2>/dev/null)
+  command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" 2>/dev/null
+  return 0
+}
+
+apply() {
+  installed || { split_menus; return 0; }   # removed: clears what it made
+  seed_panel
+  sync_look
+  split_menus
+}
+
+user_cleanup() {
+  split_menus
+  local x=$HOME/.config/xfce4 b f
+  if [[ -d $x ]]; then
+    b=$HOME/.local/state/tuxcraft/xfce-backup-$(date +%Y%m%d-%H%M%S); mkdir -p "$b"
+    for f in "$x"/* "$x"/.[!.]*; do
+      [[ -e $f ]] || continue
+      [[ ${f##*/} == helpers.rc ]] && continue   # tuxcraft's own (default terminal for Thunar)
+      mv "$f" "$b/"
+    done
+    say "Xfce settings moved to ${b/#$HOME/\~}"
+  fi
+  rm -rf "$HOME"/.cache/sessions/xfce4-session-* 2>/dev/null
+  [[ $(cat "$HOME/.config/tuxcraft/session" 2>/dev/null) == xfce ]] && rm -f "$HOME/.config/tuxcraft/session"
+  return 0
+}
+
+case ${1:-} in
+  install)
+    if [[ $EUID -eq 0 ]]; then system_install; exit; fi   # the installer: user side runs at login
+    sudo "$(readlink -f "$0")" system || exit 1
+    apply
+    say "Done. Log out, press F3 on the login screen and pick \"tuxcraft (Xfce)\"." ;;
+  system) system_install ;;
+  remove)
+    [[ ${XDG_CURRENT_DESKTOP:-} == XFCE ]] && die "log out of Xfce first, and run this from i3 or a TTY"
+    other_desktop || die "Xfce is your only desktop. Install i3 first (re-run the installer and pick \"i3 and Xfce\"), then remove Xfce"
+    sudo "$(readlink -f "$0")" system-remove || exit 1
+    user_cleanup
+    say "Xfce removed. i3 is untouched." ;;
+  system-remove) system_remove ;;
+  apply) apply ;;
+  look) sync_look ;;
+  seed) installed && seed_panel ;;
+  status)
+    if installed; then echo "Xfce: installed (login screen: F3 -> tuxcraft (Xfce))"; else echo "Xfce: not installed"; fi
+    [[ -f $XSESSION ]] && echo "session entry: $XSESSION"
+    echo "split launchers: $(grep -l "^$MARK=" "$APPS"/*.desktop 2>/dev/null | wc -l)" ;;
+  *) sed -n '2,7p' "$0" | sed 's/^# //'; exit 1 ;;
+esac

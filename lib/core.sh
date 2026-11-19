@@ -82,6 +82,8 @@ detect_gpu() {
 }
 
 detect_laptop() { compgen -G '/sys/class/power_supply/BAT*' >/dev/null && IS_LAPTOP=1 || IS_LAPTOP=0; }
+# A built-in screen with a backlight (laptops, all-in-ones): brightnessctl. None: ddcutil.
+detect_backlight() { compgen -G '/sys/class/backlight/*' >/dev/null && HAS_BACKLIGHT=1 || HAS_BACKLIGHT=0; }
 detect_bluetooth() { compgen -G '/sys/class/bluetooth/*' >/dev/null && HAS_BT=1 || HAS_BT=0; }
 
 # Printers: USB ones (interface class 07) and, when an mDNS browser is available, network ones.
@@ -113,7 +115,7 @@ detect_printers() {
 }
 
 detect_all() {
-  detect_distro; detect_live; detect_firmware; detect_cpu; detect_gpu; detect_laptop; detect_bluetooth; detect_printers
+  detect_distro; detect_live; detect_firmware; detect_cpu; detect_gpu; detect_laptop; detect_backlight; detect_bluetooth; detect_printers
   set_init
 }
 

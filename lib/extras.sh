@@ -148,7 +148,7 @@ ensure_paru() {
 
 # X11 clipboard history: fallback to Flathub when the distro package (Void: CopyQ) is missing.
 ensure_clipboard() {
-  [[ $TUX_SESSION == i3 ]] || return 0
+  [[ $TUX_SESSION == sway ]] && return 0
   command -v copyq >/dev/null && return 0
   command -v flatpak >/dev/null || pkg_install flatpak
   run flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo &&
@@ -205,7 +205,19 @@ extras_stage() {
       --env=QT_QPA_PLATFORMTHEME=qt5ct || true
     flatpak_nvidia_runtime
   fi
+  ensure_protonplus
   return 0
+}
+
+# ProtonPlus (Flathub): installs and updates Proton-GE, Wine-GE and friends for Steam, Lutris
+# and Heroic. Always installed; brings Flatpak along when that extra was not picked.
+ensure_protonplus() {
+  command -v flatpak >/dev/null || pkg_install flatpak
+  command -v flatpak >/dev/null || { warn "flatpak missing: ProtonPlus not installed"; return 0; }
+  run flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo || true
+  flatpak info --system com.vysp3r.ProtonPlus >/dev/null 2>&1 ||
+    run flatpak install --system -y --noninteractive flathub com.vysp3r.ProtonPlus || warn "ProtonPlus could not be installed"
+  flatpak_nvidia_runtime
 }
 
 # Flatpak apps get the NVIDIA driver from a runtime matching the host driver exactly

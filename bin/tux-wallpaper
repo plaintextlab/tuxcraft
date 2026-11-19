@@ -26,6 +26,16 @@ show() {
   local f=$1
   if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
     pkill -x swaybg; setsid -f swaybg -m fill -i "$f" >/dev/null 2>&1
+  elif [[ ${XDG_CURRENT_DESKTOP:-} == XFCE ]] && command -v xfconf-query >/dev/null; then
+    # Xfce: xfdesktop draws the background. Every monitor it knows, plus every one connected now.
+    local p m
+    { xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/last-image$'
+      for m in $(xrandr --listmonitors 2>/dev/null | awk 'NR > 1 { print $NF }'); do
+        echo "/backdrop/screen0/monitor$m/workspace0/last-image"; done; } | sort -u |
+    while read -r p; do
+      xfconf-query -c xfce4-desktop -p "$p" -n -t string -s "$f"
+      xfconf-query -c xfce4-desktop -p "${p%/last-image}/image-style" -n -t int -s 5   # zoomed (fill)
+    done
   else
     feh --no-fehbg --bg-fill "$f"
   fi

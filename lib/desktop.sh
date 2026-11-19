@@ -4,7 +4,12 @@
 desktop_packages() {
   step "Desktop packages ($TUX_SESSION)"
   local groups="core tui"
-  [[ $TUX_SESSION == sway ]] && groups+=' wayland' || groups+=' x11'
+  # i3 | sway | xfce | i3+xfce. Xfce's own packages come from tux-xfce (desktop_stage).
+  case $TUX_SESSION in
+    sway) groups+=' wayland' ;;
+    xfce) groups+=' x11' ;;
+    *)    groups+=' x11 i3' ;;
+  esac
   local b
   for b in firewall music firefox chromium dev flatpak printing gaming office; do
     has_word "$TUX_BUNDLES" "$b" && groups+=" $b"
@@ -16,6 +21,8 @@ desktop_packages() {
     for m in ${PRINTER_MAKES:-}; do [[ $m == canon ]] || groups+=" printer-$m"; done
   fi
   [[ ${IS_LAPTOP:-0} == 1 ]] && groups+=' laptop'
+  # Brightness: the panel's backlight, or the monitor itself over DDC/CI (desktops).
+  if [[ ${HAS_BACKLIGHT:-0} == 1 ]]; then groups+=' backlight'; else groups+=' ddc'; fi
   # shellcheck disable=SC2086
   pkg_install_groups $groups
   # shellcheck disable=SC2086
@@ -35,7 +42,7 @@ install_runtime() {
   mkdir -p "$TUX_ETC"
   cat >"$TUX_ETC/session.conf" <<EOF
 # Written by tuxcraft. tux-session reads this at login.
-SESSION=$TUX_SESSION
+SESSION=${TUX_SESSION%%+*}
 NVIDIA=${TUX_NVIDIA:-no}
 DISTRO=$DISTRO
 BROWSER=${TUX_BROWSER:-firefox}
@@ -69,10 +76,26 @@ printing_setup() {
   fi
 }
 
+# ddcutil (monitor brightness on desktops, tux-osd) talks to the monitor through /dev/i2c-*,
+# which only exist with the i2c-dev module loaded: without it ddcutil finds no monitor at all.
+# Access through the i2c group (ddcutil's own udev rule needs a logind seat, not always there).
+ddc_setup() {
+  command -v ddcutil >/dev/null || return 0
+  mkdir -p /etc/modules-load.d /etc/udev/rules.d
+  echo i2c-dev >/etc/modules-load.d/tuxcraft-i2c.conf
+  modprobe i2c-dev 2>/dev/null || true
+  getent group i2c >/dev/null || groupadd -r i2c
+  printf '# tuxcraft: monitor control (ddcutil) for the i2c group\nKERNEL=="i2c-[0-9]*", GROUP="i2c", MODE="0660"\n' \
+    >/etc/udev/rules.d/60-tuxcraft-i2c.rules
+  usermod -aG i2c "$TUX_USER"
+  udevadm trigger --subsystem-match=i2c-dev 2>/dev/null || true
+}
+
 desktop_services() {
   has_word "$TUX_BUNDLES" printing && printing_setup
   local g
   for g in docker lpadmin video input; do getent group "$g" >/dev/null && usermod -aG "$g" "$TUX_USER"; done
+  ddc_setup
   if [[ $INIT == systemd ]]; then
     pkg_installed bluez && svc_enable bluetooth
     has_word "$TUX_BUNDLES" printing && svc_enable cups avahi-daemon
@@ -151,8 +174,13 @@ EOF
   fi
   # Session entries so any display manager (and tuigreet's F3 menu) can start tuxcraft.
   mkdir -p /usr/share/xsessions /usr/share/wayland-sessions
-  printf '[Desktop Entry]\nName=tuxcraft (i3)\nExec=tux-session i3\nType=Application\n' >/usr/share/xsessions/tuxcraft-i3.desktop
-  printf '[Desktop Entry]\nName=tuxcraft (sway)\nExec=tux-session sway\nType=Application\n' >/usr/share/wayland-sessions/tuxcraft-sway.desktop
+  # Only for the desktops that are installed (an Xfce-only install has no i3). Xfce's: tux-xfce.
+  if command -v i3 >/dev/null; then
+    printf '[Desktop Entry]\nName=tuxcraft (i3)\nExec=tux-session i3\nType=Application\n' >/usr/share/xsessions/tuxcraft-i3.desktop
+  else rm -f /usr/share/xsessions/tuxcraft-i3.desktop; fi
+  if command -v sway >/dev/null; then
+    printf '[Desktop Entry]\nName=tuxcraft (sway)\nExec=tux-session sway\nType=Application\n' >/usr/share/wayland-sessions/tuxcraft-sway.desktop
+  else rm -f /usr/share/wayland-sessions/tuxcraft-sway.desktop; fi
   # Console palette and a font sized for the screen at boot (themed TTY + greeter), see tux-console
   if [[ $INIT == systemd ]]; then
     cat >/etc/systemd/system/tuxcraft-vtrgb.service <<'EOF'
@@ -328,6 +356,10 @@ desktop_stage() {
   desktop_packages
   extras_stage
   install_runtime
+  if [[ $TUX_SESSION == *xfce* ]]; then
+    step "Xfce session"
+    run /usr/local/bin/tux-xfce system || warn "Xfce setup failed (see $TUX_LOG); later: tux-xfce install"
+  fi
   thunar_no_wallpaper_plugin
   void_pipewire
   desktop_services
