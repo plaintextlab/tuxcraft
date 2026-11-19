@@ -357,6 +357,27 @@ dead SSD — that is what `tux-backup` is for.
    `tux-snap rollback <n>` and reboot.
 3. Later: `tux-snap clean` removes the broken root that was set aside.
 
+## Easy mode: titlebar buttons and a taskbar on i3
+
+For a more familiar desktop without leaving i3: **System menu → Easy mode**, or `tux-easymode on`
+(`off` to go back; nothing else changes).
+
+- **Titlebars** get three buttons on the left, like a Mac: red closes, yellow minimises, green
+  maximises (fills the screen above the bar; again: back to how it was). Right-click a titlebar
+  for the window menu (minimise, maximise, float / tile, move to workspace, close), middle-click
+  closes. Dragging and focusing windows work as before.
+- **The bar moves to the bottom** and becomes a taskbar, like Windows XP: **Start** (the app
+  menu), the workspaces, then one entry per window on this workspace plus every minimised one
+  (dimmed, in brackets). Click: focus it (the focused one: minimise it, a minimised one: bring
+  it back); middle-click: close; right-click: the window menu. Tray, volume, network and clock on
+  the right.
+- **Minimised** windows go to i3's scratchpad, so Super+- also brings them back; switching easy
+  mode off brings them all back.
+
+The button positions are measured from a screenshot of the first titlebar you click, so they fit
+any font. After changing the font, run `tux-easymode calibrate` if the buttons feel off.
+`tux-pointer` (started at login) reads the clicks: it also gives Super + drag to the screen edge.
+
 ## Xfce, next to or instead of i3
 
 The installer's **Desktop** question offers i3 (default), sway, **Xfce**, or **i3 and Xfce**;
@@ -402,6 +423,7 @@ entry works too, but without tuxcraft's environment).
 | Super+Z | **recent files** (films, music, documents, pictures …; pick one to reopen it) | Super+Shift+Z | **recent programs** (pick one to start it again) |
 | Super+Alt+Tab / +Shift | next / previous window in this workspace | Alt+Tab (hold Alt) | **workspace switcher**, most recent first (tap: last workspace) |
 | Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
+| Super + drag a window to the right / left screen edge | move it to the next / previous workspace and go there | Bar: Tile / Float button | tile every window, or float them all |
 
 ## Commands
 
@@ -418,6 +440,7 @@ entry works too, but without tuxcraft's environment).
 | `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-xfce install` / `remove` | add Xfce next to i3 later, or take it out again ([Xfce](#xfce-next-to-or-instead-of-i3)) |
+| `tux-easymode on` / `off` | titlebar buttons + a Windows-style taskbar on i3 ([Easy mode](#easy-mode-titlebar-buttons-and-a-taskbar-on-i3)); `arrange` tiles or floats every window (the bar's Tile / Float button) |
 | `tux-gitsetup` | sign in to GitHub once (browser + one-time code, also in the System menu): every repo then clones, pulls and pushes without a password; also sets your commit name and email (offers GitHub's private no-reply address). `status`, `logout` |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |

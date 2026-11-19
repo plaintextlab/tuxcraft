@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# tux-pointer — mouse gestures i3 has no setting for (i3 session; tux-autostart starts it):
+#   Super + drag a window to the right edge of the screen and let go: it moves to the next
+#   workspace and you go with it (left edge: the previous workspace).
+#   Easy mode (tux-easymode on): clicks on the titlebar buttons (close / minimise / maximise),
+#   right-click a titlebar for the window menu, middle-click to close.
+# i3 does not report where a drag ends, and a press on a titlebar starts i3's own drag, so this
+# listens to X's raw input events: they arrive even while i3 holds the mouse, and nothing is
+# grabbed or changed, so focusing and dragging windows work as always.
+# One program per screen can listen this way (X refuses a second one), hence one helper for both.
+set -uo pipefail
+command -v xinput >/dev/null && command -v xdotool >/dev/null || exit 0
+lock=${XDG_RUNTIME_DIR:-/tmp}/tux-pointer.$UID.lock
+exec 9>"$lock"; flock -n 9 || exit 0   # one per session
+
+# Keycodes of the Super keys (133/134 on every evdev keyboard map).
+supers=$(xmodmap -pke 2>/dev/null | awk '/Super_[LR]/ { print $2 }' | tr '\n' ' ')
+supers=${supers:-133 134}
+EDGE=3   # pixels from the screen edge that count as "at the edge"
+STATE=$HOME/.config/tuxcraft/state
+easy() { grep -qsE '^EASY_MODE="?1' "$STATE"; }
+
+on_drop() {  # Super + drag ended at X: next / previous workspace when at the screen's edge
+  local sw sh n cur
+  read -r sw sh < <(xdotool getdisplaygeometry 2>/dev/null) || return
+  cur=$(i3-msg -t get_workspaces | jq -r '.[] | select(.focused) | .num')
+  [[ $cur =~ ^[0-9]+$ ]] || return
+  if ((X >= sw - EDGE)); then n=$((cur + 1)); ((n > 10)) && return
+  elif ((X <= EDGE - 1)); then n=$((cur - 1)); ((n < 1)) && return
+  else return; fi
+  i3-msg -q "move container to workspace number $n, workspace number $n" >/dev/null 2>&1
+}
+
+super=0 dragging=0 px=-99 py=-99 X=0 Y=0 SCREEN=0 WINDOW=0
+# xinput prints every event over several lines; awk keeps the key and button ones as
+# "type detail" (13/14 key press/release, 15/16 button press/release).
+xinput test-xi2 --root 2>/dev/null | awk '
+  /^EVENT type/ { t = $3; next }
+  /detail:/ && t >= 13 && t <= 16 { print t, $2; fflush() }' |
+while read -r type detail; do
+  case $type in
+    13) [[ " $supers " == *" $detail "* ]] && super=1 ;;
+    14) [[ " $supers " == *" $detail "* ]] && super=0 ;;
+    15) ((detail >= 1 && detail <= 3)) || continue
+        eval "$(xdotool getmouselocation --shell 2>/dev/null)"; px=$X py=$Y
+        [[ $detail == 1 ]] && dragging=$super ;;
+    16) ((detail >= 1 && detail <= 3)) || continue
+        eval "$(xdotool getmouselocation --shell 2>/dev/null)"
+        if [[ $detail == 1 ]] && ((dragging && super)); then on_drop
+        elif ((!super)) && (( (X - px) ** 2 + (Y - py) ** 2 <= 9 )) && easy; then
+          # A click (press and release at the same spot), not a drag: maybe a titlebar button.
+          case $detail in 1) tux-easymode click & ;; 2) tux-easymode click close & ;; 3) tux-easymode click menu & ;; esac
+        fi
+        dragging=0 ;;
+  esac
+done

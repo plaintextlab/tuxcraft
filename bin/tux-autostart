@@ -96,6 +96,8 @@ case $session in
     tux-dwt start
     # TV / monitor plugged in: mirror it (EXTERNAL_DISPLAY in the state file), unplugged: laptop only.
     tux-display start
+    # Super + drag to the screen edge: next / previous workspace; easy mode's titlebar buttons.
+    tux-pointer &
     if (( idle > 0 )); then
       xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
       once xss-lock --transfer-sleep-lock -- tux-lock --now
