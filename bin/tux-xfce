@@ -19,7 +19,9 @@ SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
 HOST=${DISTRO:-$(command -v xbps-install >/dev/null && echo void || { command -v pacman >/dev/null && echo arch || echo debian; })}
 APPS=$HOME/.local/share/applications
 MARK=X-Tuxcraft-Session-Split
-XSESSION=/usr/share/xsessions/tuxcraft-xfce.desktop
+# Login screen entry: tuigreet lists only tuxcraft's own folder; the /usr/share copy is for other
+# display managers.
+XSESSIONS=(/etc/tuxcraft/xsessions/tuxcraft-xfce.desktop /usr/share/xsessions/tuxcraft-xfce.desktop)
 AUTOSTART=/etc/xdg/autostart/tuxcraft-xfce.desktop
 ANSWERS=/etc/tuxcraft/answers.conf
 say() { printf '\e[1m::\e[0m %s\n' "$*"; }
@@ -85,8 +87,11 @@ system_install() {
       void)   xbps-install -y "${want[@]}" ;;
     esac || die "package install failed"
   fi
-  mkdir -p "${XSESSION%/*}" "${AUTOSTART%/*}"
-  printf '[Desktop Entry]\nName=tuxcraft (Xfce)\nComment=Xfce with the tuxcraft theme\nExec=tux-session xfce\nType=Application\n' >"$XSESSION"
+  local x; mkdir -p "${AUTOSTART%/*}"
+  for x in "${XSESSIONS[@]}"; do
+    mkdir -p "${x%/*}"
+    printf '[Desktop Entry]\nName=tuxcraft (Xfce)\nComment=Xfce with the tuxcraft theme\nExec=tux-session xfce\nType=Application\n' >"$x"
+  done
   # Started by xfce4-session only (OnlyShowIn), never by dex in i3.
   printf '[Desktop Entry]\nType=Application\nName=tuxcraft session services\nExec=tux-autostart xfce\nOnlyShowIn=XFCE;\nNoDisplay=true\nX-GNOME-Autostart-Phase=Initialization\n' >"$AUTOSTART"
   answers_session add
@@ -104,7 +109,7 @@ system_remove() {
       void)   xbps-remove -Ry "${have[@]}" ;;
     esac || die "package removal failed (nothing else was changed)"
   fi
-  rm -f "$XSESSION" "$AUTOSTART"
+  rm -f "${XSESSIONS[@]}" "$AUTOSTART"
   answers_session del
 }
 
@@ -217,7 +222,7 @@ case ${1:-} in
   seed) installed && seed_panel ;;
   status)
     if installed; then echo "Xfce: installed (login screen: F3 -> tuxcraft (Xfce))"; else echo "Xfce: not installed"; fi
-    [[ -f $XSESSION ]] && echo "session entry: $XSESSION"
+    [[ -f ${XSESSIONS[0]} ]] && echo "session entry: ${XSESSIONS[0]}"
     echo "split launchers: $(grep -l "^$MARK=" "$APPS"/*.desktop 2>/dev/null | wc -l)" ;;
   *) sed -n '2,7p' "$0" | sed 's/^# //'; exit 1 ;;
 esac

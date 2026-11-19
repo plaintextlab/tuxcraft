@@ -147,6 +147,22 @@ greeter_user() {
   useradd -r -M -s /usr/sbin/nologin -G video greeter 2>/dev/null; echo greeter
 }
 
+# session_entry x|wayland FILE NAME EXEC [WANTED]: the login screen entry FILE.desktop, written
+# when WANTED (the desktop's binary) is non-empty, removed otherwise. Into tuxcraft's own folder
+# (all tuigreet lists) and /usr/share (other display managers).
+session_entry() {
+  local sub d
+  case $1 in x) sub=xsessions ;; wayland) sub=wayland-sessions ;; esac
+  for d in "/etc/tuxcraft/$sub" "/usr/share/$sub"; do
+    if [[ -n ${5-x} ]]; then
+      mkdir -p "$d"
+      printf '[Desktop Entry]\nName=%s\nExec=%s\nType=Application\n' "$3" "$4" >"$d/$2.desktop"
+    else
+      rm -f "$d/$2.desktop"
+    fi
+  done
+}
+
 greeter_stage() {
   step "Login screen"
   local dm
@@ -162,7 +178,7 @@ greeter_stage() {
 vt = 7
 
 [default_session]
-command = "tuigreet --time --remember --asterisks --window-padding 2 --container-padding 2 --greeting 'Welcome to $TUX_HOSTNAME' --theme 'border=yellow;title=yellow;greet=white;text=white;prompt=yellow;input=white;time=bright-black;action=bright-black;button=yellow;container=black' --cmd tux-session"
+command = "tuigreet --time --remember --asterisks --window-padding 2 --container-padding 2 --greeting 'Welcome to $TUX_HOSTNAME' --theme 'border=yellow;title=yellow;greet=white;text=white;prompt=yellow;input=white;time=bright-black;action=bright-black;button=yellow;container=black' --xsessions /etc/tuxcraft/xsessions --sessions /etc/tuxcraft/wayland-sessions --cmd tux-session"
 user = "$gu"
 EOF
     # Auto login (tux-autologin on) survives updates: put its [initial_session] back.
@@ -174,15 +190,12 @@ EOF
     pkg_install lightdm lightdm-gtk-greeter
     svc_enable lightdm
   fi
-  # Session entries so any display manager (and tuigreet's F3 menu) can start tuxcraft.
-  mkdir -p /usr/share/xsessions /usr/share/wayland-sessions
+  # Session entries. tuigreet's F3 menu lists only tuxcraft's own (/etc/tuxcraft/*sessions, see
+  # --xsessions/--sessions above), not the plain "i3" / "Xfce Session" ones the packages put in
+  # /usr/share. Copies go there too, for other display managers (the LightDM fallback).
   # Only for the desktops that are installed (an Xfce-only install has no i3). Xfce's: tux-xfce.
-  if command -v i3 >/dev/null; then
-    printf '[Desktop Entry]\nName=tuxcraft (i3)\nExec=tux-session i3\nType=Application\n' >/usr/share/xsessions/tuxcraft-i3.desktop
-  else rm -f /usr/share/xsessions/tuxcraft-i3.desktop; fi
-  if command -v sway >/dev/null; then
-    printf '[Desktop Entry]\nName=tuxcraft (sway)\nExec=tux-session sway\nType=Application\n' >/usr/share/wayland-sessions/tuxcraft-sway.desktop
-  else rm -f /usr/share/wayland-sessions/tuxcraft-sway.desktop; fi
+  session_entry x tuxcraft-i3 "tuxcraft (i3)" "tux-session i3" "$(command -v i3)"
+  session_entry wayland tuxcraft-sway "tuxcraft (sway)" "tux-session sway" "$(command -v sway)"
   # Console palette and a font sized for the screen at boot (themed TTY + greeter), see tux-console
   if [[ $INIT == systemd ]]; then
     cat >/etc/systemd/system/tuxcraft-vtrgb.service <<'EOF'
