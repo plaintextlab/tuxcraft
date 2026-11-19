@@ -244,9 +244,15 @@ install_fm() {
   fi
   step "Installing $FM in the box"
   # No weak deps: they bring a dozen filesystem tools whose scriptlets fail in a box.
-  # gvfs still needs udisks2, whose scriptlet (udevadm trigger) fails in a container: dnf then
-  # says "Transaction failed" although every package is in. So judge by what is there, or the
-  # install would stop here, before the menu entries.
+  # gvfs needs udisks2, whose scriptlet runs "udevadm trigger" when it sees the host's udev
+  # socket (shared into the box) and fails there, so dnf says "Transaction failed". That
+  # scriptlet only reloads udev and enables a service, neither of which applies in a box, so
+  # install udisks2 first without its scriptlets.
+  podman exec "$NAME" rpm -q udisks2 >/dev/null 2>&1 ||
+    asroot dnf -y -q install --setopt=install_weak_deps=False --setopt=tsflags=noscripts udisks2 ||
+    warn "Could not preinstall udisks2"
+  # Still judge by what is there afterwards: an error here must not stop the install before
+  # the menu entries.
   asroot dnf -y install --setopt=install_weak_deps=False "${pkgs[@]}" ||
     warn "dnf reported an error (usually udisks2's setup, harmless in a box); checking what got installed"
   podman exec "$NAME" sh -c "command -v $FM && command -v dbus-run-session" >/dev/null 2>&1 ||
