@@ -194,7 +194,7 @@ lines keep its built-in font) and the GRUB menu, which gets the same font as a G
 | Window manager | i3 | sway |
 | Bar | polybar | waybar |
 | Launcher / menus | rofi | fuzzel |
-| Compositor | picom: Hyprland-style animations (springy open, gliding tiles, workspace crossfade) at the monitor's refresh rate | built in |
+| Compositor | picom: Hyprland-style animations (springy open, gliding tiles, workspace crossfade) at the monitor's refresh rate, blurred background behind terminals and menus | built in (no blur: sway cannot) |
 | Lock / idle | i3lock + xss-lock (xtrlock: see-through) | swaylock + swayidle |
 | Wallpaper | feh | swaybg |
 | Clipboard history | CopyQ | cliphist |
