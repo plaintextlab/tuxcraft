@@ -12,6 +12,9 @@
 #       --desktop       with an Ubuntu desktop in a window (the first boot installs it, ~10 min)
 #       --share DIR     this host folder appears in the VM as /mnt/host
 #   tux-ubuntuvm ssh [CMD...]       terminal in the VM (starts it first if needed)
+#   tux-ubuntuvm copy PATH... [--to DIR]          files/folders into the VM (default: its home)
+#   tux-ubuntuvm copy --from PATH... [--to DIR]   out of the VM (VM paths relative to its home;
+#                                                 default: the current folder)
 #   tux-ubuntuvm window             desktop VM: open its window (starts it first if needed)
 #   tux-ubuntuvm start | stop | kill | status | log
 #   tux-ubuntuvm snapshot save|restore|delete [NAME] | snapshot list    (while stopped)
@@ -251,6 +254,41 @@ push_terminfo() {  # Ubuntu lacks e.g. xterm-kitty: copy this terminal's descrip
 }
 cmd_ssh() { load; cmd_start; wait_ssh; push_terminfo; vm_ssh "$@"; }
 
+cmd_copy() {  # tar over the VM's SSH: folders, permissions and odd file names come along
+  local from=0 to='' p src=() q cnt=0
+  while (($#)); do
+    case $1 in
+      --from) from=1 ;;
+      --to) [[ $# -ge 2 ]] || die "copy: --to needs a folder"; to=$2; shift ;;
+      -h|--help) die "copy PATH... [--to DIR] | copy --from PATH... [--to DIR]" ;;
+      *) src+=("$1") ;;
+    esac; shift
+  done
+  ((${#src[@]})) || die "copy: which files? (tux-ubuntuvm copy PATH... | copy --from PATH...)"
+  load; cmd_start >/dev/null; wait_ssh
+  if ((from)); then
+    to=${to:-.}; mkdir -p "$to"
+    for p in "${src[@]}"; do
+      p=${p#\~/}; p=${p%/}; [[ -n $p ]] || p=.
+      q="tar -C $(printf %q "$(dirname "$p")") -cf - $(printf %q "$(basename "$p")")"
+      vm_ssh -o BatchMode=yes "$q" | tar -C "$to" -xf - || die "could not copy $p out of the VM"
+      cnt=$((cnt + 1))
+    done
+    say "Copied $cnt item(s) from the VM to $(realpath "$to")"
+  else
+    to=${to:-.}; to=${to#\~/}; [[ $to == '~' ]] && to=.
+    for p in "${src[@]}"; do [[ -e $p ]] || die "copy: no such file $p"; done
+    q=$(printf %q "$to")
+    for p in "${src[@]}"; do
+      [[ $p == / ]] || p=${p%/}
+      tar -C "$(dirname "$p")" -cf - "$(basename "$p")" \
+        | vm_ssh -o BatchMode=yes "mkdir -p $q && tar -C $q -xf -" || die "could not copy $p into the VM"
+      cnt=$((cnt + 1))
+    done
+    [[ $to == . ]] && to="your home folder" || to="~/$to"; say "Copied $cnt item(s) into the VM: $to"
+  fi
+}
+
 cmd_window() {
   load; ((DESKTOP)) || die "this VM has no desktop (create it with --desktop); use: tux-ubuntuvm ssh"
   cmd_start
@@ -358,6 +396,7 @@ case ${1:-} in
   create) shift; cmd_create "$@" ;;
   start) cmd_start ;;
   ssh) shift; cmd_ssh "$@" ;;
+  copy|cp) shift; cmd_copy "$@" ;;
   window) cmd_window ;;
   stop) cmd_stop ;;
   kill) cmd_kill ;;

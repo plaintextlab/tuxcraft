@@ -509,13 +509,14 @@ also in **System menu → Virtual machines → Ubuntu test VM**.
 tux-ubuntuvm create                      # Ubuntu 26.04, 4 GiB RAM, 30 GiB disk; boots in ~20 s
 tux-ubuntuvm create --desktop            # ... with a desktop in a window (first boot installs it, ~10 min)
 tux-ubuntuvm ssh                         # terminal in the VM (starts it if needed); window: desktop VM
+tux-ubuntuvm copy notes.txt myapp/       # into the VM's home (--to DIR); out: copy --from myapp --to ~/Downloads
 tux-ubuntuvm snapshot save before-test   # VM stopped; snapshot restore [NAME] | list | delete NAME
 tux-ubuntuvm reset                       # back to a fresh install, same settings
 tux-ubuntuvm delete [--purge]            # remove it (--purge: the downloaded images too)
 ```
 
 Options for `create`: `--release 24.04` (any release on cloud-images.ubuntu.com), `--ram GiB`,
-`--cpus N`, `--size GiB`, `--share DIR` (that host folder appears in the VM as `/mnt/host`). You log in
+`--cpus N`, `--size GiB`, `--share DIR` (that host folder appears in the VM as `/mnt/host`, live, both ways). You log in
 as yourself, password `ubuntu`, with sudo and no password needed. SSH listens only on 127.0.0.1 and
 accepts only the VM's own key. The image is checked against Ubuntu's `SHA256SUMS`. QEMU and xorriso are
 installed the first time (sudo). Without the `kvm` group the VM still runs, only very slowly:
