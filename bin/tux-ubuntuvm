@@ -244,7 +244,12 @@ wait_ssh() {  # first boot: cloud-init sets up the user, which takes a little wh
   done
   die "the VM did not answer on SSH in 20 minutes (tux-ubuntuvm log)"
 }
-cmd_ssh() { load; cmd_start; wait_ssh; vm_ssh "$@"; }
+push_terminfo() {  # Ubuntu lacks e.g. xterm-kitty: copy this terminal's description in (as kitten ssh does)
+  local t=${TERM:-}; [[ -n $t ]] && have infocmp || return 0
+  vm_ssh -o BatchMode=yes "infocmp $(printf %q "$t")" >/dev/null 2>&1 && return 0
+  infocmp -x "$t" 2>/dev/null | vm_ssh -o BatchMode=yes 'sudo tic -x /dev/stdin' >/dev/null 2>&1 || true
+}
+cmd_ssh() { load; cmd_start; wait_ssh; push_terminfo; vm_ssh "$@"; }
 
 cmd_window() {
   load; ((DESKTOP)) || die "this VM has no desktop (create it with --desktop); use: tux-ubuntuvm ssh"
