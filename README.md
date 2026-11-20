@@ -161,7 +161,7 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
 9. **Browser** and **optional extras** (firewall, Flatpak, wallpapers, Bluetooth, music, printing, dev tools, office, gaming, paru).
    *Music* (on by default) = **rmpc** + mpd with album art and a **cava** visualizer: **Super+M** opens it
    (`8` = full-screen visualizer), **Super+Shift+M** opens cava on its own. Pick the music folder with
-   **System menu → Music folder** or `tux-music folder ~/path` — no mpd.conf editing.
+   **System menu → Sound → Music folder** or `tux-music folder ~/path` — no mpd.conf editing.
    *Gaming* = Steam, gamemode, MangoHud, Heroic (Flatpak), plus the limits Proton needs (`vm.max_map_count`,
    open files); on Void also gamescope, Wine, winetricks, protontricks, vkBasalt and the 32-bit libraries.
    With the NVIDIA driver, the matching Flatpak GL runtime is installed so Flatpak games use the GPU,
@@ -169,7 +169,7 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    *Printing* and *Office* (LibreOffice) are on by default. Printing sets up CUPS with network
    (mDNS) and USB (ipp-usb) discovery and driverless IPP printing; printers found at install time
    get their vendor driver (hplip, escpr, brlaser, splix). At the first login, printers on the
-   network are added automatically; later, **System menu → Printers** or `tux-printer`.
+   network are added automatically; later, **System menu → Network & devices → Printers** or `tux-printer`.
 10. Extra packages to **add**, packages to **leave out**
 
 Answers are saved to `/etc/tuxcraft/answers.conf` (without either password); reuse them for an
@@ -284,7 +284,7 @@ under you. Which apps, the limits and the big-program list: `~/.config/tuxcraft/
 (`tux-warm --edit`; written on first start, never overwritten). `tux-warm status` shows what is
 warm and how much of it is in RAM.
 
-**Off switch:** system menu (Super+Escape) → *Fast app start: switch off*, or `tux-warm off`.
+**Off switch:** system menu (Super+Escape) → Settings → *Fast app start: switch off*, or `tux-warm off`.
 It stays off after the next login; `tux-warm on` turns it back on. Idle server modes close at once;
 one that still holds a terminal or Thunar window closes with that window.
 
@@ -345,7 +345,7 @@ edit the colours, `tux-theme set <name>`.
 | Fallback kernel | Arch installs `linux` **and** `linux-lts` |
 | Debian | security updates install themselves; everything else waits for `sysup` |
 | Off-disk backups | `tux-backup` → incremental `btrfs send` to an external btrfs drive (rsync for other filesystems) |
-| Shutdown guard | logout / reboot / shutdown from the power menu first lists what would be lost (DaVinci Resolve, OBS recording, unsaved windows, file copies, package updates, VMs, downloads …) and asks; Cancel is the default. Edit the list: system menu → *Shutdown guard list*, or `~/.config/tuxcraft/power-guard.conf` |
+| Shutdown guard | logout / reboot / shutdown from the power menu first lists what would be lost (DaVinci Resolve, OBS recording, unsaved windows, file copies, package updates, VMs, downloads …) and asks; Cancel is the default. Edit the list: system menu → Settings → *Shutdown guard list*, or `~/.config/tuxcraft/power-guard.conf` |
 | `rm` | aliased to `trash-put` in the shell (`rmf` for the real thing) |
 
 Snapshots live on the same disk. They protect against bad updates and mistakes, **not** against a
@@ -409,27 +409,28 @@ entry works too, but without tuxcraft's environment).
 | Command | Does |
 |---|---|
 | `sysup` | the one safe way to update |
-| `tux-update` | update tuxcraft itself (tools, configs, fixes) with your saved choices; same as the `--update` one-liner. Also in the System menu → Update tuxcraft |
+| `tux-update` | update tuxcraft itself (tools, configs, fixes) with your saved choices; same as the `--update` one-liner. Also in the System menu → Updates & backups → Update tuxcraft |
 | `tux-snap` | list / create / diff / restore a file / rollback / clean |
 | `tux-backup [mountpoint]` | backup to an external drive |
 | `tux-watch CMD` | start a big program (`tux-watch steam`) with everything it prints shown live in a terminal window: errors in red, warnings in yellow, and how it ended (exit code or crash signal). The program runs on its own, so close the window any time and it keeps running. Saved under `~/.local/state/tuxcraft/watch` (last 20); `tux-watch --last` shows the newest again, `--here` watches in the current terminal |
 | `tux-display [mirror\|extend\|tv\|laptop\|audio\|status]` | external screens on i3: a TV or monitor plugged in is mirrored by itself (started at login; `EXTERNAL_DISPLAY=extend` or `tv` in `~/.config/tuxcraft/state` picks another default), unplugging goes back to the laptop panel. If the TV lacks the laptop's resolution, the picture is scaled to fill it. Sound follows: the TV's HDMI sound becomes the output (playing streams move along) and the previous output comes back when it is unplugged; `EXTERNAL_AUDIO=off` leaves sound alone, `tux-display audio [on\|off]` switches now. Watches X's RandR events (`xev`), or asks X every 2 s without it |
 | `tux-recent files\|apps` | menus behind Super+Z / Super+Shift+Z. Files come from the list GTK apps keep (`~/.local/share/recently-used.xbel`: Thunar, LibreOffice, Mousepad, file dialogs, browser downloads) plus what mpv plays; programs are recorded by `tux-recent watch` (started at login) whenever a window opens, for every app with a launcher |
-| `tux-autologin [on\|off\|status]` | log in by itself at boot behind the lock screen, so the desktop and its autostart apps load while you type your password (System menu → Auto login). Uses greetd's one-time `[initial_session]`; after a logout the normal login screen is back. If the lock does not appear the session ends. The keyring asks for your password once, the first time an app needs it. Refuses on an unencrypted disk unless you add `--anyway` (the menu asks) |
-| `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
+| `tux-autologin [on\|off\|status]` | log in by itself at boot behind the lock screen, so the desktop and its autostart apps load while you type your password (System menu → Settings → Auto login). Uses greetd's one-time `[initial_session]`; after a logout the normal login screen is back. If the lock does not appear the session ends. The keyring asks for your password once, the first time an app needs it. Refuses on an unencrypted disk unless you add `--anyway` (the menu asks) |
+| `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Network & devices → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-xfce install` / `remove` | add Xfce next to i3 later, or take it out again ([Xfce](#xfce-next-to-or-instead-of-i3)) |
 | `tux-gitsetup` | sign in to GitHub once (browser + one-time code, also in the System menu): every repo then clones, pulls and pushes without a password; also sets your commit name and email (offers GitHub's private no-reply address). `status`, `logout` |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |
-| `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in the system menu once created |
+| `tux-gamevm` | Windows gaming VM with GPU passthrough, single-GPU (desktop) or hybrid (laptop); see below. Appears in System menu → Virtual machines once created |
+| `tux-ubuntuvm` | a throwaway Ubuntu VM for experiments: reset to a fresh install in seconds, snapshots, delete; see below. System menu → Virtual machines |
 | `tux-guard --list` / `--edit` | what would block a shutdown right now / edit the watch list |
 | `tux-warm status` / `off` / `on` / `--edit` | fast app start: what is kept warm, switch it off/on, choose the apps |
 | `tux-winslot [--debug]` | keeps DaVinci Resolve in its workspace and tiling slot when the Cinema Viewer (Ctrl+F) hides and re-shows its window; restarts itself after `tux-update`. Log: `~/.local/state/tuxcraft/winslot.log`. For a big preview that never touches i3: Super+F (i3 fullscreen) plus Resolve's Enhanced Viewer (*Workspace ▸ Viewer Mode*) |
 | `tux-dwt status` / `restart` | touchpad off while typing (i3), back 600 ms after the last key; `DWT_MS=` in `~/.config/tuxcraft/state` changes the delay, `0` turns it off |
 | `tux-awake status` / `restart` | no screen lock or blanking while something plays (a video in the browser, mpv, VLC, music), on battery too: a media player says it is playing (MPRIS) or a program sends sound that is not paused. Started at login; a screen you lock yourself still goes dark. `AWAKE_MEDIA=off` in `~/.config/tuxcraft/state` turns it off. Log: `~/.local/state/tuxcraft/awake.log` |
 | `tux-battery status` / `restart` | laptops: a notification when the charger comes out (charge and time left) and again when it goes back in; unplugged switches the power profile to power-saver, plugged in brings the previous one back (unless you picked another meanwhile). `BATTERY_SAVER=off` in the state file keeps the profile as it is |
-| `tux-control` | the system menu from a terminal |
+| `tux-control [look\|sound\|devices\|updates\|vms\|settings]` | the system menu (Super+Escape) from a terminal, or one of its groups directly. The top level has eight groups; each line lists what is inside, so typing e.g. `font` still finds it, and every group has a *Back* entry |
 | `tux-claude-desktop` | Claude Desktop on any of the three distros (see below) |
 | `tux-davincibox` | DaVinci Resolve (Studio) in a container: install or upgrade from Blackmagic's zip, plus a file manager for the box (see below) |
 
@@ -497,6 +498,30 @@ home, so they survive an upgrade. Unpacking needs about 25 GB free in `~/.cache`
 Deactivate Studio (*Help ▸ DaVinci Resolve Studio License*) before `install --recreate`,
 `remove` or `uninstall`, or you may use up an activation. Options: `--name` (default `davincibox`), `--fm`.
 
+## Throwaway Ubuntu VM (`tux-ubuntuvm`)
+
+An Ubuntu VM to try things in and break: Ubuntu's official cloud image, run by QEMU/KVM as your
+own user (no root, no libvirt). The downloaded image is never changed. The VM writes to a thin layer
+on top of it, so **reset** gives you a fresh install in seconds with no new download. Everything is
+also in **System menu → Virtual machines → Ubuntu test VM**.
+
+```sh
+tux-ubuntuvm create                      # Ubuntu 26.04, 4 GiB RAM, 30 GiB disk; boots in ~20 s
+tux-ubuntuvm create --desktop            # ... with a desktop in a window (first boot installs it, ~10 min)
+tux-ubuntuvm ssh                         # terminal in the VM (starts it if needed); window: desktop VM
+tux-ubuntuvm snapshot save before-test   # VM stopped; snapshot restore [NAME] | list | delete NAME
+tux-ubuntuvm reset                       # back to a fresh install, same settings
+tux-ubuntuvm delete [--purge]            # remove it (--purge: the downloaded images too)
+```
+
+Options for `create`: `--release 24.04` (any release on cloud-images.ubuntu.com), `--ram GiB`,
+`--cpus N`, `--size GiB`, `--share DIR` (that host folder appears in the VM as `/mnt/host`). You log in
+as yourself, password `ubuntu`, with sudo and no password needed. SSH listens only on 127.0.0.1 and
+accepts only the VM's own key. The image is checked against Ubuntu's `SHA256SUMS`. QEMU and xorriso are
+installed the first time (sudo). Without the `kvm` group the VM still runs, only very slowly:
+`tux-ubuntuvm setup` adds you, then log out and back in. Files live in `~/.local/share/tuxcraft/vms`,
+its own btrfs subvolume, so the hourly `/home` snapshots do not fill up with VM disk churn.
+
 ## Gaming VM (`tux-gamevm`)
 
 Windows with a real GPU, for games that need it. Two modes, picked automatically:
@@ -514,7 +539,7 @@ sudo tux-gamevm create --image /mnt/data/vm/win.img --size 500 --ram 22 --cores 
 tux-gamevm install                       # unattended Windows install in a desktop window (no GPU)
 tux-gamevm start                         # with the GPU (hybrid: opens the Looking Glass window)
 tux-gamevm guest-setup                   # hybrid, once, while Windows runs: Looking Glass host + virtual monitor
-tux-gamevm gpu linux | vm                # hybrid: dGPU for Linux games (prime-run) or for the VM; also in Super+Escape
+tux-gamevm gpu linux | vm                # hybrid: dGPU for Linux games (prime-run) or for the VM; also in Super+Escape → Virtual machines
 ```
 
 Hybrid **GPU modes** (switch at the next login; X picks its GPUs when it starts): in *vm* mode the desktop never

@@ -1,52 +1,120 @@
 #!/usr/bin/env bash
-# System menu (Super+Escape): every tuxcraft knob in one place.
+# System menu (Super+Escape): every tuxcraft knob, in a few groups.
+#   tux-control [look|sound|devices|updates|vms|settings]   open the menu, or one group directly
+# Each group line lists what is inside it, so typing e.g. "font" at the top still finds it.
 t="tux-term --class tux-float -e" T="tux-term --class tux-float-big -e"
-vm='' gpu=''; [[ -f /etc/tuxcraft/gamevm.conf ]] && vm="󰊴  Gaming VM (Windows)"
-void=''; command -v xbps-install >/dev/null && void="󰇚  Fastest package mirror"
-auto="󰍁  Auto login (locked) at boot: switch on"; [[ -f /etc/tuxcraft/autologin ]] && auto="󰍁  Auto login (locked) at boot: switch off"
-warm="󱐋  Fast app start: switch off"; grep -qs '^ENABLED=0' "$HOME/.config/tuxcraft/warm.conf" && warm="󱐋  Fast app start: switch on"
-# Hybrid laptops: the dGPU serves either Linux games or the VM (switch takes a logout).
-if grep -qs '^MODE=hybrid' /etc/tuxcraft/gamevm.conf; then
-  if [[ $(cat /etc/tuxcraft/gamevm-gpu-mode 2>/dev/null) == linux ]]; then gpu="󰢮  GPU: use for gaming VM"; else gpu="󰢮  GPU: use for Linux games"; fi
-fi
-c=$(printf '%s\n' ${vm:+"$vm"} ${gpu:+"$gpu"} \
-  "󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰚰  Update system (sysup)" "󰚰  Update tuxcraft" "󰆓  Snapshots" \
-  "󰋊  Drives: automount" "󰁯  Back up to external drive" "󰖩  Network" "󰂯  Bluetooth" "󰕾  Audio mixer" "󰓃  Audio output" "󰑓  Restart audio" "󰐪  Printers" "󰝚  Music folder" \
-  ${void:+"$void"} "$warm" "$auto" "󰾅  Power profile" "󰖔  Night light toggle" "󰹑  Compositor on/off (i3)" "󰍹  Displays" \
-  "󰊤  GitHub sign-in (git)" "󰌌  Keybindings" "󰋼  System info" "󰒃  Shutdown guard list" "󰐥  Power menu" | tux-menu system) || exit 0
+BACK="󰁍  Back"
+self=$(readlink -f "$0")
+pick() {  # pick PROMPT ITEM... : submenu into $c, with a Back entry that reopens the top menu
+  local p=$1; shift
+  c=$(printf "%s\n" "$@" "$BACK" | tux-menu "$p") || exit 0
+  [[ $c == "$BACK" ]] && exec "$self"
+}
+
+look() {
+  local e=("󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰖔  Night light toggle")
+  [[ -z ${WAYLAND_DISPLAY:-} ]] && e+=("󰹑  Compositor on/off")   # picom: i3 only
+  pick look "${e[@]}"
+  case $c in
+    *theme) tux-theme --menu ;;
+    *Font) tux-font --menu ;;
+    *Wallpaper) tux-wallpaper --menu ;;
+    *Night*) tux-nightlight toggle ;;
+    *Compositor*) if pgrep -x picom >/dev/null; then pkill -x picom; else __GL_MaxFramesAllowed=1 setsid -f picom; fi ;;
+  esac
+}
+
+sound() {
+  pick sound "󰕾  Audio mixer" "󰓃  Audio output" "󰑓  Restart audio" "󰝚  Music folder"
+  case $c in
+    *mixer) $t tux-mixer ;;
+    *output) tux-audio output ;;
+    *Restart*) tux-audio restart ;;
+    *folder) tux-music folder ;;
+  esac
+}
+
+devices() {
+  pick devices "󰖩  Network" "󰂯  Bluetooth" "󰍹  Displays" "󰋊  Drives: automount" \
+    "󰐪  Printers" "󰾅  Power profile"
+  case $c in
+    *Network) $t tux-net ;;
+    *Bluetooth) $t bluetui ;;
+    *Displays) if [[ -n ${WAYLAND_DISPLAY:-} ]]; then $t bash -c 'swaymsg -t get_outputs; echo; echo "Edit ~/.config/kanshi/config to persist."; read -n1'; else arandr; fi ;;
+    *automount*) tux-drives --menu ;;
+    *Printers) $t bash -c 'tux-printer; echo; read -rsn1 -p "Enter: open printer settings, any other key: close " k; [[ -z $k ]] && setsid -f system-config-printer' ;;
+    *profile) tux-powerprofile ;;
+  esac
+}
+
+updates() {
+  local void=''; command -v xbps-install >/dev/null && void="󰇚  Fastest package mirror"
+  pick updates "󰚰  Update system (sysup)" "󰚰  Update tuxcraft" "󰆓  Snapshots" \
+    "󰁯  Back up to external drive" ${void:+"$void"}
+  case $c in
+    *sysup*) $T sysup --pause ;;
+    *tuxcraft) $T tux-update --pause ;;
+    *Snapshots) $T tux-snap ;;
+    *external*) $T bash -c 'tux-backup; read -n1 -rp "Press any key"' ;;
+    *mirror*) $t bash -c 'sudo tux-mirror && sudo xbps-install -S; read -rsn1 -p "Done. Press a key."' ;;
+  esac
+}
+
+vms() {
+  local e=("󰣭  Ubuntu test VM")
+  [[ -f /etc/tuxcraft/gamevm.conf ]] && e+=("󰊴  Gaming VM (Windows)")
+  # Hybrid laptops: the dGPU serves either Linux games or the VM (switch takes a logout).
+  if grep -qs '^MODE=hybrid' /etc/tuxcraft/gamevm.conf; then
+    if [[ $(cat /etc/tuxcraft/gamevm-gpu-mode 2>/dev/null) == linux ]]; then e+=("󰢮  GPU: use for gaming VM")
+    else e+=("󰢮  GPU: use for Linux games"); fi
+  fi
+  pick "virtual machines" "${e[@]}"
+  case $c in
+    *Ubuntu*) tux-ubuntuvm --menu ;;
+    *"Gaming VM"*) tux-gamevm start ;;
+    *"GPU: use for"*)
+      local want=vm out a; [[ $c == *"Linux games"* ]] && want=linux
+      if out=$(sudo -n /usr/local/bin/tux-gamevm gpu "$want" 2>&1); then
+        a=$(printf '%s\n' "󰍃  Log out now" "󰜺  Later" | tux-menu "GPU switch: log out to apply") || exit 0
+        [[ $a == *"Log out"* ]] && { if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; else i3-msg exit; fi; }
+      else notify-send -u critical "GPU switch" "$out"; fi ;;
+  esac
+}
+
+settings() {
+  local auto warm
+  auto="󰍁  Auto login (locked) at boot: switch on"; [[ -f /etc/tuxcraft/autologin ]] && auto="󰍁  Auto login (locked) at boot: switch off"
+  warm="󱐋  Fast app start: switch off"; grep -qs '^ENABLED=0' "$HOME/.config/tuxcraft/warm.conf" && warm="󱐋  Fast app start: switch on"
+  pick settings "󰌌  Keybindings" "󰊤  GitHub sign-in (git)" "$warm" "$auto" "󰒃  Shutdown guard list"
+  case $c in
+    *Keybindings) tux-keys ;;
+    *GitHub*) $T bash -c 'tux-gitsetup; read -rsn1 -p "Press a key to close."' ;;
+    *"Fast app start"*) tux-warm toggle ;;
+    *"Auto login"*) tux-autologin --menu ;;
+    *guard*) tux-guard --edit ;;
+  esac
+}
+
+case ${1:-} in
+  look|sound|devices|updates|vms|settings) "$1"; exit ;;
+esac
+
+c=$(printf '%s\n' \
+  "󰏘  Look & feel          theme · font · wallpaper · night light" \
+  "󰕾  Sound                mixer · output · restart audio · music folder" \
+  "󰖩  Network & devices    Wi-Fi · Bluetooth · displays · drives · printers · power profile" \
+  "󰚰  Updates & backups    sysup · update tuxcraft · snapshots · backup" \
+  "󰪫  Virtual machines     Ubuntu test VM$([[ -f /etc/tuxcraft/gamevm.conf ]] && echo ' · gaming VM')" \
+  "󰒓  Settings             keybindings · GitHub · auto login · fast app start · shutdown guard" \
+  "󰋼  System info" \
+  "󰐥  Power menu" | tux-menu system) || exit 0
 case $c in
-  *"Gaming VM"*) tux-gamevm start ;;
-  *"Fast app start"*) tux-warm toggle ;;
-  *"Auto login"*) tux-autologin --menu ;;
-  *"GPU: use for"*)
-    want=vm; [[ $c == *"Linux games"* ]] && want=linux
-    if out=$(sudo -n /usr/local/bin/tux-gamevm gpu "$want" 2>&1); then
-      a=$(printf '%s\n' "󰍃  Log out now" "󰜺  Later" | tux-menu "GPU switch: log out to apply") || exit 0
-      [[ $a == *"Log out"* ]] && { if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; else i3-msg exit; fi; }
-    else notify-send -u critical "GPU switch" "$out"; fi ;;
-  *theme) tux-theme --menu ;;
-  *Font) tux-font --menu ;;
-  *Wallpaper) tux-wallpaper --menu ;;
-  *sysup*) $T sysup --pause ;;
-  *"Update tuxcraft") $T tux-update --pause ;;
-  *Snapshots) $T tux-snap ;;
-  *automount*) tux-drives --menu ;;
-  *external*) $T bash -c 'tux-backup; read -n1 -rp "Press any key"' ;;
-  *Network) $t tux-net ;;
-  *Bluetooth) $t bluetui ;;
-  *mixer) $t tux-mixer ;;
-  *output) tux-audio output ;;
-  *audio) tux-audio restart ;;
-  *folder) tux-music folder ;;
-  *Printers) $t bash -c 'tux-printer; echo; read -rsn1 -p "Enter: open printer settings, any other key: close " k; [[ -z $k ]] && setsid -f system-config-printer' ;;
-  *mirror*) $t bash -c 'sudo tux-mirror && sudo xbps-install -S; read -rsn1 -p "Done. Press a key."' ;;
-  *profile) tux-powerprofile ;;
-  *Night*) tux-nightlight toggle ;;
-  *Compositor*) if pgrep -x picom >/dev/null; then pkill -x picom; else __GL_MaxFramesAllowed=1 setsid -f picom; fi ;;
-  *Displays) if [[ -n ${WAYLAND_DISPLAY:-} ]]; then $t bash -c 'swaymsg -t get_outputs; echo; echo "Edit ~/.config/kanshi/config to persist."; read -n1'; else arandr; fi ;;
-  *GitHub*) $T bash -c 'tux-gitsetup; read -rsn1 -p "Press a key to close."' ;;
-  *Keybindings) tux-keys ;;
-  *info) $t bash -c 'fastfetch; read -n1 -rp ""' ;;
-  *guard*) tux-guard --edit ;;
-  *menu) tux-power ;;
+  *"Look & feel"*) look ;;
+  *Sound*) sound ;;
+  *"Network & devices"*) devices ;;
+  *"Updates & backups"*) updates ;;
+  *"Virtual machines"*) vms ;;
+  *Settings*) settings ;;
+  *"System info"*) $t bash -c 'fastfetch; read -n1 -rp ""' ;;
+  *"Power menu"*) tux-power ;;
 esac

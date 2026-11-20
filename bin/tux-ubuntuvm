@@ -1,0 +1,368 @@
+#!/usr/bin/env bash
+# tux-ubuntuvm — a throwaway Ubuntu VM for experiments: break it, reset it in seconds, delete it.
+# Ubuntu's official cloud image + cloud-init, run by QEMU/KVM as your user (no root, no libvirt).
+# The downloaded image is never changed: the VM writes to a thin layer on top of it, so
+# "reset" is a fresh install in a few seconds, with no new download.
+#
+#   tux-ubuntuvm create [options]   make the VM (downloads the image the first time)
+#       --release VER   Ubuntu release (default 26.04; any on cloud-images.ubuntu.com, e.g. 24.04)
+#       --ram GiB       memory (default 4)
+#       --cpus N        CPU cores (default: half the host, at most 4)
+#       --size GiB      disk size (default 30; only what the VM uses takes space)
+#       --desktop       with an Ubuntu desktop in a window (the first boot installs it, ~10 min)
+#       --share DIR     this host folder appears in the VM as /mnt/host
+#   tux-ubuntuvm ssh [CMD...]       terminal in the VM (starts it first if needed)
+#   tux-ubuntuvm window             desktop VM: open its window (starts it first if needed)
+#   tux-ubuntuvm start | stop | kill | status | log
+#   tux-ubuntuvm snapshot save|restore|delete [NAME] | snapshot list    (while stopped)
+#   tux-ubuntuvm reset [--yes]      back to a fresh install, same settings
+#   tux-ubuntuvm delete [--yes] [--purge]   remove the VM; --purge also the downloaded images
+#   tux-ubuntuvm setup              install QEMU, an ISO tool and a viewer; join the kvm group
+#   tux-ubuntuvm --menu             the menu behind System menu → Virtual machines
+#
+# You log in as yourself (same user name), password "ubuntu", sudo without a password.
+# SSH listens only on 127.0.0.1 and takes only the VM's own key (kept next to its disk).
+# Everything lives in ~/.local/share/tuxcraft/vms, its own btrfs subvolume when /home is
+# btrfs, so the hourly /home snapshots do not fill up with VM disk churn.
+set -euo pipefail
+
+ROOT=${TUX_VM_ROOT:-$HOME/.local/share/tuxcraft/vms}
+IMAGES=$ROOT/images
+DIR=$ROOT/ubuntu
+CONF=$DIR/vm.conf
+QEMU=qemu-system-x86_64
+VMUSER=${USER:-$(id -un)}
+
+b=$'\e[1m' d=$'\e[2m' y=$'\e[33m' n=$'\e[0m'
+[[ -t 1 ]] || b='' d='' y='' n=''
+say()  { printf '%s::%s %s\n' "$b" "$n" "$*"; }
+warn() { printf '%s!%s %s\n' "$y$b" "$n" "$*" >&2; }
+die()  { printf 'tux-ubuntuvm: %s\n' "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null; }
+exists() { [[ -f $CONF ]]; }
+load()  { exists || die "no VM yet: run 'tux-ubuntuvm create' first"; . "$CONF"; }
+confirm() {  # confirm QUESTION  (true on y/yes)
+  local a; read -rp "$1 [y/N] " a; [[ $a == [yY]* ]]
+}
+
+# ---------------------------------------------------------------------------------- setup
+distro() {
+  if have xbps-install; then echo void; elif have pacman; then echo arch; else echo debian; fi
+}
+iso_tool() {
+  local t; for t in cloud-localds xorriso genisoimage mkisofs; do have "$t" && { echo "$t"; return; }; done
+  return 1
+}
+cmd_setup() {
+  local pk
+  case $(distro) in
+    arch)   pk=(qemu-desktop xorriso virt-viewer openssh) ;;
+    debian) pk=(qemu-system-x86 qemu-system-gui qemu-utils xorriso virt-viewer openssh-client) ;;
+    void)   pk=(qemu xorriso virt-viewer openssh) ;;
+  esac
+  say "Installing ${pk[*]}"
+  case $(distro) in
+    arch)   sudo pacman -S --needed --noconfirm "${pk[@]}" ;;
+    debian) sudo apt-get install -y "${pk[@]}" ;;
+    void)   sudo xbps-install -Sy "${pk[@]}" ;;
+  esac
+  if [[ -e /dev/kvm && ! -w /dev/kvm ]] && getent group kvm >/dev/null; then
+    sudo usermod -aG kvm "$VMUSER"
+    warn "Added you to the kvm group: log out and back in once, then the VM runs at full speed."
+  fi
+}
+need_tools() {
+  have $QEMU && have qemu-img && have ssh && iso_tool >/dev/null && return 0
+  say "QEMU or an ISO tool is missing: installing them (sudo)"
+  cmd_setup
+  have $QEMU && have qemu-img && iso_tool >/dev/null || die "still missing QEMU/qemu-img/xorriso"
+}
+
+# ------------------------------------------------------------------------------- storage
+make_root() {  # own subvolume (kept out of /home snapshots), no copy-on-write for disk images
+  [[ -d $ROOT ]] && return 0
+  mkdir -p "$(dirname "$ROOT")"
+  if [[ $(stat -f -c %T "$(dirname "$ROOT")") == btrfs ]] && have btrfs \
+     && btrfs subvolume create "$ROOT" >/dev/null 2>&1; then :; else mkdir -p "$ROOT"; fi
+  chattr +C "$ROOT" 2>/dev/null || true
+}
+image_url() { echo "https://cloud-images.ubuntu.com/releases/$1/release"; }
+image_file() { echo "$IMAGES/ubuntu-$1-server-cloudimg-amd64.img"; }
+fetch_image() {  # fetch_image RELEASE : download once, check against Ubuntu's SHA256SUMS
+  local rel=$1 f url sums want got
+  f=$(image_file "$rel"); [[ -f $f ]] && return 0
+  mkdir -p "$IMAGES"; url=$(image_url "$rel")
+  sums=$(curl -fsSL "$url/SHA256SUMS") || die "no Ubuntu $rel cloud image at $url"
+  want=$(awk -v f="ubuntu-$rel-server-cloudimg-amd64.img" '$2=="*"f || $2==f {print $1}' <<<"$sums")
+  [[ -n $want ]] || die "Ubuntu $rel: no amd64 cloud image listed in $url/SHA256SUMS"
+  say "Downloading Ubuntu $rel cloud image (once, ~600 MB)"
+  curl -fL --progress-bar -o "$f.part" "$url/$(basename "$f")" || { rm -f "$f.part"; die "download failed"; }
+  got=$(sha256sum "$f.part" | cut -d' ' -f1)
+  [[ $got == "$want" ]] || { rm -f "$f.part"; die "checksum mismatch for $(basename "$f"): download removed"; }
+  mv "$f.part" "$f"
+}
+
+# ------------------------------------------------------------------------------ cloud-init
+write_seed() {  # fresh disk layer + seed ISO (new instance id: cloud-init runs again)
+  load
+  local base s=$DIR/seed key
+  base=$(image_file "$RELEASE")
+  rm -f "$DIR/disk.qcow2" "$DIR/seed.iso"
+  qemu-img create -q -f qcow2 -F qcow2 -b "$base" "$DIR/disk.qcow2" "${SIZE}G"
+  [[ -f $DIR/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "tux-ubuntuvm" -f "$DIR/id_ed25519"
+  key=$(cat "$DIR/id_ed25519.pub")
+  rm -rf "$s"; mkdir -p "$s"
+  printf 'instance-id: tux-%s\nlocal-hostname: ubuntu-vm\n' "$(date +%s)" >"$s/meta-data"
+  {
+    cat <<EOF
+#cloud-config
+hostname: ubuntu-vm
+users:
+  - name: $VMUSER
+    gecos: $VMUSER
+    groups: [adm, sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    ssh_authorized_keys: ["$key"]
+chpasswd:
+  expire: false
+  users: [{name: $VMUSER, password: ubuntu, type: text}]
+ssh_pwauth: false
+EOF
+    if [[ -n ${SHARE:-} ]]; then
+      echo 'mounts: [[host, /mnt/host, 9p, "trans=virtio,version=9p2000.L,msize=262144,nofail", "0", "0"]]'
+    fi
+    if ((DESKTOP)); then
+      cat <<EOF
+package_update: true
+packages: [ubuntu-desktop-minimal, spice-vdagent]
+runcmd:
+  - printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=$VMUSER\nWaylandEnable=false\n' > /etc/gdm3/custom.conf
+  - systemctl set-default graphical.target
+power_state: {mode: reboot, message: desktop installed, condition: true}
+EOF
+    fi
+  } >"$s/user-data"
+  case $(iso_tool) in
+    cloud-localds) cloud-localds "$DIR/seed.iso" "$s/user-data" "$s/meta-data" ;;
+    xorriso) xorriso -as mkisofs -quiet -o "$DIR/seed.iso" -V cidata -J -r "$s/user-data" "$s/meta-data" 2>/dev/null ;;
+    *) "$(iso_tool)" -quiet -o "$DIR/seed.iso" -V cidata -J -r "$s/user-data" "$s/meta-data" ;;
+  esac
+  rm -rf "$s" "$DIR/console.log"
+}
+
+# ----------------------------------------------------------------------------------- create
+cmd_create() {
+  local rel=26.04 ram=4 cpus size=30 desktop=0 share=''
+  cpus=$(( $(nproc) / 2 )); ((cpus < 1)) && cpus=1; ((cpus > 4)) && cpus=4
+  while (($#)); do
+    case $1 in
+      --release) rel=$2; shift ;;
+      --ram) ram=$2; shift ;;
+      --cpus) cpus=$2; shift ;;
+      --size) size=$2; shift ;;
+      --desktop) desktop=1 ;;
+      --share) share=$(realpath "$2"); [[ -d $share ]] || die "--share: no folder $2"; shift ;;
+      *) die "create: unknown option $1" ;;
+    esac; shift
+  done
+  [[ $ram$cpus$size =~ ^[0-9]+$ ]] || die "--ram, --cpus and --size take whole numbers"
+  [[ $rel =~ ^[0-9]{2}\.[0-9]{2}$ ]] || die "--release: a version like 24.04"
+  exists && die "the VM exists already: 'tux-ubuntuvm reset' for a fresh install, or 'delete' first"
+  need_tools
+  make_root; fetch_image "$rel"
+  mkdir -p "$DIR"
+  printf 'RELEASE=%s\nRAM=%s\nCPUS=%s\nSIZE=%s\nDESKTOP=%s\nSHARE=%q\n' \
+    "$rel" "$ram" "$cpus" "$size" "$desktop" "$share" >"$CONF"
+  write_seed
+  say "Ubuntu $rel VM ready: ${ram} GiB RAM, $cpus cores, ${size} GiB disk$( ((desktop)) && echo ', desktop')"
+  say "Log in as $VMUSER, password 'ubuntu'. Next: tux-ubuntuvm $( ((desktop)) && echo window || echo ssh)"
+}
+
+# ------------------------------------------------------------------------------------ run
+pid() { local p; p=$(cat "$DIR/qemu.pid" 2>/dev/null) && kill -0 "$p" 2>/dev/null && echo "$p"; }
+running() { [[ -n $(pid) ]]; }
+port() { cat "$DIR/ssh.port" 2>/dev/null; }
+free_port() {
+  local p; for ((p = 2222; p < 2300; p++)); do
+    (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null || { echo $p; return; }
+  done; die "no free port for SSH between 2222 and 2299"
+}
+has_spice() { $QEMU -display help 2>/dev/null | grep -qx spice-app; }
+
+cmd_start() {
+  load; running && return 0
+  have $QEMU || need_tools
+  [[ -f $DIR/disk.qcow2 ]] || write_seed
+  local p a=() disp=()
+  p=$(free_port); echo "$p" >"$DIR/ssh.port"
+  if [[ -w /dev/kvm ]]; then a=(-accel kvm -cpu host)
+  else warn "no access to /dev/kvm: running without KVM, which is very slow (tux-ubuntuvm setup)"; a=(-accel tcg -cpu max); fi
+  a+=(-name ubuntu-vm -machine q35 -m "${RAM}G" -smp "$CPUS"
+      -drive "file=$DIR/disk.qcow2,if=virtio,discard=unmap,detect-zeroes=unmap"
+      -drive "file=$DIR/seed.iso,media=cdrom,readonly=on"
+      -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$p-:22"
+      -device virtio-rng-pci -device virtio-balloon
+      -serial "file:$DIR/console.log" -pidfile "$DIR/qemu.pid")
+  [[ -n ${SHARE:-} ]] && a+=(-virtfs "local,path=$SHARE,mount_tag=host,security_model=none,id=host")
+  if ((DESKTOP)); then
+    a+=(-device virtio-vga -device qemu-xhci -device usb-tablet)
+    if has_spice; then
+      rm -f "$DIR/spice.sock"
+      a+=(-spice "unix=on,addr=$DIR/spice.sock,disable-ticketing=on"
+          -device virtio-serial-pci -chardev spicevmc,id=vdagent,name=vdagent
+          -device virtserialport,chardev=vdagent,name=com.redhat.spice.0
+          -display none -daemonize)
+    else
+      disp=(-display gtk)  # no SPICE in this QEMU: a plain window; closing it powers the VM off
+    fi
+  else
+    a+=(-display none -daemonize)
+  fi
+  rm -f "$DIR/qemu.pid"
+  if ((${#disp[@]})); then
+    setsid -f $QEMU "${a[@]}" "${disp[@]}" >>"$DIR/qemu.log" 2>&1
+    sleep 1
+  else
+    $QEMU "${a[@]}" >>"$DIR/qemu.log" 2>&1 || die "QEMU failed to start: $(tail -n3 "$DIR/qemu.log")"
+  fi
+  running || die "QEMU exited: $(tail -n3 "$DIR/qemu.log")"
+  say "VM started (SSH on 127.0.0.1:$p)"
+}
+
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+          -o ConnectTimeout=5 -o IdentitiesOnly=yes)
+vm_ssh() { ssh "${SSH_OPTS[@]}" -i "$DIR/id_ed25519" -p "$(port)" "$VMUSER@127.0.0.1" "$@"; }
+wait_ssh() {  # first boot: cloud-init sets up the user, which takes a little while
+  local i
+  for ((i = 0; i < 600; i++)); do
+    vm_ssh -o BatchMode=yes true 2>/dev/null && return 0
+    running || die "the VM stopped while booting (tux-ubuntuvm log)"
+    ((i == 3)) && say "Waiting for the VM to boot…"
+    sleep 2
+  done
+  die "the VM did not answer on SSH in 20 minutes (tux-ubuntuvm log)"
+}
+cmd_ssh() { load; cmd_start; wait_ssh; vm_ssh "$@"; }
+
+cmd_window() {
+  load; ((DESKTOP)) || die "this VM has no desktop (create it with --desktop); use: tux-ubuntuvm ssh"
+  cmd_start
+  [[ -S $DIR/spice.sock ]] || return 0   # plain QEMU window, already open
+  have remote-viewer || need_tools
+  if [[ ! -f $DIR/desktop-ready ]]; then
+    if vm_ssh -o BatchMode=yes 'systemctl is-active -q gdm' 2>/dev/null; then touch "$DIR/desktop-ready"
+    else notify-send "Ubuntu VM" "First start: the desktop is still installing (about 10 minutes). The window shows a console until then." 2>/dev/null || true; fi
+  fi
+  setsid -f remote-viewer --title "Ubuntu VM" "spice+unix://$DIR/spice.sock" >/dev/null 2>&1
+}
+
+cmd_stop() {
+  load; running || { say "VM is not running"; return 0; }
+  say "Shutting the VM down"
+  vm_ssh -o BatchMode=yes 'sudo systemctl poweroff' 2>/dev/null || true
+  local i; for ((i = 0; i < 60; i++)); do running || { say "VM stopped"; return 0; }; sleep 1; done
+  die "the VM did not shut down; 'tux-ubuntuvm kill' pulls the plug"
+}
+cmd_kill() { load; local p; p=$(pid) && kill "$p" && say "VM killed"; return 0; }
+
+cmd_status() {
+  if ! exists; then echo "no VM (tux-ubuntuvm create)"; return 0; fi
+  load
+  local du; du=$(du -sh --apparent-size "$DIR/disk.qcow2" 2>/dev/null | cut -f1)
+  printf 'Ubuntu %s  %s GiB RAM  %s cores  %s GiB disk (%s used)%s%s\n' "$RELEASE" "$RAM" "$CPUS" "$SIZE" \
+    "${du:-0}" "$( ((DESKTOP)) && echo '  desktop')" "${SHARE:+  share: $SHARE → /mnt/host}"
+  if running; then echo "running, ssh: tux-ubuntuvm ssh  (127.0.0.1:$(port), user $VMUSER)"; else echo "stopped"; fi
+}
+cmd_log() { load; tail -n "${1:-60}" "$DIR/console.log" 2>/dev/null; }
+
+cmd_snapshot() {
+  load; local op=${1:-list} name=${2:-}
+  [[ $op == list ]] || ! running || die "stop the VM first (tux-ubuntuvm stop)"
+  case $op in
+    list) qemu-img snapshot -U -l "$DIR/disk.qcow2" ;;
+    save) name=${name:-$(date +%Y-%m-%d_%H%M)}; qemu-img snapshot -c "$name" "$DIR/disk.qcow2"; say "Saved snapshot $name" ;;
+    restore|delete)
+      if [[ -z $name ]]; then
+        name=$(qemu-img snapshot -l "$DIR/disk.qcow2" | awk 'NR>2 {print $2}' | tail -n1)
+        [[ -n $name ]] || die "no snapshots"
+      fi
+      if [[ $op == restore ]]; then qemu-img snapshot -a "$name" "$DIR/disk.qcow2"; say "Back to snapshot $name"
+      else qemu-img snapshot -d "$name" "$DIR/disk.qcow2"; say "Deleted snapshot $name"; fi ;;
+    *) die "snapshot list|save|restore|delete [NAME]" ;;
+  esac
+}
+
+cmd_reset() {
+  load; [[ ${1:-} == --yes ]] || confirm "Erase everything in the VM (and its snapshots) and start fresh?" || exit 0
+  running && { kill "$(pid)"; sleep 1; }
+  write_seed; rm -f "$DIR/desktop-ready"
+  say "Fresh Ubuntu $RELEASE: the next start sets it up again"
+}
+
+cmd_delete() {
+  local yes=0 purge=0
+  for a in "$@"; do case $a in --yes) yes=1 ;; --purge) purge=1 ;; *) die "delete [--yes] [--purge]" ;; esac; done
+  if exists; then
+    ((yes)) || confirm "Delete the Ubuntu VM and everything in it?" || exit 0
+    running && { kill "$(pid)"; sleep 1; }
+    rm -rf "$DIR"; say "VM deleted"
+  else say "no VM"; fi
+  if ((purge)) && [[ -d $ROOT ]]; then
+    rm -rf "$IMAGES"
+    rmdir "$ROOT" 2>/dev/null || true   # an empty subvolume goes with rmdir too
+    say "Downloaded images removed"
+  fi
+}
+
+# ------------------------------------------------------------------------------------ menu
+term() { tux-term --class tux-float-big -e bash -c "$1; echo; read -rsn1 -p 'Press a key to close.'"; }
+cmd_menu() {
+  local c
+  if ! exists; then
+    c=$(printf '%s\n' "󰆍  Create: terminal only (boots in ~20 s)" "󰍹  Create: with desktop (first boot ~10 min)" \
+      | tux-menu "New Ubuntu VM") || exit 0
+    case $c in
+      *desktop*) term 'tux-ubuntuvm create --desktop && tux-ubuntuvm window' ;;
+      *) tux-term --class tux-float-big -e bash -c 'tux-ubuntuvm create && tux-ubuntuvm ssh; read -rsn1 -p "Press a key to close."' ;;
+    esac
+    return
+  fi
+  load
+  local st=stopped e=()
+  ((DESKTOP)) && e+=("󰍹  Open window")
+  e+=("󰆍  Open terminal (ssh)")
+  if running; then st=running e+=("󰓛  Shut down"); else e+=("󰐊  Start in background"); fi
+  e+=("󰆓  Save snapshot (shuts it down)" "󰁯  Restore last snapshot (shuts it down)" "󰑓  Reset to a fresh install" "󰆴  Delete VM" "󰋼  Status")
+  c=$(printf '%s\n' "${e[@]}" | tux-menu "Ubuntu VM ($st)") || exit 0
+  case $c in
+    *window) cmd_window ;;
+    *terminal*) tux-term --class tux-float-big -e tux-ubuntuvm ssh ;;
+    *Start*) cmd_start && notify-send "Ubuntu VM" "Started" 2>/dev/null ;;
+    *"Shut down"*) cmd_stop && notify-send "Ubuntu VM" "Stopped" 2>/dev/null ;;
+    *"Save snapshot"*) term 'tux-ubuntuvm stop && tux-ubuntuvm snapshot save' ;;
+    *"Restore"*) term 'tux-ubuntuvm snapshot list && tux-ubuntuvm stop && tux-ubuntuvm snapshot restore' ;;
+    *Reset*) term 'tux-ubuntuvm reset' ;;
+    *Delete*) term 'tux-ubuntuvm delete' ;;
+    *Status) notify-send "Ubuntu VM" "$(cmd_status)" 2>/dev/null ;;
+  esac
+}
+
+case ${1:-} in
+  create) shift; cmd_create "$@" ;;
+  start) cmd_start ;;
+  ssh) shift; cmd_ssh "$@" ;;
+  window) cmd_window ;;
+  stop) cmd_stop ;;
+  kill) cmd_kill ;;
+  status) cmd_status ;;
+  log) shift; cmd_log "$@" ;;
+  snapshot) shift; cmd_snapshot "$@" ;;
+  reset) shift; cmd_reset "$@" ;;
+  delete) shift; cmd_delete "$@" ;;
+  setup) cmd_setup ;;
+  --menu|menu) cmd_menu ;;
+  ''|-h|--help|help) sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "$0" ;;
+  *) die "unknown command $1 (tux-ubuntuvm --help)" ;;
+esac
