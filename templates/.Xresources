@@ -25,3 +25,17 @@ Xcursor.size: 24
 *.color13: {{color13}}
 *.color14: {{color14}}
 *.color15: {{color15}}
+! dwm session (tux-dwm): her colour layout. Bar = background, text = accent, unselected tags and
+! the focused window's 1px border = muted (both use selbordercolor, as in her build).
+dwm.normbgcolor: {{bg}}
+dwm.normbordercolor: {{bg}}
+dwm.normfgcolor: {{accent}}
+dwm.selbgcolor: {{accent}}
+dwm.selfgcolor: {{bg}}
+dwm.selbordercolor: {{muted}}
+dwm.font: {{font}}:size={{font_size}}
+dmenu.font: {{font}}:size={{font_size}}
+dmenu.background: {{bg}}
+dmenu.foreground: {{fg}}
+dmenu.selbackground: {{accent}}
+dmenu.selforeground: {{accent_fg}}

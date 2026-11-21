@@ -115,6 +115,11 @@ reload_all() {
   elif pgrep -x i3 >/dev/null; then
     i3-msg reload >/dev/null 2>&1 || true
     pgrep -x polybar >/dev/null && "$HOME/.config/polybar/launch.sh" >/dev/null 2>&1 &
+  elif pgrep -u "$UID" -x dwm >/dev/null; then
+    # dwm reads its colours and font (dwm.* in ~/.Xresources, merged above) when it starts:
+    # restart it in place. Windows keep their tags.
+    tux-dwm reload >/dev/null 2>&1 || true
+    tux-dwmbar refresh >/dev/null 2>&1 || true
   fi
   pkill -USR1 -x kitty 2>/dev/null || true   # kitty re-reads kitty.conf (+ theme.conf)
   if pgrep -x dunst >/dev/null; then

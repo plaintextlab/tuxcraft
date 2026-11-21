@@ -154,7 +154,7 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    encrypted disk spares you a second prompt. Snapshots and rollback work the same.
 4. Computer name, user, password, timezone, keyboard. The timezone is **not** looked up online
    unless you say yes (that sends your IP address to ipapi.co).
-5. **Desktop**: **X11 + i3** (default), **Wayland + sway**, **X11 + Xfce**, or **i3 and Xfce** — same theme and fonts in every one ([Xfce](#xfce-next-to-or-instead-of-i3))
+5. **Desktop**: **X11 + i3** (default), **Wayland + sway**, **X11 + Xfce**, **i3 and Xfce**, or **i3 and dwm** — same theme and fonts in every one ([Xfce](#xfce-next-to-or-instead-of-i3), [dwm](#dwm-next-to-i3))
 6. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
 7. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
 8. **Font** (previews below) and size
@@ -381,6 +381,39 @@ entry works too, but without tuxcraft's environment).
   `~/.local/state/tuxcraft/xfce-backup-<date>/`. i3 is not touched. When Xfce is the only
   desktop, re-run the installer with "i3 and Xfce" first.
 
+## dwm, next to i3
+
+**i3 and dwm** in the installer's Desktop question, or `tux-dwm install` on an i3 system later,
+adds a dwm session: **F3** on the login screen → **tuxcraft (dwm)**. It is
+[BreadOnPenguins' dwm build](https://github.com/BreadOnPenguins/dwm) and her look (20 px gaps,
+1 px borders, a flat bar with the tag numbers, empty tags hidden, her dmenu centred, picom with
+round corners, blur and see-through unfocused windows), with **the same keys as i3**.
+
+- **Built from source**, as dwm always is: `src/dwm` and `src/dmenu` are her builds (MIT, like
+  dwm), with tuxcraft's changes marked `tuxcraft` in the code. They are compiled into
+  `/usr/local/bin` at install, and again by `tux-update` when the sources change.
+- **Same keys:** dwm's `config.h` was written from `~/.config/tuxcraft/wm/common.conf` and the i3
+  config, so Super+K lists them for both. Where dwm has no i3 equivalent, tuxcraft's dwm
+  changes add one: pressing Super+N again goes back to the last tag, Super+Tab goes to the
+  next tag that has windows, Super+R is a resize mode, Super+-/Super+Shift+- is a scratchpad,
+  and Super+Alt+Space floats every window. dwm tiles in a master/stack layout instead of i3's
+  manual splits. Super+Shift+H / V pick side-by-side or top/bottom, Super+S / W / X give the
+  deck, one-at-a-time and toggle-split layouts. Super+Space lists the tags and their windows
+  instead of showing thumbnails.
+- **Same theme:** `tux-theme` and `tux-font` write dwm's and dmenu's colours and font into
+  `~/.Xresources` and restart dwm in place. Windows keep their tags.
+- **Bar:** dwm's own bar on the left; `tux-dwmbar` writes the status on the right (music, CPU,
+  memory, GPU, updates, Bluetooth, volume, network, battery, power profile, recording, clock)
+  with polybar's clicks.
+- **picom:** dwm uses `~/.config/picom/dwm.conf`; i3 keeps `picom.conf`. The tuxcraft picom
+  config from before dwm was added is kept in `~/.config/picom/backup/picom.conf`.
+- **Your own config:** copy `/usr/share/tuxcraft/src/dwm/config.def.h` to
+  `~/.config/tuxcraft/dwm/config.h`, edit it, then run `tux-dwm build`. Updates keep using
+  yours.
+- **Not in dwm:** no system tray (udiskie and CopyQ run without icons), no workspace
+  thumbnails, and no "recent programs" list (it follows i3's window events).
+- **Removing it:** `tux-dwm remove` (from i3 or a TTY). i3 is not touched.
+
 ## Keys (Super = Windows key)
 
 `Super+K` shows the complete list. The essentials:
@@ -419,6 +452,7 @@ entry works too, but without tuxcraft's environment).
 | `tux-drives [list\|on\|off NAME\|space]` | `space`: used/free bar per drive. Otherwise: choose which drives mount by themselves (System menu → Network & devices → Drives): internal ones go in `/etc/fstab` with `nofail` and mount at boot under `/media/<label>`; external ones are mounted by udiskie when plugged in, unless you switch them off |
 | `tux-theme`, `tux-font`, `tux-wallpaper` | look & feel |
 | `tux-xfce install` / `remove` | add Xfce next to i3 later, or take it out again ([Xfce](#xfce-next-to-or-instead-of-i3)) |
+| `tux-dwm install` / `build` / `remove` | add the dwm session, rebuild it after editing its config, or take it out ([dwm](#dwm-next-to-i3)) |
 | `tux-gitsetup` | sign in to GitHub once (browser + one-time code, also in the System menu): every repo then clones, pulls and pushes without a password; also sets your commit name and email (offers GitHub's private no-reply address). `status`, `logout` |
 | `tux-pkg install/remove/search/list` | one package command everywhere (`ii`, `rr`, `ss` aliases): host repo first, then Flathub, vendor repos (`data/vendor-repos.tsv`), Arch/Debian/Fedora repos and the AUR in distrobox "boxes"; `sysup` updates the boxes |
 | `tux-firewall [status\|on\|off\|allow\|deny]` | nftables firewall: incoming connections blocked except the ports you open to the LAN (`tux-firewall allow 8188/tcp`); SSH is open by default. Never touches libvirt/docker rules |

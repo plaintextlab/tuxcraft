@@ -13,14 +13,16 @@ pick() {  # pick PROMPT ITEM... : submenu into $c, with a Back entry that reopen
 
 look() {
   local e=("󰏘  Colour theme" "󰛖  Font" "󰸉  Wallpaper" "󰖔  Night light toggle")
-  [[ -z ${WAYLAND_DISPLAY:-} ]] && e+=("󰹑  Compositor on/off")   # picom: i3 only
+  [[ -z ${WAYLAND_DISPLAY:-} ]] && e+=("󰹑  Compositor on/off")   # picom: i3 and dwm
   pick look "${e[@]}"
   case $c in
     *theme) tux-theme --menu ;;
     *Font) tux-font --menu ;;
     *Wallpaper) tux-wallpaper --menu ;;
     *Night*) tux-nightlight toggle ;;
-    *Compositor*) if pgrep -x picom >/dev/null; then pkill -x picom; else __GL_MaxFramesAllowed=1 setsid -f picom; fi ;;
+    *Compositor*) if pgrep -x picom >/dev/null; then pkill -x picom
+                  elif [[ ${XDG_CURRENT_DESKTOP:-} == dwm && -f ~/.config/picom/dwm.conf ]]; then __GL_MaxFramesAllowed=1 setsid -f picom --config ~/.config/picom/dwm.conf
+                  else __GL_MaxFramesAllowed=1 setsid -f picom; fi ;;
   esac
 }
 
@@ -76,7 +78,7 @@ vms() {
       local want=vm out a; [[ $c == *"Linux games"* ]] && want=linux
       if out=$(sudo -n /usr/local/bin/tux-gamevm gpu "$want" 2>&1); then
         a=$(printf '%s\n' "󰍃  Log out now" "󰜺  Later" | tux-menu "GPU switch: log out to apply") || exit 0
-        [[ $a == *"Log out"* ]] && { if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; else i3-msg exit; fi; }
+        [[ $a == *"Log out"* ]] && { if [[ -n ${SWAYSOCK:-} ]]; then swaymsg exit; elif [[ ${XDG_CURRENT_DESKTOP:-} == dwm ]]; then tux-dwm cmd quit; else i3-msg exit; fi; }
       else notify-send -u critical "GPU switch" "$out"; fi ;;
   esac
 }

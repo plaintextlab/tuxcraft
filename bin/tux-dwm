@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# tux-dwm — dwm as an extra session next to i3: BreadOnPenguins' build and look, tuxcraft's keys.
+#   tux-dwm install      build and install dwm + dmenu (needs sudo); pick "tuxcraft (dwm)" with F3 at login
+#   tux-dwm build        rebuild after editing the config (~/.config/tuxcraft/dwm/config.h, see below)
+#   tux-dwm remove       take dwm out again (i3 is untouched)
+#   tux-dwm status
+# Inside the dwm session (keys from ~/.config/tuxcraft/wm/common.conf, same as i3):
+#   tux-dwm run          app launcher (Super+D): her dmenu, centred
+#   tux-dwm overview     tags and their windows (Super+Space); pick one to go there
+#   tux-dwm layout       layout menu (Super+Ctrl+L)
+#   tux-dwm cmd ARGS     tell dwm to: view N | layout NAME | sticky | floatall | bar | gaps | restart | quit
+#   tux-dwm reload       restart dwm in place (new colours / font); windows keep their tags
+#
+# Sources: /usr/share/tuxcraft/src/dwm and src/dmenu (her builds, with tuxcraft's changes marked
+# "tuxcraft"). Your own config: copy src/dwm/config.def.h to ~/.config/tuxcraft/dwm/config.h,
+# edit it, then tux-dwm build. Built programs go to /usr/local/bin (dwm, dmenu, dmenu_run, stest).
+set -uo pipefail
+SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+# shellcheck source=/dev/null
+. /etc/tuxcraft/session.conf 2>/dev/null
+HOST=${DISTRO:-$(command -v xbps-install >/dev/null && echo void || { command -v pacman >/dev/null && echo arch || echo debian; })}
+PREFIX=/usr/local
+STAMP=$PREFIX/share/tuxcraft-dwm.build   # what was built: source checksum (tux-update rebuilds when it changes)
+XSESSIONS=(/etc/tuxcraft/xsessions/tuxcraft-dwm.desktop /usr/share/xsessions/tuxcraft-dwm.desktop)
+ANSWERS=/etc/tuxcraft/answers.conf
+say() { printf '\e[1m::\e[0m %s\n' "$*"; }
+die() { printf 'tux-dwm: %s\n' "$*" >&2; exit 1; }
+installed() { [[ -x $PREFIX/bin/dwm && -f $STAMP ]]; }
+
+# ------------------------------------------------------------------- packages (as tux-xfce)
+pkgs() {
+  local col; case $HOST in arch) col=2 ;; debian) col=3 ;; void) col=4 ;; esac
+  awk -F'\t' -v c="$col" '$1 == "dwm" && $c != "-" { print $c }' "$SHARE/data/packages.tsv" | tr ' ' '\n' | sed '/^$/d'
+}
+pkg_has() {
+  case $HOST in
+    arch)   pacman -Si "$1" &>/dev/null ;;
+    debian) apt-cache policy "$1" 2>/dev/null | grep 'Candidate: [^(]' >/dev/null ;;
+    void)   xbps-query -R "$1" &>/dev/null ;;
+  esac
+}
+pkg_is_installed() {
+  case $HOST in
+    arch)   pacman -Q "$1" &>/dev/null ;;
+    debian) dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'ok installed' ;;
+    void)   xbps-query "$1" &>/dev/null ;;
+  esac
+}
+install_pkgs() {
+  local p want=()
+  [[ $HOST == void ]] && xbps-install -S >/dev/null 2>&1
+  [[ $HOST == debian ]] && apt-get update -qq
+  for p in $(pkgs); do
+    pkg_is_installed "$p" && continue
+    if pkg_has "$p"; then want+=("$p"); else echo "tux-dwm: not in the $HOST repo, skipped: $p" >&2; fi
+  done
+  ((${#want[@]})) || return 0
+  say "Installing: ${want[*]}"
+  case $HOST in
+    arch)   pacman -S --needed --noconfirm "${want[@]}" ;;
+    debian) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${want[@]}" ;;
+    void)   xbps-install -y "${want[@]}" ;;
+  esac || die "package install failed"
+}
+
+# The desktop choice in the saved answers, so tux-update keeps building dwm: i3 -> i3+dwm.
+answers_session() {  # add|del
+  [[ -f $ANSWERS ]] || return 0
+  local cur new
+  cur=$(TUX_SESSION=''; . "$ANSWERS" 2>/dev/null; echo "${TUX_SESSION:-i3}")
+  case $1:$cur in
+    add:i3) new=i3+dwm ;;
+    del:i3+dwm) new=i3 ;;
+    *) return 0 ;;
+  esac
+  sed -i "s/^TUX_SESSION=.*/TUX_SESSION=$(printf '%q' "$new")/" "$ANSWERS"
+  [[ $1 == del ]] && sed -i 's/^SESSION=dwm$/SESSION=i3/' /etc/tuxcraft/session.conf 2>/dev/null
+  return 0
+}
+
+# ------------------------------------------------------------------- build (root)
+# The user's own config.h, if they made one (the installer runs as root for TUX_USER).
+user_config() {
+  local u=${SUDO_USER:-${TUX_USER:-}} h
+  [[ -n $u ]] || return 1
+  h=$(getent passwd "$u" | cut -d: -f6)
+  [[ -n $h && -f $h/.config/tuxcraft/dwm/config.h ]] && echo "$h/.config/tuxcraft/dwm/config.h"
+}
+
+checksum() {
+  { find "$SHARE/src/dwm" "$SHARE/src/dmenu" -type f -print0 | sort -z | xargs -0 cat
+    local c; c=$(user_config) && cat "$c"; } | sha256sum | cut -d' ' -f1
+}
+
+build() {  # build [force]
+  [[ $EUID -eq 0 ]] || die "build: run as root (tux-dwm build does that with sudo)"
+  [[ -d $SHARE/src/dwm && -d $SHARE/src/dmenu ]] || die "no sources in $SHARE/src"
+  local sum t c
+  sum=$(checksum)
+  if [[ ${1:-} != force && -x $PREFIX/bin/dwm && $(cat "$STAMP" 2>/dev/null) == "$sum" ]]; then
+    echo "tux-dwm: dwm is up to date"; return 0
+  fi
+  t=$(mktemp -d) || die "no temp dir"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$t'" RETURN
+  cp -a "$SHARE/src/dwm" "$SHARE/src/dmenu" "$t"/
+  if c=$(user_config); then say "Using your config: $c"; cp "$c" "$t/dwm/config.h"; fi
+  say "Building dwm and dmenu"
+  make -s -C "$t/dwm" PREFIX="$PREFIX" install >/dev/null || die "dwm did not build (see the errors above)"
+  make -s -C "$t/dmenu" PREFIX="$PREFIX" install >/dev/null || die "dmenu did not build (see the errors above)"
+  mkdir -p "${STAMP%/*}"; echo "$sum" >"$STAMP"
+  say "Installed $PREFIX/bin/dwm and dmenu"
+}
+
+system_install() {
+  [[ $EUID -eq 0 ]] || die "system: run as root"
+  install_pkgs
+  build
+  local x
+  for x in "${XSESSIONS[@]}"; do
+    mkdir -p "${x%/*}"
+    printf '[Desktop Entry]\nName=tuxcraft (dwm)\nComment=dwm with BreadOnPenguins'"'"' look and the tuxcraft keys\nExec=tux-session dwm\nType=Application\n' >"$x"
+  done
+  answers_session add
+}
+
+system_remove() {
+  [[ $EUID -eq 0 ]] || die "system-remove: run as root"
+  rm -f "$PREFIX"/bin/{dwm,dmenu,dmenu_run,dmenu_path,stest} "$PREFIX"/share/man/man1/{dwm,dmenu,stest}.1
+  rm -f "$STAMP" "${XSESSIONS[@]}"
+  answers_session del
+}
+
+# ------------------------------------------------------------------- inside the session
+cmd() {
+  [[ -n ${DISPLAY:-} ]] || die "no X display"
+  xprop -root -f _TUX_DWM_CMD 8s -set _TUX_DWM_CMD "$*"
+}
+
+running() { pgrep -u "$UID" -x dwm >/dev/null; }
+
+# App launcher: .desktop apps through her dmenu (j4-dmenu-desktop), else every command (dmenu_run).
+run_menu() {
+  if command -v j4-dmenu-desktop >/dev/null; then
+    exec j4-dmenu-desktop --dmenu="dmenu -i -l 12 -p run" --term="${TERMINAL:-tux-term}" --no-generic
+  elif command -v dmenu_run >/dev/null; then
+    exec dmenu_run -i -l 12 -p run
+  else
+    exec rofi -show drun -show-icons
+  fi
+}
+
+# "id<TAB>desktop<TAB>class<TAB>title" for every managed window.
+windows() {
+  local w d cls name
+  for w in $(xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-f]*'); do
+    d=$(xprop -id "$w" _NET_WM_DESKTOP 2>/dev/null | awk '{print $NF}')
+    cls=$(xprop -id "$w" WM_CLASS 2>/dev/null | awk -F'"' '{print $4}')
+    name=$(xprop -id "$w" _NET_WM_NAME 2>/dev/null | sed -n 's/^[^"]*"\(.*\)"$/\1/p')
+    [[ -n $name ]] || name=$(xprop -id "$w" WM_NAME 2>/dev/null | sed -n 's/^[^"]*"\(.*\)"$/\1/p')
+    printf '%s\t%s\t%s\t%s\n' "$w" "$d" "$cls" "$name"
+  done
+}
+
+overview() {
+  local cur pick
+  cur=$(xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | awk '{print $NF}')
+  pick=$(windows | awk -F'\t' -v cur="$cur" '
+      $2 ~ /^[0-9]+$/ && $2 < 100 { n = $2 + 1; list[n] = list[n] (list[n] ? "  ·  " : "") $3 ": " substr($4, 1, 40) }
+      END { for (n = 1; n <= 10; n++) if (n in list) printf "%-3s%s %s\n", n, (n == cur + 1 ? "*" : " "), list[n] }' |
+    tux-menu "tags") || exit 0
+  [[ ${pick%% *} =~ ^[0-9]+$ ]] && cmd view "${pick%% *}"
+}
+
+layout_menu() {
+  local pick
+  pick=$(printf '%s\n' \
+    "tile      master left, the others stacked on the right (Super+Shift+H)" \
+    "bstack    master on top, the others side by side below (Super+Shift+V)" \
+    "deck      master left, the others on top of each other (Super+S)" \
+    "monocle   one window at a time, full size (Super+W)" \
+    "spiral    each window takes half of the space left" \
+    "dwindle   like spiral, always towards the bottom right" \
+    "float     every window floats" | tux-menu "layout") || exit 0
+  cmd layout "${pick%% *}"
+}
+
+case ${1:-} in
+  install)
+    if [[ $EUID -eq 0 ]]; then system_install; exit; fi
+    sudo "$(readlink -f "$0")" system || exit 1
+    say "Done. Log out, press F3 on the login screen and pick \"tuxcraft (dwm)\"." ;;
+  system) system_install ;;
+  build)
+    if [[ $EUID -eq 0 ]]; then build "${2:-}"; exit; fi
+    sudo "$(readlink -f "$0")" build force || exit 1
+    running && cmd restart && say "dwm restarted with the new build" ;;
+  remove)
+    [[ ${XDG_CURRENT_DESKTOP:-} == dwm ]] && die "log out of dwm first, and run this from i3 or a TTY"
+    sudo "$(readlink -f "$0")" system-remove || exit 1
+    [[ $(cat "$HOME/.config/tuxcraft/session" 2>/dev/null) == dwm ]] && rm -f "$HOME/.config/tuxcraft/session"
+    say "dwm removed. i3 is untouched." ;;
+  system-remove) system_remove ;;
+  status)
+    if installed; then echo "dwm: installed ($PREFIX/bin/dwm; login screen: F3 -> tuxcraft (dwm))"; else echo "dwm: not installed"; fi
+    c=$(SUDO_USER=$USER user_config) && echo "your config: $c"
+    running && echo "running now" ;;
+  run) run_menu ;;
+  overview) overview ;;
+  layout) layout_menu ;;
+  windows) windows ;;
+  cmd) shift; [[ $# -gt 0 ]] || die "cmd: what? (view N, layout NAME, sticky, floatall, bar, gaps, restart, quit)"; cmd "$@" ;;
+  reload) running && cmd restart ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

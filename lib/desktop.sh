@@ -4,7 +4,8 @@
 desktop_packages() {
   step "Desktop packages ($TUX_SESSION)"
   local groups="core tui"
-  # i3 | sway | xfce | i3+xfce. Xfce's own packages come from tux-xfce (desktop_stage).
+  # i3 | sway | xfce | i3+xfce | i3+dwm. Xfce's and dwm's own packages come from tux-xfce /
+  # tux-dwm (desktop_stage).
   case $TUX_SESSION in
     sway) groups+=' wayland' ;;
     xfce) groups+=' x11' ;;
@@ -374,6 +375,12 @@ desktop_stage() {
   if [[ $TUX_SESSION == *xfce* ]]; then
     step "Xfce session"
     run /usr/local/bin/tux-xfce system || warn "Xfce setup failed (see $TUX_LOG); later: tux-xfce install"
+  fi
+  # dwm (tux-dwm): built from src/. An update rebuilds it when its sources changed, also for a dwm
+  # added later with tux-dwm install (the answers say i3+dwm then).
+  if [[ $TUX_SESSION == *dwm* ]]; then
+    step "dwm session"
+    run /usr/local/bin/tux-dwm system || warn "dwm setup failed (see $TUX_LOG); later: tux-dwm install"
   fi
   thunar_no_wallpaper_plugin
   void_pipewire

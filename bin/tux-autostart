@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tux-autostart i3|sway|xfce — everything a session needs, started once. Called from the WM
-# config (i3, sway) or Xfce's autostart (/etc/xdg/autostart/tuxcraft-xfce.desktop).
+# tux-autostart i3|sway|xfce|dwm — everything a session needs, started once. Called from the WM
+# config (i3, sway), Xfce's autostart (/etc/xdg/autostart/tuxcraft-xfce.desktop) or ~/.xinitrc (dwm).
 session=${1:-i3}
 log="$HOME/.local/state/tuxcraft/autostart.log"; mkdir -p "${log%/*}"; exec >>"$log" 2>&1
 echo "--- $(date) $session"
@@ -16,7 +16,7 @@ if [[ ${TUX_LOCK_AT_START:-} == 1 ]]; then
       pgrep -u "$UID" -x i3lock >/dev/null || pgrep -u "$UID" -x swaylock >/dev/null && exit 0
     done
     echo "tux-autostart: no lock screen after autologin; ending the session"
-    case $session in sway) swaymsg exit ;; xfce) xfce4-session-logout --logout ;; *) i3-msg exit ;; esac
+    case $session in sway) swaymsg exit ;; xfce) xfce4-session-logout --logout ;; dwm) tux-dwm cmd quit ;; *) i3-msg exit ;; esac
   ) &
 fi
 STATE="$HOME/.config/tuxcraft/state"; IDLE_LOCK_MIN=10
@@ -51,7 +51,7 @@ rm -f "${XDG_RUNTIME_DIR:-/tmp}/tux-dim" "${XDG_RUNTIME_DIR:-/tmp}/tux-nightligh
 pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
 # Xfce installed (tux-xfce): its look follows the theme, and each session lists its own apps.
 command -v tux-xfce >/dev/null && command -v xfce4-session >/dev/null && tux-xfce apply
-if [[ $session != xfce ]]; then   # these follow i3/sway windows and workspaces
+if [[ $session == i3 || $session == sway ]]; then   # these follow i3/sway windows and workspaces (IPC)
   # Put apps that hide and re-show their main window (Resolve's Cinema Viewer) back in their tiling slot.
   pgrep -u "$UID" -f '^python3 .*/tux-winslot' >/dev/null || { tux-winslot & }
   # Thumbnails for the workspace overview (Super+O).
@@ -73,20 +73,24 @@ if [[ $session == xfce ]]; then
 else
   tux-wallpaper restore &
   # Fast start for browser, terminal and file manager (backs off when memory is tight or a game runs).
-  tux-warm daemon "$session" &   # exits at once if one is already running
+  # It parks windows through i3/sway IPC, so not in dwm.
+  [[ $session != dwm ]] && { tux-warm daemon "$session" & }   # exits at once if one is already running
 fi
 # Laptop: battery saver and a notification when the charger comes out.
 tux-battery start
 
 idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))
 case $session in
-  i3)
+  i3|dwm)
     once xsettingsd
     command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr   # desktop cursor = themed one
     # NVIDIA queues frames ahead by default, so compositor animations trail a little; one
     # frame in flight keeps them smooth and in step with the screen.
+    # dwm: her picom look (rounded corners, blur, see-through unfocused windows) from its own
+    # file, so i3 keeps ~/.config/picom/picom.conf as it is.
+    pc=(); [[ $session == dwm && -f $HOME/.config/picom/dwm.conf ]] && pc=(--config "$HOME/.config/picom/dwm.conf")
     if command -v picom >/dev/null; then
-      if [[ -d /proc/driver/nvidia ]]; then __GL_MaxFramesAllowed=1 once picom; else once picom; fi
+      if [[ -d /proc/driver/nvidia ]]; then __GL_MaxFramesAllowed=1 once picom "${pc[@]}"; else once picom "${pc[@]}"; fi
     fi
     command -v autorandr >/dev/null && autorandr --change --default default >/dev/null 2>&1
     command -v numlockx >/dev/null && numlockx on
@@ -96,8 +100,8 @@ case $session in
     tux-dwt start
     # TV / monitor plugged in: mirror it (EXTERNAL_DISPLAY in the state file), unplugged: laptop only.
     tux-display start
-    # Super + drag a window to the screen edge: next / previous workspace.
-    tux-pointer &
+    # Super + drag a window to the screen edge: next / previous workspace (i3 IPC).
+    [[ $session == i3 ]] && { tux-pointer & }
     if (( idle > 0 )); then
       xset s "$idle" "$idle"; xset dpms $((idle + 300)) $((idle + 300)) $((idle + 300))
       once xss-lock --transfer-sleep-lock -- tux-lock --now
@@ -108,7 +112,9 @@ case $session in
     if command -v copyq >/dev/null; then once copyq
     elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &
     fi
-    # polybar is started by the i3 config (exec_always), so an i3 restart starts it again too.
+    # i3: polybar is started by the i3 config (exec_always), so an i3 restart starts it again too.
+    # dwm: its own bar shows the tags and title; tux-dwmbar fills in the status on the right.
+    [[ $session == dwm ]] && { tux-dwmbar & }
     ;;
   sway)
     once waybar

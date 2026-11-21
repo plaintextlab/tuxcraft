@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# tux-dwmbar — the status text in dwm's bar (dwm session), in BreadOnPenguins' style: glyph + value,
+# " | " between blocks. The same blocks as tuxcraft's polybar, and the same clicks.
+#   tux-dwmbar            keep the status up to date (tux-autostart starts it; one per session)
+#   tux-dwmbar refresh    redraw now (after a change the bar would otherwise show a second later)
+#   tux-dwmbar click BLOCK BUTTON   run by dwm when a block is clicked (1 left, 2 middle, 3 right,
+#                                   4/5 scroll)
+# Each block is preceded by a control character with its number (dwm's statuscmd), so dwm knows
+# which block a click hit. Slow blocks (updates, network, Bluetooth) run in the background and
+# are shown from a cache, so the clock never waits for them.
+set -uo pipefail
+RT=${XDG_RUNTIME_DIR:-/tmp}/tux-dwmbar-$UID
+POLY=$HOME/.config/polybar/scripts   # the polybar block scripts, shared (their colour tags are dropped)
+T=${TERMINAL:-tux-term}
+mkdir -p "$RT"
+
+# Block numbers: the click handler and the status loop agree on these.
+B_MUSIC=1 B_CPU=2 B_MEM=3 B_GPU=4 B_UPD=5 B_BT=6 B_VOL=7 B_NET=8 B_BAT=9 B_PWR=10 B_REC=11 B_DATE=12
+SEP=' | '
+
+strip() { sed -E 's/%\{[^}]*\}//g; s/[[:space:]]+$//'; }
+bump() { [[ -f $RT/pid ]] && kill -USR1 "$(cat "$RT/pid")" 2>/dev/null; return 0; }
+
+click() {
+  local b=$1 n=$2
+  case $b:$n in
+    "$B_MUSIC":1) tux-nowplaying ctl play-pause ;;
+    "$B_MUSIC":3|"$B_MUSIC":5) tux-nowplaying ctl next ;;
+    "$B_MUSIC":4) tux-nowplaying ctl previous ;;
+    "$B_CPU":*|"$B_MEM":*|"$B_GPU":*) setsid -f "$T" --class tux-float-big -e btop ;;
+    "$B_UPD":1) setsid -f "$T" --class tux-float-big -e sysup --pause ;;
+    "$B_BT":1) setsid -f "$T" --class tux-float -e bluetui ;;
+    "$B_VOL":1) "$POLY/volume.sh" mute ;;
+    "$B_VOL":2) tux-audio output ;;
+    "$B_VOL":3) setsid -f "$T" --class tux-float -e tux-mixer ;;
+    "$B_VOL":4) "$POLY/volume.sh" up ;;
+    "$B_VOL":5) "$POLY/volume.sh" down ;;
+    "$B_NET":1) setsid -f "$T" --class tux-float -e tux-net ;;
+    "$B_NET":3) setsid -f "$T" --class tux-float -e tux-net nmtui ;;
+    "$B_PWR":1) tux-powerprofile ;;
+    "$B_REC":1) tux-capture stop ;;
+    "$B_DATE":1) if [[ -e $RT/date-long ]]; then rm -f "$RT/date-long"; else : >"$RT/date-long"; fi ;;
+    "$B_DATE":3) setsid -f "$T" --class tux-float -e calcurse ;;
+  esac
+  # Volume and media change asynchronously: give them a moment before the redraw.
+  (sleep 0.2; bump) &
+}
+
+# ------------------------------------------------------------------- blocks
+prev_total=0 prev_idle=0
+cpu() {
+  local _ u n s i w q sq st total idle
+  read -r _ u n s i w q sq st _ </proc/stat
+  total=$((u + n + s + i + w + q + sq + st)) idle=$((i + w))
+  if ((prev_total)); then
+    local dt=$((total - prev_total)) di=$((idle - prev_idle))
+    ((dt > 0)) && printf '󰻠 %d%%' $(( (100 * (dt - di)) / dt ))
+  fi
+  prev_total=$total prev_idle=$idle
+}
+
+mem() {
+  awk '/^MemTotal:/ {t = $2} /^MemAvailable:/ {a = $2}
+       END { if (t) printf "󰍛 %d%% %.1fG free", (t - a) * 100 / t, a / 1048576 }' /proc/meminfo
+}
+
+music() {
+  command -v playerctl >/dev/null || return 0
+  local line st text
+  line=$(playerctl metadata --format '{{status}}|{{artist}}|{{title}}' 2>/dev/null | head -n1) || return 0
+  IFS='|' read -r st artist title <<<"$line"
+  [[ -n ${title:-} ]] || return 0
+  text="${artist:+$artist – }$title"
+  ((${#text} > 30)) && text="${text:0:29}…"
+  case $st in Playing) printf ' %s' "$text" ;; Paused) printf '❚❚ %s' "$text" ;; esac
+}
+
+when() { date +"${1}"; }
+clock() { if [[ -e $RT/date-long ]]; then when '󰃭 %a %d %b %Y  %I:%M:%S %p'; else when '󰥔 %I:%M %p'; fi; }
+
+# Slow blocks: run every N seconds in the background, the loop shows the last result.
+declare -A due=()
+slow() {  # slow NAME SECONDS command...
+  local name=$1 every=$2 now; shift 2
+  now=$(date +%s)
+  (( now < ${due[$name]:-0} )) && return 0
+  due[$name]=$((now + every))
+  ( out=$("$@" 2>/dev/null | strip | head -n1); printf '%s' "$out" >"$RT/$name.new" && mv "$RT/$name.new" "$RT/$name"; bump ) &
+}
+cached() { cat "$RT/$1" 2>/dev/null; }
+
+status() {
+  local out='' b text
+  for b in "$B_MUSIC:music" "$B_CPU:cpu" "$B_MEM:mem" "$B_GPU:@gpu" "$B_UPD:@updates" "$B_BT:@bt" \
+           "$B_VOL:@volume" "$B_NET:@net" "$B_BAT:@battery" "$B_PWR:@power" "$B_REC:@rec" "$B_DATE:clock"; do
+    if [[ ${b#*:} == @* ]]; then text=$(cached "${b#*:@}"); else text=$(${b#*:}); fi
+    [[ -n $text ]] || continue
+    # The control character that marks the block, then the text.
+    # shellcheck disable=SC2059
+    out+="${out:+$SEP}$(printf "\\$(printf '%03o' "${b%%:*}")")$text"
+  done
+  printf '%s ' "$out"
+}
+
+loop() {
+  exec 9>"$RT/lock"
+  flock -n 9 || exit 0   # one per session
+  echo $$ >"$RT/pid"
+  trap 'rm -f "$RT/pid"' EXIT
+  trap ':' USR1           # a refresh interrupts the sleep below
+  rm -f "$RT"/{gpu,updates,bt,volume,net,battery,power,rec}
+  cpu >/dev/null          # first sample, so the next one has something to compare with
+  local last='' seen=0
+  while :; do
+    slow gpu 3 "$POLY/gpu.sh"
+    slow updates 1800 tux-updates
+    slow bt 10 tux-btbattery --plain
+    slow volume 2 "$POLY/volume.sh"
+    slow net 5 tux-netinfo --plain
+    slow battery 15 "$POLY/battery.sh"
+    slow power 5 "$POLY/powerprofile.sh"
+    slow rec 2 tux-capture status
+    s=$(status)
+    [[ $s != "$last" ]] && xsetroot -name "$s" && last=$s
+    # dwm gone (logout): stop too. (It may start a moment after this script does.)
+    if pgrep -u "$UID" -x dwm >/dev/null; then seen=1; elif ((seen)); then exit 0; fi
+    sleep 1 & wait $! 2>/dev/null
+  done
+}
+
+case ${1:-} in
+  ''|start) loop ;;
+  refresh) bump ;;
+  click) click "${2:-0}" "${3:-0}" ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

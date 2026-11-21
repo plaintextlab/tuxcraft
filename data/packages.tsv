@@ -92,6 +92,12 @@ wayland	kanshi	kanshi	kanshi
 # xfconf is left out on purpose: Thunar needs it, so "tux-xfce remove" must not take it away.
 xfce	xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman	xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman	xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman
 #
+# ---- dwm: optional dwm session next to i3 (tux-dwm install / remove; wizard: "i3 and dwm").
+# dwm and dmenu are built from src/ (BreadOnPenguins' builds), so these are their build needs
+# (headers) plus the launcher and the tools tux-dwm uses (xprop, xsetroot, picom).
+dwm	libx11 libxft libxinerama libxcb freetype2 fontconfig	libx11-dev libxft-dev libxinerama-dev libx11-xcb-dev libxcb-res0-dev libfreetype-dev libfontconfig-dev	libX11-devel libXft-devel libXinerama-devel libxcb-devel freetype-devel fontconfig-devel
+dwm	j4-dmenu-desktop picom xorg-xprop xorg-xsetroot	j4-dmenu-desktop picom x11-utils x11-xserver-utils	j4-dmenu-desktop picom xprop xsetroot
+
 # ---- tui: the terminal app suite
 tui	btop	btop	btop
 tui	yazi	-	yazi

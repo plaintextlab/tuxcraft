@@ -285,7 +285,8 @@ wizard() {
     "i3|X11 + i3|tiling, keyboard-driven, TUI apps; most compatible: screen sharing, games, old apps" \
     "sway|Wayland + sway|same keys & look as i3, smoother, tear-free, newer" \
     "xfce|X11 + Xfce|classic desktop: panel, menus, GUI apps; same theme and fonts" \
-    "i3+xfce|i3 and Xfce|both, pick one at login (F3); i3 lists TUI apps, Xfce GUI apps"
+    "i3+xfce|i3 and Xfce|both, pick one at login (F3); i3 lists TUI apps, Xfce GUI apps" \
+    "i3+dwm|i3 and dwm|both, pick one at login (F3); dwm in BreadOnPenguins' look, same keys as i3"
 
   if has_word "$GPU_VENDORS" nvidia; then
     choose TUX_NVIDIA "NVIDIA GPU found ($NVIDIA_GEN). Install the proprietary driver?" yes \
