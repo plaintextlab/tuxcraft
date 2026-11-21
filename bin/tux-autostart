@@ -102,6 +102,9 @@ case $session in
     xset r rate 220 40
     # Touchpad off while typing, for longer than libinput's own guard (palm between words).
     tux-dwt start
+    # Touchpad: 4-finger swipe left / right = next / previous workspace, up = overview (only when
+    # there is a touchpad; 2- and 3-finger gestures stay as they are).
+    command -v tux-gestures >/dev/null && tux-gestures start
     # TV / monitor plugged in: mirror it (EXTERNAL_DISPLAY in the state file), unplugged: laptop only.
     tux-display start
     # Super + drag a window to the screen edge: next / previous workspace (i3 IPC).

@@ -75,6 +75,8 @@ x11	dex	dex	dex
 x11	numlockx	numlockx	numlockx
 x11	xsettingsd	xsettingsd	xsettingsd
 x11	autorandr arandr	autorandr arandr	autorandr arandr
+# libinput debug-events: 4-finger touchpad swipes (tux-gestures; Arch and Void ship it in libinput)
+x11	libinput	libinput-tools	libinput
 x11	maim slop xclip xdotool	maim slop xclip xdotool	maim slop xclip xdotool
 x11	clipnotify	-	clipnotify
 #

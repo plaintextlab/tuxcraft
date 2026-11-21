@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# tux-gestures [start|stop|restart|status] — 4-finger touchpad swipes (i3 / dwm, X11).
+#   left / right: next / previous workspace (Super+Tab / Super+Shift+Tab)
+#   up:           workspace overview (Super+Space)
+#   Reads the touchpad with `libinput debug-events` (needs the input group) and presses the
+#   workspace keys with xdotool, so i3 and dwm do what those keys do. 2- and 3-finger
+#   gestures, tap and scrolling are left to libinput and X. tux-autostart starts it when a
+#   touchpad is there. GESTURES=off in ~/.config/tuxcraft/state turns it off.
+set -uo pipefail
+GESTURES=on
+GESTURE_FINGERS=4
+GESTURE_MIN=60   # how far the fingers must travel (libinput units, roughly mm) before it counts
+# shellcheck source=/dev/null
+[[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
+LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-gestures.$UID.lock
+
+running() { pgrep -u "$UID" -f '^bash .*tux-gestures daemon' >/dev/null; }
+
+# A touchpad libinput can read (it reports the "gesture" capability), or one X knows about.
+has_touchpad() {
+  libinput list-devices 2>/dev/null | grep -q '^Capabilities:.*gesture' && return 0
+  xinput list 2>/dev/null | grep -qi 'touchpad.*slave *pointer'
+}
+
+press() { xdotool key --clearmodifiers "$1" 2>/dev/null; }
+
+daemon() {
+  exec 9>"$LOCK"; flock -n 9 || exit 0
+  local group=0; [[ $(ps -o pgid= -p $$) -eq $$ ]] && group=1
+  trap 'trap "" TERM; ((group)) && kill -TERM 0 2>/dev/null; exit 0' EXIT INT TERM HUP
+  local action
+  while xinput list >/dev/null 2>&1; do   # until X exits
+    # One line per finished swipe: left, right, up or down (where the fingers went). awk adds up
+    # the deltas of a swipe and decides at its end, so mouse motion never reaches the loop.
+    # Lines look like: " event7  GESTURE_SWIPE_UPDATE  +1.24s  4 -2.31/ 0.12 (-6.50/ 0.34 unaccelerated)"
+    while read -r action; do
+      # Fingers moving left push the current workspace out to the left and pull in the one on
+      # its right, the next one, as on GNOME and macOS (the workspace follows the fingers, like
+      # paging through a phone's home screens). So left = next, right = previous.
+      case $action in
+        left)  press super+Tab ;;
+        right) press super+shift+Tab ;;
+        up)    press super+space ;;
+      esac
+    done < <(exec 9>&-; libinput debug-events 2>/dev/null | awk -v fingers="$GESTURE_FINGERS" -v min="$GESTURE_MIN" '
+      function abs(v) { return v < 0 ? -v : v }
+      $2 == "GESTURE_SWIPE_BEGIN"  { on = ($4 == fingers); dx = dy = 0; next }
+      $2 == "GESTURE_SWIPE_UPDATE" && on {
+        s = $0; sub(/.*GESTURE_SWIPE_UPDATE[ \t]+[^ \t]+[ \t]+[0-9]+[ \t]+/, "", s)
+        sub(/[ \t]*\(.*/, "", s); gsub(/[ \t]/, "", s); split(s, d, "/"); dx += d[1]; dy += d[2]; next }
+      $2 == "GESTURE_SWIPE_END" && on {
+        on = 0
+        if ($0 ~ /cancelled/) next
+        if (abs(dx) >= abs(dy) && abs(dx) >= min) print (dx < 0 ? "left" : "right")
+        else if (abs(dy) > abs(dx) && abs(dy) >= min) print (dy < 0 ? "up" : "down")
+        fflush() }')
+    sleep 2   # libinput stopped (no access, device gone): try again while X is up
+  done
+}
+
+case ${1:-start} in
+  daemon) daemon ;;
+  start)
+    [[ -n ${WAYLAND_DISPLAY:-} || -z ${DISPLAY:-} ]] && exit 0   # X11 only
+    [[ $GESTURES == off ]] && exit 0
+    for c in libinput xdotool xinput; do
+      command -v "$c" >/dev/null || { echo "tux-gestures: $c is not installed" >&2; exit 1; }
+    done
+    has_touchpad || exit 0
+    readable=0; for d in /dev/input/event*; do [[ -r $d ]] && { readable=1; break; }; done
+    ((readable)) || { echo "tux-gestures: cannot read the touchpad (is $USER in the input group?)" >&2; exit 1; }
+    running || setsid -f "$0" daemon >/dev/null 2>&1 ;;
+  stop) pkill -u "$UID" -f '^bash .*tux-gestures daemon'; true ;;
+  restart) "$0" stop; sleep 0.3; "$0" start ;;
+  status)
+    if running; then echo "on: ${GESTURE_FINGERS}-finger swipe left / right = next / previous workspace, up = overview"
+    else echo "off"; fi ;;
+  *) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
