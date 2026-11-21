@@ -154,7 +154,7 @@ command there: tuxcraft detects that it is not on a live ISO and only sets up th
    encrypted disk spares you a second prompt. Snapshots and rollback work the same.
 4. Computer name, user, password, timezone, keyboard. The timezone is **not** looked up online
    unless you say yes (that sends your IP address to ipapi.co).
-5. **Desktop**: **X11 + i3** (default), **Wayland + sway**, **X11 + Xfce**, **i3 and Xfce**, or **i3 and dwm** — same theme and fonts in every one ([Xfce](#xfce-next-to-or-instead-of-i3), [dwm](#dwm-next-to-i3))
+5. **Desktop**: **i3 and dwm** (default; the login screen starts i3 until you pick dwm), **X11 + i3**, **Wayland + sway**, **X11 + Xfce**, or **i3 and Xfce** — same theme and fonts in every one ([Xfce](#xfce-next-to-or-instead-of-i3), [dwm](#dwm-next-to-i3))
 6. **NVIDIA proprietary driver?** (only asked when an NVIDIA GPU is detected; Intel/AMD just work)
 7. **Colour scheme** — Gruvbox, Everforest, Catppuccin Mocha/Latte, Nord, Tokyo Night, Rosé Pine, Kanagawa, Dracula, Motif
 8. **Font** (previews below) and size
@@ -373,7 +373,7 @@ dead SSD — that is what `tux-backup` is for.
 
 ## Xfce, next to or instead of i3
 
-The installer's **Desktop** question offers i3 (default), sway, **Xfce**, or **i3 and Xfce**;
+The installer's **Desktop** question offers i3 and dwm (default), i3, sway, **Xfce**, or **i3 and Xfce**;
 only what you pick is installed. To add Xfce to an i3 system later: `tux-xfce install`. Then log
 out, press **F3** on the login screen and pick **tuxcraft (Xfce)** (the stock "Xfce Session"
 entry works too, but without tuxcraft's environment).
@@ -397,7 +397,7 @@ entry works too, but without tuxcraft's environment).
 
 ## dwm, next to i3
 
-**i3 and dwm** in the installer's Desktop question, or `tux-dwm install` on an i3 system later,
+**i3 and dwm** in the installer's Desktop question (the default), or `tux-dwm install` on an i3 system later,
 adds a dwm session: **F3** on the login screen → **tuxcraft (dwm)**; the login screen remembers each user's last pick. It is
 [BreadOnPenguins' dwm build](https://github.com/BreadOnPenguins/dwm) and her look (20 px gaps,
 1 px borders, a flat bar with the tag numbers, empty tags hidden, her dmenu centred, picom with
