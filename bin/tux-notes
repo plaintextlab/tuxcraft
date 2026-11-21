@@ -1,22 +1,90 @@
 #!/usr/bin/env bash
-# tux-notes [--new] — browse/create notes (.md, .txt) with fzf (from debi3n script-notes.sh).
+# tux-notes [--new] — notes (.md, .txt) in ~/Notes, browsed folder by folder with fzf
+# (from debi3n script-notes.sh).
+#   Left list: the folders (theme-coloured) and notes of the current folder.
+#   Right: a folder's contents, or the text of a note.
+#   Enter / → : open the folder or the note.  Backspace (empty search) / ← : back up a folder.
+# Hidden files and folders (.git, .trash, .attachments) are never shown.
 NOTES_DIR=${NOTES_DIR:-$HOME/Notes}
 EDITOR=${EDITOR:-micro}
+self=$(readlink -f "$0")
 mkdir -p "$NOTES_DIR"
-if [[ ${1:-} == --new || ${1:-} == -n ]]; then
-  name=$(fzf --print-query --prompt="New note name: " --header="Enter to create, Esc to cancel" --height=5 </dev/null | head -n1)
-  [[ -z $name ]] && exit 0
-  [[ $name == *.md || $name == *.txt ]] || name+=.md
-  f="$NOTES_DIR/$name"; mkdir -p "$(dirname "$f")"; exec $EDITOR "$f"
-fi
 cd "$NOTES_DIR" || exit 1
+
+# Theme colours (tux-theme writes them); fallbacks for a missing file.
+accent=#c59b77 muted=#7a7a6b blue=#6b91c7
+# shellcheck source=/dev/null
+[[ -f ${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/colors.sh ]] && . "${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/colors.sh"
+rgb() { local h=${1#\#}; printf '\e[38;2;%d;%d;%dm' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}"; }
+C_DIR=$(rgb "$accent") C_NOTE=$(rgb "$blue") C_DIM=$(rgb "$muted") B=$'\e[1m' R=$'\e[0m'
+I_DIR=$'\U000F024B' I_NOTE=$'\U000F082E' I_UP=$'\U000F005E'
+
+# Folders and notes directly in folder $1 ("" = the notes root), folders first.
+# One line each: kind <TAB> path <TAB> what fzf shows (kind: d folder, f note, u up).
+entries() {
+  local dir=${1:-.} p n
+  while IFS= read -r -d '' p; do
+    n=$(find -L "$p" -mindepth 1 -maxdepth 1 -not -name '.*' \( -type d -o -iname '*.md' -o -iname '*.txt' \) 2>/dev/null | wc -l)
+    printf 'd\t%s\t%s%s  %s%s%s  %s(%d)%s\n' "${p#./}" "$C_DIR" "$I_DIR" "$B" "${p##*/}" "$R" "$C_DIM" "$n" "$R"
+  done < <(find -L "$dir" -mindepth 1 -maxdepth 1 -type d -not -name '.*' -print0 2>/dev/null | sort -zf)
+  while IFS= read -r -d '' p; do
+    printf 'f\t%s\t%s%s%s  %s\n' "${p#./}" "$C_NOTE" "$I_NOTE" "$R" "${p##*/}"
+  done < <(find -L "$dir" -mindepth 1 -maxdepth 1 -type f -not -name '.*' \( -iname '*.md' -o -iname '*.txt' \) -print0 2>/dev/null | sort -zf)
+}
+
+# The folder being shown lives in a small state file, so fzf's helper calls below share it.
+cur() { cat "$TUX_NOTES_STATE" 2>/dev/null; }
+go() {  # go DIR: fzf actions that switch the list to DIR
+  printf '%s' "$1" >"$TUX_NOTES_STATE"
+  echo "clear-query+reload($self --_list)+transform-prompt($self --_prompt)+first"
+}
+
+case ${1:-} in
+  --_list)
+    d=$(cur); [[ -n $d ]] && printf 'u\t%s\t%s%s  ..%s\n' "$(dirname "$d" | sed 's#^\.$##')" "$C_DIM" "$I_UP" "$R"
+    entries "$d"; exit ;;
+  --_prompt)
+    d=$(cur); echo "Notes${d:+/$d} > "; exit ;;
+  --_open)  # --_open KIND PATH : Enter / →
+    case $2 in d|u) go "$3" ;; f) echo accept ;; esac; exit ;;
+  --_up)  # --_up left|bspace : back up a folder when the search is empty, else edit the search
+    d=$(cur)
+    if [[ -n ${FZF_QUERY:-} ]]; then [[ $2 == bspace ]] && echo backward-delete-char || echo backward-char
+    elif [[ -n $d ]]; then go "$(dirname "$d" | sed 's#^\.$##')"; fi
+    exit ;;
+  --_preview)  # --_preview KIND PATH
+    case $2 in
+      d|u) out=$(entries "$3" | cut -f3-); printf '%s\n' "${out:-${C_DIM}(empty folder)$R}" ;;
+      f) if [[ ! -s $3 ]]; then printf '%s(empty note)%s\n' "$C_DIM" "$R"
+         else bat --style=plain --color=always -- "$3" 2>/dev/null || cat -- "$3"; fi ;;
+    esac; exit ;;
+  --new|-n)
+    # What you type is the new note's name (Folder/name puts it in a folder). The list under
+    # it is your existing notes, filtered as you type, so you see if one by that name exists.
+    name=$(find -L . -path '*/.*' -prune -o -type f \( -iname '*.md' -o -iname '*.txt' \) -printf '%P\n' 2>/dev/null | sort |
+      fzf --height=100% --print-query --prompt="New note: " --no-sort \
+        --header="Type a name, Enter to create (Folder/name for a folder), Esc to cancel. Below: existing notes" |
+      head -n1)
+    [[ -z $name ]] && exit 0
+    [[ $name == *.md || $name == *.txt ]] || name+=.md
+    f="$NOTES_DIR/$name"; mkdir -p "$(dirname "$f")"; exec $EDITOR "$f" ;;
+esac
+
+TUX_NOTES_STATE=$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/tux-notes.XXXXXX"); export TUX_NOTES_STATE
+trap 'rm -f "$TUX_NOTES_STATE"' EXIT
 sync_bind=()
 [[ -x .sync ]] && sync_bind=(--bind "ctrl-s:execute(./.sync; read -n1 -r -p 'Press any key...')")
-# Only real notes: .md and .txt, nothing under hidden folders (.git, .trash, .attachments) and
-# no hidden files. fzf quotes {} itself, so the commands below must not add quotes around it:
-# paths are relative to the notes folder, which keeps names with spaces working.
-sel=$(find -L . -path '*/.*' -prune -o -type f \( -iname '*.md' -o -iname '*.txt' \) -printf '%P\n' 2>/dev/null | sort |
-  fzf --height=100% --prompt="Notes > " --preview="bat --style=plain --color=always -- {} 2>/dev/null || cat -- {}" \
-      --preview-window=right:60%:wrap --header="Enter: open | Ctrl-/: preview$([[ -x .sync ]] && echo ' | Ctrl-S: sync')" \
+# fzf quotes {1} {2} itself: they must not get extra quotes (names with spaces).
+sel=$("$self" --_list |
+  fzf --height=100% --ansi --delimiter='\t' --with-nth=3 --accept-nth=2 --no-sort \
+      --prompt="Notes > " \
+      --header="Enter/→: open | ←/Backspace: back | Ctrl-/: preview$([[ -x .sync ]] && echo ' | Ctrl-S: sync')" \
+      --preview="$self --_preview {1} {2}" --preview-window=right:60%:wrap \
+      --bind="enter:transform($self --_open {1} {2})" \
+      --bind="right:transform($self --_open {1} {2})" \
+      --bind="left:transform($self --_up left)" \
+      --bind="bspace:transform($self --_up bspace)" \
       --bind='ctrl-/:toggle-preview' "${sync_bind[@]}")
-[[ -n $sel ]] && exec $EDITOR "$NOTES_DIR/$sel"
+[[ -n $sel ]] || exit 0
+rm -f "$TUX_NOTES_STATE"
+exec $EDITOR "$NOTES_DIR/$sel"
