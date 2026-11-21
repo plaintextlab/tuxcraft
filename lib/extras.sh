@@ -146,9 +146,10 @@ ensure_paru() {
   rm -rf "$t"
 }
 
-# X11 clipboard history: fallback to Flathub when the distro package (Void: CopyQ) is missing.
+# Xfce's clipboard history (CopyQ): fallback to Flathub when the distro package is missing.
+# i3 and dwm use tux-clip (BreadOnPenguins' scripts), which needs only xclip.
 ensure_clipboard() {
-  [[ $TUX_SESSION == sway ]] && return 0
+  [[ $TUX_SESSION == *xfce* ]] || return 0
   command -v copyq >/dev/null && return 0
   command -v flatpak >/dev/null || pkg_install flatpak
   run flatpak remote-add --system --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo &&

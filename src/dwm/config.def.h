@@ -17,6 +17,8 @@
 /* appearance (her values) */
 static unsigned int borderpx        = 1;        /* border pixel of windows */
 static unsigned int snap            = 32;       /* snap pixel */
+static const unsigned int refreshrate = 240;    /* tuxcraft: moves and resizes by mouse redraw up to this many times
+                                                 * a second (stock dwm: 60, choppy on a 120/144 Hz screen) */
 static const unsigned int gappih    = 20;       /* horiz inner gap between windows */
 static const unsigned int gappiv    = 20;       /* vert inner gap between windows */
 static const unsigned int gappoh    = 20;       /* horiz outer gap between windows and screen edge */
@@ -30,9 +32,11 @@ static const int showlayout         = 1;        /* 0 means no layout indicator *
 static const int showstatus         = 1;        /* 0 means no status bar */
 static const int showfloating       = 0;        /* 0 means no floating indicator */
 static int topbar                   = 1;        /* 0 means bottom bar */
-/* The first font is the bar font: dwm.font in ~/.Xresources replaces it (tux-font). */
+/* The bar font (dwm.font in ~/.Xresources, from tux-font) and the icon font (dwm.iconfont): the
+ * full-size Symbols Nerd Font, not the "Mono" one, which shrinks every icon into one narrow cell. */
 static char font[128]               = "JetBrainsMono Nerd Font:size=11";
-static const char *fonts[]          = { font, "Symbols Nerd Font Mono:size=11", "Noto Color Emoji:pixelsize=14:antialias=true:autohint=true" };
+static char iconfont[128]           = "Symbols Nerd Font:size=11";
+static const char *fonts[]          = { font, iconfont, "Noto Color Emoji:pixelsize=14:antialias=true:autohint=true" };
 static char dmenufont[]             = "monospace:size=11";
 
 /* default colors used if xrdb is not loaded (Nord, like hers) */
@@ -74,7 +78,6 @@ static const Rule rules[] = {
 	{ "nm-connection-editor", NULL, NULL,    0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ "arandr",    NULL,    NULL,            0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ "qalculate", NULL,    NULL,            0,       1,    0,   0,     0,      0,    0,   -1 },
-	{ "copyq",     NULL,    NULL,            0,       1,    0,   0,     1,      600,  600, -1 },
 	{ "webapp-",   NULL,    NULL,            0,       1,    0,   0,     0,      1280, 720, -1 },
 	{ NULL,        NULL,    ".exe",          0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ NULL,        NULL,    "Webcam Preview", 0,      1,    0,   0,     1,      0,    0,   -1 },
@@ -101,7 +104,7 @@ static const int lockfullscreen = 0; /* 1 will force focus on the fullscreen win
 enum { LayoutTile, LayoutBstack, LayoutDeck, LayoutMonocle, LayoutSpiral, LayoutDwindle, LayoutFloat };
 static const Layout layouts[] = {
 	/* symbol     arrange function */
-	{ "󰓒",      tile },    /* first entry is default; i3 "split h" */
+	{ "",      tile },    /* first entry is default; i3 "split h". No symbol: the bar shows none until you switch layout, as hers */
 	{ "󱡗",      bstack },  /* i3 "split v": master on top */
 	{ "󱏋",      deck },    /* i3 "layout stacking" */
 	{ "",      monocle }, /* i3 "layout tabbed": one window at a time */
@@ -122,7 +125,7 @@ static const char *layoutnames[] = { "tile", "bstack", "deck", "monocle", "spira
 /* helper for spawning shell commands in the pre dwm-5.0 fashion (i3's exec does the same) */
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
-#define STATUSCLICK "tux-dwmbar" /* a click on a status block runs: tux-dwmbar click BLOCK BUTTON */
+#define STATUSBAR "dwmblocks" /* statuscmd: a click on a status block signals dwmblocks (button = value) */
 #define TERM "tux-term"
 #define FLOAT TERM " --class tux-float -e "
 #define FLOATBIG TERM " --class tux-float-big -e "
@@ -286,7 +289,8 @@ static const Button buttons[] = {
 	{ ClkStatusText,        0,              Button3,        sigstatusbar,   {.i = 3} },
 	{ ClkStatusText,        0,              Button4,        sigstatusbar,   {.i = 4} },
 	{ ClkStatusText,        0,              Button5,        sigstatusbar,   {.i = 5} },
-	/* Super + drag: move, Super + right drag: resize (i3: floating_modifier $mod) */
+	/* Super + drag: move, Super + right drag: resize (i3: floating_modifier $mod). On a tiled window
+	 * right drag moves the split, as in i3; on a floating one it resizes the window. */
 	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {0} },
 	{ ClkClientWin,         MODKEY,         Button2,        togglefloating, {0} },
 	{ ClkClientWin,         MODKEY,         Button3,        resizemouse,    {0} },

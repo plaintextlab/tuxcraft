@@ -197,7 +197,7 @@ lines keep its built-in font) and the GRUB menu, which gets the same font as a G
 | Compositor | picom: Hyprland-style animations (springy open, gliding tiles, workspace crossfade) at the monitor's refresh rate, blurred background behind terminals and menus | built in (no blur: sway cannot) |
 | Lock / idle | i3lock + xss-lock (xtrlock: see-through) | swaylock + swayidle |
 | Wallpaper | feh | swaybg |
-| Clipboard history | CopyQ | cliphist |
+| Clipboard history | tux-clip: BreadOnPenguins' text + image history (dmenu/rofi, fzf previews) | cliphist |
 | Screenshots / recording | maim, ffmpeg | grim, slurp, wf-recorder |
 | Monitors | autorandr / arandr | kanshi |
 
@@ -318,6 +318,16 @@ its wallpapers; **Super+Shift+W** changes to another from the same theme. Drop y
 a theme's folder and they join its rotation; a theme with an empty folder gets a gradient in its
 colours. The installer copies the wallpapers on a new machine; one you delete stays deleted.
 
+**Colours from the wallpaper (like pywal):** picking a wallpaper with **Super+Ctrl+W**, or
+Thunar's right-click **Set as wallpaper**, also makes a palette from that image (`tux-wal`) and
+switches to it: the theme `wal`. Its background is the image's darkest common colour, made very
+dark; its accent is the image's most colourful common colour. Warning red, OK green and the other
+named colours keep their meaning, in the wallpaper's own shade where it has one. Super+Shift+W
+then picks any wallpaper, with its colours. The fixed themes are all still there: pick one with
+**Super+Ctrl+T** to go back (and `wal` in that menu to return to wallpaper colours).
+`tux-wallpaper set FILE --keep-colours` changes only the image. The login screen and TTY keep the
+last fixed theme.
+
 **Firefox** follows too (`tux-firefox`, run by every theme or font change): tabs, toolbar,
 address bar, menus and the new-tab page take the palette, with square corners on menus,
 panels, buttons and tabs; it switches to dark or light with the theme; and every website shows
@@ -384,13 +394,13 @@ entry works too, but without tuxcraft's environment).
 ## dwm, next to i3
 
 **i3 and dwm** in the installer's Desktop question, or `tux-dwm install` on an i3 system later,
-adds a dwm session: **F3** on the login screen → **tuxcraft (dwm)**. It is
+adds a dwm session: **F3** on the login screen → **tuxcraft (dwm)**; the login screen remembers each user's last pick. It is
 [BreadOnPenguins' dwm build](https://github.com/BreadOnPenguins/dwm) and her look (20 px gaps,
 1 px borders, a flat bar with the tag numbers, empty tags hidden, her dmenu centred, picom with
-round corners, blur and see-through unfocused windows), with **the same keys as i3**.
+square corners, blur and see-through unfocused windows), with **the same keys as i3**.
 
 - **Built from source**, as dwm always is: `src/dwm` and `src/dmenu` are her builds (MIT, like
-  dwm), with tuxcraft's changes marked `tuxcraft` in the code. They are compiled into
+  dwm), `src/dwmblocks` is torrinfail's dwmblocks (ISC), with tuxcraft's changes marked `tuxcraft` in the code. They are compiled into
   `/usr/local/bin` at install, and again by `tux-update` when the sources change.
 - **Same keys:** dwm's `config.h` was written from `~/.config/tuxcraft/wm/common.conf` and the i3
   config, so Super+K lists them for both. Where dwm has no i3 equivalent, tuxcraft's dwm
@@ -402,15 +412,16 @@ round corners, blur and see-through unfocused windows), with **the same keys as 
   instead of showing thumbnails.
 - **Same theme:** `tux-theme` and `tux-font` write dwm's and dmenu's colours and font into
   `~/.Xresources` and restart dwm in place. Windows keep their tags.
-- **Bar:** dwm's own bar on the left; `tux-dwmbar` writes the status on the right (music, CPU,
-  memory, GPU, updates, Bluetooth, volume, network, battery, power profile, recording, clock)
-  with polybar's clicks.
+- **Bar:** dwm's own bar on the left; on the right **dwmblocks**, as in her setup
+  ([torrinfail's](https://github.com/torrinfail/dwmblocks), with click support, `src/dwmblocks`).
+  Its blocks are `tux-dwmbar` (music, CPU, memory, GPU, updates, Bluetooth, volume, network,
+  battery, power profile, recording, clock), with polybar's clicks.
 - **picom:** dwm uses `~/.config/picom/dwm.conf`; i3 keeps `picom.conf`. The tuxcraft picom
   config from before dwm was added is kept in `~/.config/picom/backup/picom.conf`.
 - **Your own config:** copy `/usr/share/tuxcraft/src/dwm/config.def.h` to
   `~/.config/tuxcraft/dwm/config.h`, edit it, then run `tux-dwm build`. Updates keep using
   yours.
-- **Not in dwm:** no system tray (udiskie and CopyQ run without icons), no workspace
+- **Not in dwm:** no system tray (udiskie runs without its icon), no workspace
   thumbnails, and no "recent programs" list (it follows i3's window events).
 - **Removing it:** `tux-dwm remove` (from i3 or a TTY). i3 is not touched.
 

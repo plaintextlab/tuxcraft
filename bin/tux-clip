@@ -1,11 +1,126 @@
 #!/usr/bin/env bash
-# Clipboard history picker: cliphist on Wayland, CopyQ on X11 (native or Flatpak).
-if [[ -n ${WAYLAND_DISPLAY:-} ]] && command -v cliphist >/dev/null; then
-  sel=$(cliphist list | tux-menu clip) && cliphist decode <<<"$sel" | wl-copy
-elif command -v copyq >/dev/null; then
-  copyq toggle
-elif command -v flatpak >/dev/null && flatpak info com.github.hluk.copyq >/dev/null 2>&1; then
-  flatpak run com.github.hluk.copyq toggle
-else
-  notify-send "No clipboard manager" "Install CopyQ (tux-pkg install copyq — CopyQ on Void — or flatpak install flathub com.github.hluk.copyq)"
+# tux-clip — clipboard history (Super+V). On X11 (i3, dwm, Xfce): BreadOnPenguins' clipboard
+# scripts (txtcliphist, imgcliphist in github.com/BreadOnPenguins/scripts), made to record by
+# themselves. On Wayland (sway): cliphist.
+#   tux-clip              pick from the history (dmenu in dwm, rofi in i3); "Images" opens the image one
+#   tux-clip images       image history: fzf with previews in a floating terminal
+#   tux-clip watch        record every copy (tux-autostart starts it; one per session)
+#   tux-clip add          copy the highlighted text and keep it (her "cliphist add"; no key by default)
+#   tux-clip clear        forget the history
+# Text: ~/.cache/tuxcraft/clip/history, one copy per line, newest last; line breaks inside a copy
+# are kept as <NEWLINE> (her format). Images: ~/.cache/tuxcraft/clip/img/*.png.
+# Not recorded: copies a password manager marks as secret (KeePassXC, Bitwarden...), and text
+# over 100 kB. Keeps the last 500 texts and 100 images.
+set -uo pipefail
+DIR=${XDG_CACHE_HOME:-$HOME/.cache}/tuxcraft/clip
+HIST=$DIR/history IMG=$DIR/img
+NL='<NEWLINE>' MAX_TEXT=500 MAX_IMG=100 MAX_BYTES=100000
+mkdir -p "$IMG"; touch "$HIST"; chmod 700 "$DIR"
+
+note() { notify-send -a tux-clip -t 2000 ${2:+-i "$2"} "Clipboard" "$1" 2>/dev/null || true; }
+
+# ------------------------------------------------------------------- Wayland: cliphist, as before
+if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+  case ${1:-} in
+    ''|pick) command -v cliphist >/dev/null || { note "cliphist is not installed"; exit 1; }
+             sel=$(cliphist list | tux-menu clip) && cliphist decode <<<"$sel" | wl-copy ;;
+    clear) cliphist wipe ;;
+    *) exit 0 ;;   # watch: sway's autostart runs wl-paste --watch cliphist store
+  esac
+  exit
 fi
+
+# ------------------------------------------------------------------- X11
+store_text() {  # store_text TEXT: append as one line; an older identical copy moves to the end
+  local line=$1
+  line=${line//$'\n'/$NL}
+  [[ -n ${line//[[:space:]]/} ]] || return 0
+  grep -vxF -- "$line" "$HIST" >"$HIST.new"
+  printf '%s\n' "$line" >>"$HIST.new"
+  tail -n "$MAX_TEXT" "$HIST.new" >"$HIST" && rm -f "$HIST.new"
+}
+
+store_image() {  # store_image: the clipboard's PNG, named by date; the same image is kept once
+  local tmp sum f
+  tmp=$(mktemp "$IMG/.new.XXXXXX") || return 0
+  xclip -selection clipboard -t image/png -o >"$tmp" 2>/dev/null
+  [[ -s $tmp ]] || { rm -f "$tmp"; return 0; }
+  sum=$(sha1sum "$tmp" | cut -c1-12)
+  for f in "$IMG"/*-"$sum".png; do [[ -e $f ]] && { rm -f "$tmp"; touch "$f"; return 0; }; done
+  mv "$tmp" "$IMG/$(date +%Y%m%d-%H%M%S)-$sum.png"
+  # Only the newest MAX_IMG.
+  ls -t "$IMG"/*.png 2>/dev/null | tail -n +"$((MAX_IMG + 1))" | while IFS= read -r f; do rm -f "$f"; done
+}
+
+record() {  # what the clipboard holds now, if it is new
+  local targets text
+  targets=$(timeout 2 xclip -selection clipboard -o -t TARGETS 2>/dev/null) || return 0
+  # Password managers mark secrets: never keep those.
+  grep -qiE 'x-kde-passwordManagerHint|PasswordManager|x-keepassxc' <<<"$targets" && return 0
+  if grep -qx 'image/png' <<<"$targets"; then
+    [[ $targets == "${last_targets:-}" && ${last_kind:-} == img ]] && return 0
+    store_image; last_kind=img
+  elif grep -qxE 'UTF8_STRING|STRING|TEXT|text/plain(;charset=utf-8)?' <<<"$targets"; then
+    text=$(timeout 2 xclip -selection clipboard -o 2>/dev/null | head -c "$((MAX_BYTES + 1))") || return 0
+    ((${#text} > MAX_BYTES)) && return 0
+    [[ $text == "${last_text:-}" ]] && return 0
+    store_text "$text"; last_text=$text last_kind=text
+  fi
+  last_targets=$targets
+}
+
+watch_loop() {
+  exec 9>"$DIR/.watch.lock"
+  flock -n 9 || exit 0   # one per session
+  local last_targets='' last_text='' last_kind=''
+  # clipnotify waits for the next clipboard change (no polling); without it, look every second.
+  if command -v clipnotify >/dev/null; then
+    record
+    while clipnotify -s clipboard 2>/dev/null; do record; done
+  fi
+  while sleep 1; do record; done
+}
+
+images_count() { compgen -G "$IMG/*.png" | wc -l; }
+
+pick() {
+  local n sel
+  n=$(images_count)
+  sel=$({ ((n)) && echo "󰋩  Images ($n)"; tac "$HIST"; } | tux-menu "clipboard") || exit 0
+  [[ -n $sel ]] || exit 0
+  if [[ $sel == "󰋩  Images ("* ]]; then images; exit; fi
+  printf '%s' "${sel//$NL/$'\n'}" | xclip -selection clipboard -i
+  note "Copied to clipboard"
+}
+
+# Her imgcliphist: fzf with previews (chafa: real pixels in kitty). Enter copies, Ctrl+D deletes.
+images() {
+  if [[ ${1:-} != --here ]]; then
+    exec "${TERMINAL:-tux-term}" --class tux-float-big -e "$0" images --here
+  fi
+  local list="ls -t $IMG/*.png 2>/dev/null | xargs -rn1 basename"
+  local sel
+  sel=$(eval "$list" | fzf --prompt 'image> ' --layout=reverse --border=sharp \
+          --header 'Enter: copy   Ctrl+D: delete   Esc: close' \
+          --preview "chafa --animate=off --size=\${FZF_PREVIEW_COLUMNS}x\${FZF_PREVIEW_LINES} '$IMG/{}'" \
+          --preview-window 'right,70%' \
+          --bind "ctrl-d:execute-silent(rm -f '$IMG/{}')+reload($list)") || exit 0
+  [[ -f $IMG/$sel ]] || exit 0
+  setsid -f xclip -selection clipboard -t image/png -i "$IMG/$sel" >/dev/null 2>&1
+  sleep 0.2   # let xclip take the clipboard before the terminal closes
+  note "Image copied to clipboard" "$IMG/$sel"
+}
+
+case ${1:-} in
+  ''|pick) pick ;;
+  images) shift; images "$@" ;;
+  watch) watch_loop ;;
+  add)
+    text=$(xclip -selection primary -o 2>/dev/null) || exit 0
+    [[ -n $text ]] || exit 0
+    printf '%s' "$text" | xclip -selection clipboard -i
+    store_text "$text"; note "Kept: ${text:0:60}" ;;
+  clear) : >"$HIST"; rm -f "$IMG"/*.png; note "History cleared" ;;
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "tux-clip: unknown command '$1' (try --help)" >&2; exit 1 ;;
+esac

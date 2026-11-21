@@ -786,6 +786,14 @@ readxresources(void) {
 			colors[SchemeSel][ColFg] = strdup(colors[SchemeSel][ColFg]);
 
 		XrmDestroyDatabase(xdb);
+	} else {
+		/* tuxcraft: no X resources loaded. setup() frees these, so they must be copies (her
+		 * build crashed here: "munmap_chunk(): invalid pointer") */
+		fonts[0] = strdup(fonts[0]);
+		colors[SchemeNorm][ColBg] = strdup(colors[SchemeNorm][ColBg]);
+		colors[SchemeNorm][ColFg] = strdup(colors[SchemeNorm][ColFg]);
+		colors[SchemeSel][ColBg] = strdup(colors[SchemeSel][ColBg]);
+		colors[SchemeSel][ColFg] = strdup(colors[SchemeSel][ColFg]);
 	}
 }
 

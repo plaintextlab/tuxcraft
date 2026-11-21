@@ -3,6 +3,8 @@
 # console (TTY) palette, the tuigreet login screen, the GRUB boot menu, Papirus folder colours.
 # tux-theme-system --console-font FILE   the login screen/TTY font, also used for boot messages
 # tux-theme-system --grub-font FILE      the GRUB menu font (a PF2 file made by tux-psf --pf2)
+# tux-theme-system --folders COLOUR      only the Papirus folder colour, for per-user themes (the
+#                                        wallpaper colours, "wal"), which the rest leaves alone
 # wheel users may run it via sudo without a password (see /etc/sudoers.d/20-tuxcraft-theme).
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
@@ -152,6 +154,18 @@ if [[ ${1:-} == --console-font ]]; then
     for t in /dev/tty{1..7}; do setfont -C "$t" /etc/tuxcraft/console.psf 2>/dev/null || true; done
   fi
   early_console_font
+  exit 0
+fi
+
+if [[ ${1:-} == --folders ]]; then
+  c=${2:-}
+  # Only Papirus' own colour names: this runs as root for any wheel user.
+  [[ " adwaita black blue bluegrey breeze brown carmine cyan darkcyan deeporange green grey indigo magenta nordic orange palebrown paleorange pink red teal violet white yaru yellow " == *" $c "* ]] ||
+    { echo "tux-theme-system: not a Papirus folder colour: '$c'" >&2; exit 1; }
+  if command -v papirus-folders >/dev/null; then
+    papirus-folders -C "$c" --theme Papirus-Dark >/dev/null 2>&1 || true
+    papirus-folders -C "$c" --theme Papirus-Light >/dev/null 2>&1 || true
+  fi
   exit 0
 fi
 

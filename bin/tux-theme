@@ -6,6 +6,8 @@
 #   tux-theme list | current
 # Custom palettes: drop a <name>.theme file in ~/.config/tuxcraft/themes/ (copy one from
 # /usr/share/tuxcraft/themes/ as a starting point).
+# "wal" = colours made from the wallpaper (tux-wal, like pywal); picking a wallpaper switches to
+# it, picking any other theme goes back to fixed colours.
 set -euo pipefail
 
 SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
@@ -24,7 +26,7 @@ theme_file() {
 }
 
 list_themes() {
-  { ls "$SHARE/themes" "$CONF/themes" 2>/dev/null || true; } | sed -n 's/\.theme$//p' | sort -u
+  { ls "$SHARE/themes" "$CONF/themes" 2>/dev/null || true; echo wal.theme; } | sed -n 's/\.theme$//p' | sort -u
 }
 
 state_set() {  # state_set KEY VALUE
@@ -116,9 +118,8 @@ reload_all() {
     i3-msg reload >/dev/null 2>&1 || true
     pgrep -x polybar >/dev/null && "$HOME/.config/polybar/launch.sh" >/dev/null 2>&1 &
   elif pgrep -u "$UID" -x dwm >/dev/null; then
-    # dwm reads its colours and font (dwm.* in ~/.Xresources, merged above) when it starts:
-    # restart it in place. Windows keep their tags.
-    tux-dwm reload >/dev/null 2>&1 || true
+    # dwm follows the xrdb -merge above by itself (dwm.* colours at once; a new font restarts it
+    # in place, windows keep their tags).
     tux-dwmbar refresh >/dev/null 2>&1 || true
   fi
   pkill -USR1 -x kitty 2>/dev/null || true   # kitty re-reads kitty.conf (+ theme.conf)
@@ -133,8 +134,15 @@ reload_all() {
   if command -v tux-firefox >/dev/null && tux-firefox apply >/dev/null 2>&1; then
     { pgrep -x firefox || pgrep -x firefox-bin || pgrep -x librewolf || pgrep -f org.mozilla.firefox; } >/dev/null 2>&1 && ff_running=1
   fi
-  # Login screen, TTY palette and icon folder colours (needs root; allowed via sudoers rule)
-  sudo -n /usr/local/bin/tux-theme-system "$THEME" >/dev/null 2>&1 || true
+  # Login screen, TTY palette and icon folder colours (needs root; allowed via sudoers rule).
+  # Your own themes and the wallpaper colours ("wal") are not system themes: only the folder
+  # colour follows those.
+  if [[ -f $SHARE/themes/$THEME.theme ]]; then
+    sudo -n /usr/local/bin/tux-theme-system "$THEME" >/dev/null 2>&1 || true
+  else
+    local folders; folders=$(. "$tf"; echo "${papirus:-}")
+    [[ -n $folders ]] && { sudo -n /usr/local/bin/tux-theme-system --folders "$folders" >/dev/null 2>&1 || true; }
+  fi
   local msg; msg="$(. "$tf"; echo "$name") applied"
   ((ff_running)) && msg+=$'\n'"Restart Firefox to see it there"
   notify-send -a tuxcraft "Theme" "$msg" 2>/dev/null || true
@@ -143,13 +151,18 @@ reload_all() {
 menu() {
   local cur choice
   cur=$THEME
-  choice=$(list_themes | sed "s/^$cur\$/$cur  (current)/" | tux-menu "theme") || exit 0
-  choice=${choice%%  (current)}
+  choice=$(list_themes | sed "s/^wal\$/wal  (colours from the wallpaper)/; s/^\($cur\)\( .*\)\{0,1\}\$/\1\2  (current)/" | tux-menu "theme") || exit 0
+  choice=${choice%% *}
   [[ -n $choice ]] && "$0" set "$choice"
 }
 
 case ${1:-} in
-  set)      theme_file "${2:?theme name}" >/dev/null || { echo "Unknown theme '$2'. Try: tux-theme list" >&2; exit 1; }
+  set)      # Wallpaper colours picked from the menu: make them from the wallpaper showing now.
+            if [[ ${2:-} == wal ]] && ! theme_file wal >/dev/null; then
+              "$(dirname "$(readlink -f "$0")")/tux-wallpaper" colors ||
+                { notify-send -a tuxcraft "Theme" "Pick a wallpaper first (Super+Ctrl+W): its colours become the theme"; exit 1; }
+            fi
+            theme_file "${2:?theme name}" >/dev/null || { echo "Unknown theme '$2'. Try: tux-theme list" >&2; exit 1; }
             THEME=$2; state_set THEME "$2"; THEME_CHANGED=1; render; reload_all ;;
   apply)    render; reload_all ;;
   list)     list_themes ;;

@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""tux-wal IMAGE — a colour theme made from a wallpaper, like pywal (BreadOnPenguins' setup).
+
+Writes ~/.config/tuxcraft/themes/wal.theme, a tuxcraft palette like the ones in
+/usr/share/tuxcraft/themes (which stay as they are). tux-wallpaper runs this when you pick a
+wallpaper (Super+Ctrl+W, Thunar's "Set as wallpaper") and then switches to the "wal" theme;
+pick any other theme (Super+Ctrl+T) to go back to fixed colours.
+
+How the colours are chosen: the image is reduced to 16 colours. The background is its darkest
+common colour, made very dark; the text is a light tint of the same hue. The accent is its most
+colourful common colour. Red, green, yellow, blue, magenta and cyan keep their meaning (warnings
+stay red), but take the wallpaper's own shade of that hue where it has one, and its saturation.
+Always a dark theme; text and accent are kept readable on the background.
+"""
+import colorsys
+import os
+import sys
+
+try:
+    from PIL import Image
+except ImportError:
+    sys.exit("tux-wal: needs Pillow (python3-pillow)")
+
+OUT = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
+                   "tuxcraft", "themes", "wal.theme")
+
+
+def hexc(r, g, b):
+    return "#%02x%02x%02x" % tuple(max(0, min(255, round(v * 255))) for v in (r, g, b))
+
+
+def hls(h, l, s):
+    return hexc(*colorsys.hls_to_rgb(h % 1.0, max(0.0, min(1.0, l)), max(0.0, min(1.0, s))))
+
+
+def lum(c):
+    """Relative luminance of #rrggbb (WCAG)."""
+    def ch(v):
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(c[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+
+
+def contrast(a, b):
+    la, lb = sorted((lum(a), lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def readable(h, l, s, bg, ratio):
+    """The colour h/l/s, lightened until it reads on bg."""
+    while l < 0.95 and contrast(hls(h, l, s), bg) < ratio:
+        l += 0.02
+    return hls(h, l, s)
+
+
+def hue_dist(a, b):
+    d = abs(a - b) % 1.0
+    return min(d, 1.0 - d)
+
+
+def main():
+    if len(sys.argv) != 2 or not os.path.isfile(sys.argv[1]):
+        sys.exit(__doc__.split("\n\n")[0])
+    img = Image.open(sys.argv[1]).convert("RGB")
+    img.thumbnail((200, 200))
+    q = img.quantize(colors=16, method=Image.Quantize.MEDIANCUT)
+    pal = q.getpalette()[:48]
+    counts = sorted(q.getcolors(), reverse=True)       # [(pixels, index)]
+    total = sum(n for n, _ in counts)
+    cols = []                                          # (weight, h, l, s)
+    for n, i in counts:
+        r, g, b = (pal[3 * i + k] / 255 for k in range(3))
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        cols.append((n / total, h, l, s))
+
+    # Background: the darkest colour that covers a fair part of the image.
+    common = [c for c in cols if c[0] >= 0.03] or cols
+    _, bh, _, bs = min(common, key=lambda c: c[2])
+    bs = min(bs, 0.30)
+    bg, bg_dark, bg_alt, bg_hl = (hls(bh, l, bs) for l in (0.10, 0.07, 0.14, 0.19))
+
+    # Accent: colourful and common, not too dark or light.
+    vivid = [c for c in cols if 0.15 < c[2] < 0.85] or cols
+    _, ah, _, as_ = max(vivid, key=lambda c: c[3] * (c[0] ** 0.5))
+    sat = max(0.40, min(0.75, as_))
+    if as_ < 0.12:                                     # a grey wallpaper: a quiet accent
+        sat = 0.15
+    accent = readable(ah, 0.62, sat, bg, 4.5)
+
+    fg = readable(bh, 0.86, min(bs, 0.18), bg, 10)
+    fg_dim = readable(bh, 0.72, min(bs, 0.15), bg, 7)
+    muted = readable(bh, 0.45, min(bs, 0.12), bg, 3)
+
+    # Named colours: the wallpaper's own shade of each hue when it has one nearby.
+    named = {"red": 0 / 360, "orange": 28 / 360, "yellow": 48 / 360, "green": 110 / 360,
+             "cyan": 180 / 360, "blue": 215 / 360, "magenta": 290 / 360}
+    out = {}
+    used = []
+    for name, h in named.items():
+        near = [c for c in cols if c[3] > 0.25 and hue_dist(c[1], h) < 20 / 360]
+        hh = max(near, key=lambda c: c[0])[1] if near else h
+        if any(hue_dist(hh, u) < 12 / 360 for u in used):   # red and orange must not come out the same
+            hh = h
+        used.append(hh)
+        out[name] = readable(hh, 0.60, max(sat, 0.45), bg, 4.5)
+        out[name + "_br"] = readable(hh, 0.70, max(sat, 0.45), bg, 6)
+
+    # Where tuxcraft needs a colour name: the folder icons and the login screen accent.
+    papirus = min({"red": 0, "deeporange": 20, "orange": 30, "yellow": 50, "green": 110,
+                   "teal": 165, "cyan": 185, "blue": 215, "indigo": 240, "violet": 270,
+                   "magenta": 300, "pink": 330}.items(),
+                  key=lambda kv: hue_dist(kv[1] / 360, ah))[0] if sat > 0.2 else "grey"
+    ansi = min({"red": 0, "yellow": 55, "green": 120, "cyan": 180, "blue": 225, "magenta": 300}.items(),
+               key=lambda kv: hue_dist(kv[1] / 360, ah))[0]
+
+    name = os.path.splitext(os.path.basename(sys.argv[1]))[0][:40].replace('"', "")
+    lines = [
+        "# Made by tux-wal from %s. Pick another wallpaper to make it again." % sys.argv[1],
+        'name="Wallpaper (%s)"' % name,
+        "variant=dark",
+        "papirus=%s" % papirus,
+        "ansi_accent=%s" % ansi,
+        "bg=%s bg_dark=%s bg_alt=%s bg_hl=%s" % (bg, bg_dark, bg_alt, bg_hl),
+        "fg=%s fg_dim=%s muted=%s" % (fg, fg_dim, muted),
+        "accent=%s accent_fg=%s" % (accent, bg),
+        " ".join("%s=%s" % (k, out[k]) for k in named),
+        "color0=%s color1=%s color2=%s color3=%s color4=%s color5=%s color6=%s color7=%s" % (
+            bg_hl, out["red"], out["green"], out["yellow"], out["blue"], out["magenta"], out["cyan"], fg_dim),
+        "color8=%s color9=%s color10=%s color11=%s color12=%s color13=%s color14=%s color15=%s" % (
+            muted, out["red_br"], out["green_br"], out["yellow_br"], out["blue_br"], out["magenta_br"],
+            out["cyan_br"], fg),
+    ]
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT + ".new", "w") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(OUT + ".new", OUT)
+    print(OUT)
+
+
+if __name__ == "__main__":
+    main()

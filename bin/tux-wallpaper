@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# tux-wallpaper set <file> | random | for-theme | theme | restore | --menu
+# tux-wallpaper set <file> | random | for-theme | theme | restore | colors | --menu
 # Wallpapers live in ~/Pictures/Wallpapers, one folder per colour theme (gruvbox/, nord/ …).
-#   set FILE    use this image (Thunar: right-click an image → Set as wallpaper)
-#   random      another wallpaper from the current theme's folder (Super+Shift+W)
+#   set FILE    use this image, and colours made from it, like pywal (Thunar: right-click an image
+#               → Set as wallpaper). --keep-colours: only the image.
+#   random      another wallpaper from the current theme's folder (Super+Shift+W); with the
+#               wallpaper colours on, any wallpaper, and its colours
 #   for-theme   a wallpaper from the current theme's folder; the theme gradient when it is
 #               empty (tux-theme runs this when you switch themes)
 #   theme       a gradient generated in the current palette
 #   restore     show the saved choice again (at login)
-#   --menu      pick one: the current theme's wallpapers first, then the rest
+#   colors      make the colour theme "wal" from the wallpaper showing now (tux-wal)
+#   --menu      pick one (and its colours): the current theme's wallpapers first, then the rest
 # Put your own images in a theme's folder and they join its rotation.
+# Wallpaper colours are the theme "wal" (~/.config/tuxcraft/themes/wal.theme, made by tux-wal).
+# The fixed themes stay: pick one with Super+Ctrl+T (tux-theme) to go back to it.
 DIR="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Wallpapers"
 STATE="$HOME/.config/tuxcraft/state"
 GEN="$HOME/.local/share/tuxcraft/wallpapers"
@@ -43,6 +48,18 @@ show() {
 
 use() { show "$1"; state_set "$1"; }
 
+# Colours from the image (tux-wal), then the "wal" theme everywhere. tux-theme comes back here
+# with for-theme, which keeps this wallpaper while the theme is "wal".
+wal_colors() {  # wal_colors FILE
+  local here; here=$(dirname "$(readlink -f "$0")")
+  if ! "$here/tux-wal" "$1" >/dev/null; then
+    notify-send -a tuxcraft "Wallpaper" "Could not make colours from this image (python3-pillow missing?)"
+    return 1
+  fi
+  rm -f "$GEN/wal.png"   # the gradient wallpaper of the old wallpaper colours
+  "$here/tux-theme" set wal
+}
+
 theme_wall() {
   . "$HOME/.config/tuxcraft/colors.sh"
   local t f im; t=$(current_theme)
@@ -57,23 +74,34 @@ theme_wall() {
 }
 
 # A random image from the current theme's folder, not the one showing now. Empty if none.
+# With wallpaper colours ("wal"): from every folder.
 pick_theme_image() {
   local d cur
   d="$DIR/$(current_theme)"; cur=$(current_wall)
+  [[ $(current_theme) == wal ]] && d=$DIR
   [[ -d $d ]] || return 0
   images "$d" | grep -vxF -e "$cur" | shuf -n1 | grep . || images "$d" | shuf -n1
 }
 
 case ${1:-restore} in
   set)    [[ -f ${2:-} ]] || { echo "No such file: ${2:-}" >&2; exit 1; }
-          use "$(readlink -f "$2")" ;;
+          f=$(readlink -f "$2"); use "$f"
+          [[ ${3:-} == --keep-colours || ${3:-} == --keep-colors ]] || wal_colors "$f" ;;
   random) f=$(pick_theme_image)
           if [[ -z $f ]]; then
             notify-send "Wallpaper" "No wallpapers in ${DIR/#$HOME/\~}/$(current_theme); add some there"
             exit 1
           fi
-          use "$f" ;;
+          use "$f"
+          [[ $(current_theme) == wal ]] && wal_colors "$f" ;;
+  colors|colours)
+          w=$(current_wall)
+          [[ -f $w ]] || { echo "tux-wallpaper: no wallpaper image to take colours from; pick one first" >&2; exit 1; }
+          rm -f "$GEN/wal.png"
+          "$(dirname "$(readlink -f "$0")")/tux-wal" "$w" >/dev/null ;;
   for-theme)
+          # Wallpaper colours: the theme came from this wallpaper, so it stays.
+          if [[ $(current_theme) == wal && -f $(current_wall) ]]; then exec "$0" restore; fi
           f=$(pick_theme_image)
           if [[ -n $f ]]; then use "$f"; else f=$(theme_wall) && show "$f"; state_set theme; fi ;;
   theme)  f=$(theme_wall) && show "$f"; state_set theme ;;
@@ -84,12 +112,12 @@ case ${1:-restore} in
           t=$(current_theme)
           # "folder/name" for each image, the current theme's first.
           list=$( { images "$DIR/$t" | sort; images "$DIR" | grep -v "^$DIR/$t/" | sort; } | sed "s|^$DIR/||")
-          pick=$( { echo "󰸉  Theme gradient"; echo "  Random ($t)"; printf '%s\n' "$list"; } | grep . | tux-menu wallpaper) || exit 0
+          pick=$( { echo "󰸉  Theme gradient"; echo "  Random ($t)"; printf '%s\n' "$list"; } | grep . | tux-menu "wallpaper + colours") || exit 0
           case $pick in
             *"Theme gradient") exec "$0" theme ;;
             *"Random ("*) exec "$0" random ;;
             *) [[ -f $DIR/$pick ]] && exec "$0" set "$DIR/$pick" ;;
           esac ;;
-  -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "Unknown command '$1' (try --help)" >&2; exit 1 ;;
 esac

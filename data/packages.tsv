@@ -74,7 +74,7 @@ x11	numlockx	numlockx	numlockx
 x11	xsettingsd	xsettingsd	xsettingsd
 x11	autorandr arandr	autorandr arandr	autorandr arandr
 x11	maim slop xclip xdotool	maim slop xclip xdotool	maim slop xclip xdotool
-x11	copyq	copyq	CopyQ
+x11	clipnotify	-	clipnotify
 #
 # ---- wayland: sway session
 wayland	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle	sway swaybg swaylock swayidle
@@ -91,6 +91,7 @@ wayland	kanshi	kanshi	kanshi
 # Only Xfce's core: Thunar, kitty, dunst, tux-lock and tux-battery do the rest in both sessions.
 # xfconf is left out on purpose: Thunar needs it, so "tux-xfce remove" must not take it away.
 xfce	xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman	xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman	xfce4-session xfwm4 xfce4-panel xfdesktop xfce4-settings xfce4-pulseaudio-plugin xfce4-taskmanager pavucontrol blueman
+xfce	copyq	copyq	CopyQ
 #
 # ---- dwm: optional dwm session next to i3 (tux-dwm install / remove; wizard: "i3 and dwm").
 # dwm and dmenu are built from src/ (BreadOnPenguins' builds), so these are their build needs

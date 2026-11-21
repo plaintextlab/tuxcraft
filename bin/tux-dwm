@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tux-dwm — dwm as an extra session next to i3: BreadOnPenguins' build and look, tuxcraft's keys.
-#   tux-dwm install      build and install dwm + dmenu (needs sudo); pick "tuxcraft (dwm)" with F3 at login
+#   tux-dwm install      build and install dwm, dmenu, dwmblocks (needs sudo); pick "tuxcraft (dwm)" with F3 at login
 #   tux-dwm build        rebuild after editing the config (~/.config/tuxcraft/dwm/config.h, see below)
 #   tux-dwm remove       take dwm out again (i3 is untouched)
 #   tux-dwm status
@@ -12,8 +12,10 @@
 #   tux-dwm reload       restart dwm in place (new colours / font); windows keep their tags
 #
 # Sources: /usr/share/tuxcraft/src/dwm and src/dmenu (her builds, with tuxcraft's changes marked
-# "tuxcraft"). Your own config: copy src/dwm/config.def.h to ~/.config/tuxcraft/dwm/config.h,
-# edit it, then tux-dwm build. Built programs go to /usr/local/bin (dwm, dmenu, dmenu_run, stest).
+# "tuxcraft"), src/dwmblocks (the status bar; its blocks are tux-dwmbar). Your own config: copy
+# src/dwm/config.def.h to ~/.config/tuxcraft/dwm/config.h (or src/dwmblocks/blocks.def.h to
+# ~/.config/tuxcraft/dwm/blocks.h), edit it, then tux-dwm build. Built programs go to
+# /usr/local/bin (dwm, dmenu, dmenu_run, stest, dwmblocks).
 set -uo pipefail
 SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
 # shellcheck source=/dev/null
@@ -80,21 +82,21 @@ answers_session() {  # add|del
 
 # ------------------------------------------------------------------- build (root)
 # The user's own config.h, if they made one (the installer runs as root for TUX_USER).
-user_config() {
-  local u=${SUDO_USER:-${TUX_USER:-}} h
+user_config() {  # user_config [config.h|blocks.h]
+  local u=${SUDO_USER:-${TUX_USER:-}} h f=${1:-config.h}
   [[ -n $u ]] || return 1
   h=$(getent passwd "$u" | cut -d: -f6)
-  [[ -n $h && -f $h/.config/tuxcraft/dwm/config.h ]] && echo "$h/.config/tuxcraft/dwm/config.h"
+  [[ -n $h && -f $h/.config/tuxcraft/dwm/$f ]] && echo "$h/.config/tuxcraft/dwm/$f"
 }
 
 checksum() {
-  { find "$SHARE/src/dwm" "$SHARE/src/dmenu" -type f -print0 | sort -z | xargs -0 cat
-    local c; c=$(user_config) && cat "$c"; } | sha256sum | cut -d' ' -f1
+  { find "$SHARE/src/dwm" "$SHARE/src/dmenu" "$SHARE/src/dwmblocks" -type f -print0 | sort -z | xargs -0 cat
+    local c; c=$(user_config) && cat "$c"; c=$(user_config blocks.h) && cat "$c"; } | sha256sum | cut -d' ' -f1
 }
 
 build() {  # build [force]
   [[ $EUID -eq 0 ]] || die "build: run as root (tux-dwm build does that with sudo)"
-  [[ -d $SHARE/src/dwm && -d $SHARE/src/dmenu ]] || die "no sources in $SHARE/src"
+  [[ -d $SHARE/src/dwm && -d $SHARE/src/dmenu && -d $SHARE/src/dwmblocks ]] || die "no sources in $SHARE/src"
   local sum t c
   sum=$(checksum)
   if [[ ${1:-} != force && -x $PREFIX/bin/dwm && $(cat "$STAMP" 2>/dev/null) == "$sum" ]]; then
@@ -103,13 +105,15 @@ build() {  # build [force]
   t=$(mktemp -d) || die "no temp dir"
   # shellcheck disable=SC2064
   trap "rm -rf '$t'" RETURN
-  cp -a "$SHARE/src/dwm" "$SHARE/src/dmenu" "$t"/
+  cp -a "$SHARE/src/dwm" "$SHARE/src/dmenu" "$SHARE/src/dwmblocks" "$t"/
   if c=$(user_config); then say "Using your config: $c"; cp "$c" "$t/dwm/config.h"; fi
-  say "Building dwm and dmenu"
+  if c=$(user_config blocks.h); then say "Using your blocks: $c"; cp "$c" "$t/dwmblocks/blocks.h"; fi
+  say "Building dwm, dmenu and dwmblocks"
   make -s -C "$t/dwm" PREFIX="$PREFIX" install >/dev/null || die "dwm did not build (see the errors above)"
   make -s -C "$t/dmenu" PREFIX="$PREFIX" install >/dev/null || die "dmenu did not build (see the errors above)"
+  make -s -C "$t/dwmblocks" PREFIX="$PREFIX" install >/dev/null || die "dwmblocks did not build (see the errors above)"
   mkdir -p "${STAMP%/*}"; echo "$sum" >"$STAMP"
-  say "Installed $PREFIX/bin/dwm and dmenu"
+  say "Installed $PREFIX/bin/dwm, dmenu and dwmblocks"
 }
 
 system_install() {
@@ -126,7 +130,7 @@ system_install() {
 
 system_remove() {
   [[ $EUID -eq 0 ]] || die "system-remove: run as root"
-  rm -f "$PREFIX"/bin/{dwm,dmenu,dmenu_run,dmenu_path,stest} "$PREFIX"/share/man/man1/{dwm,dmenu,stest}.1
+  rm -f "$PREFIX"/bin/{dwm,dmenu,dmenu_run,dmenu_path,stest,dwmblocks} "$PREFIX"/share/man/man1/{dwm,dmenu,stest}.1
   rm -f "$STAMP" "${XSESSIONS[@]}"
   answers_session del
 }
@@ -194,7 +198,11 @@ case ${1:-} in
   build)
     if [[ $EUID -eq 0 ]]; then build "${2:-}"; exit; fi
     sudo "$(readlink -f "$0")" build force || exit 1
-    running && cmd restart && say "dwm restarted with the new build" ;;
+    if running; then
+      cmd restart
+      pkill -u "$UID" -x dwmblocks; setsid -f dwmblocks >/dev/null 2>&1
+      say "dwm and dwmblocks restarted with the new build"
+    fi ;;
   remove)
     [[ ${XDG_CURRENT_DESKTOP:-} == dwm ]] && die "log out of dwm first, and run this from i3 or a TTY"
     sudo "$(readlink -f "$0")" system-remove || exit 1

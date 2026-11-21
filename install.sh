@@ -330,7 +330,7 @@ wizard() {
 
   if [[ -z ${TUX_YES:-} ]]; then
     [[ -v TUX_EXTRA ]] || read -r -e -p "${C_BOLD}? Extra packages to install${C_RESET} ${C_DIM}(space separated, Enter for none)${C_RESET} " TUX_EXTRA </dev/tty
-    [[ -v TUX_EXCLUDE ]] || read -r -e -p "${C_BOLD}? Packages to leave out${C_RESET} ${C_DIM}(e.g. picom copyq, Enter for none)${C_RESET} " TUX_EXCLUDE </dev/tty
+    [[ -v TUX_EXCLUDE ]] || read -r -e -p "${C_BOLD}? Packages to leave out${C_RESET} ${C_DIM}(e.g. picom gammastep, Enter for none)${C_RESET} " TUX_EXCLUDE </dev/tty
   fi
   TUX_EXTRA=${TUX_EXTRA:-} TUX_EXCLUDE=${TUX_EXCLUDE:-}
 

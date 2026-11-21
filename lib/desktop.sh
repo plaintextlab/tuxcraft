@@ -175,11 +175,12 @@ greeter_stage() {
     # Runs on its own VT so boot messages on tty1 never garble the prompt.
     cat >/etc/greetd/config.toml <<EOF
 # tuxcraft: TUI login (tuigreet). Colours follow the system theme via the console palette.
+# It remembers the last user and, for each user, the session they picked last (F3).
 [terminal]
 vt = 7
 
 [default_session]
-command = "tuigreet --time --remember --asterisks --window-padding 2 --container-padding 2 --greeting 'Welcome to $TUX_HOSTNAME' --theme 'border=yellow;title=yellow;greet=white;text=white;prompt=yellow;input=white;time=bright-black;action=bright-black;button=yellow;container=black' --xsessions /etc/tuxcraft/xsessions --sessions /etc/tuxcraft/wayland-sessions --cmd tux-session"
+command = "tuigreet --time --remember --remember-user-session --asterisks --window-padding 2 --container-padding 2 --greeting 'Welcome to $TUX_HOSTNAME' --theme 'border=yellow;title=yellow;greet=white;text=white;prompt=yellow;input=white;time=bright-black;action=bright-black;button=yellow;container=black' --xsessions /etc/tuxcraft/xsessions --sessions /etc/tuxcraft/wayland-sessions --cmd tux-session"
 user = "$gu"
 EOF
     # Auto login (tux-autologin on) survives updates: put its [initial_session] back.

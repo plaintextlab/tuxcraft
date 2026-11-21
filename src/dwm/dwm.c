@@ -125,6 +125,8 @@ struct Client { /* a window that dwm is managing */
 	unsigned int tags; /* bitmasks for which tags window is visible on */
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, issticky, isterminal, noswallow; /* window states */
 	int isscratch; /* tuxcraft: sent to the scratchpad (Super+Shift+minus) */
+	float cfact;   /* tuxcraft: share of its column (cfacts; 1 = equal), set by Super + right drag */
+	int hidden;    /* tuxcraft: moved off screen (its tag is not shown); _TUX_DWM_HIDDEN is set */
 	long desktop; /* tuxcraft: last _NET_WM_DESKTOP written */
 	pid_t pid; /* pid of application in window - useful for swallowing */
 	Client *next; /* next client, in the linked list of all clients */
@@ -223,6 +225,7 @@ static void focusstack(const Arg *arg);
 static Atom getatomprop(Client *c, Atom prop);
 static int getrootptr(int *x, int *y);
 static long getstate(Window w);
+static pid_t getstatusbarpid(void);
 static void sigstatusbar(const Arg *arg);
 static int gettextprop(Window w, Atom atom, char *text, unsigned int size);
 static void grabbuttons(Client *c, int focused);
@@ -329,8 +332,9 @@ static const char broken[] = "broken";
 static char stext[1024]; /* tuxcraft: room for glyphs (4 bytes each) and a song title */
 static int statusw;
 static int statussig;
+static pid_t statuspid = -1;
 static int keymode = 0; /* tuxcraft: 1 = resize mode (Super+R) */
-static Atom tuxcmdatom, tuxtagsatom, tuxviewatom;
+static Atom tuxcmdatom, tuxtagsatom, tuxviewatom, tuxhiddenatom;
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
 static int bh;               /* bar height */
@@ -1353,6 +1357,10 @@ loadxrdb(void)
           strncpy(font, value.addr, sizeof font - 1);
           font[sizeof font - 1] = '\0';
         }
+        if (XrmGetResource(xrdb, "dwm.iconfont", NULL, &type, &value) == True && value.addr && *value.addr) {
+          strncpy(iconfont, value.addr, sizeof iconfont - 1);
+          iconfont[sizeof iconfont - 1] = '\0';
+        }
       }
     }
     XCloseDisplay(display);
@@ -1402,6 +1410,8 @@ manage(Window w, XWindowAttributes *wa)
 		}
 	}
 	c->desktop = -2;
+	c->cfact = 1.0;
+	XDeleteProperty(dpy, w, tuxhiddenatom); /* left from before a restart */
 		/* ensure window fits to visible bounds of monitor */
 	if (c->x + WIDTH(c) > c->mon->wx + c->mon->ww)
 		c->x = c->mon->wx + c->mon->ww - WIDTH(c);
@@ -1526,7 +1536,7 @@ movemouse(const Arg *arg)
 			handler[ev.type](&ev);
 			break;
 		case MotionNotify:
-			if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
 
@@ -1586,6 +1596,25 @@ propertynotify(XEvent *e)
 
 	if ((ev->window == root) && (ev->atom == XA_WM_NAME))
 		updatestatus();
+	else if (ev->window == root && ev->atom == XA_RESOURCE_MANAGER) {
+		/* tuxcraft: X resources (re)loaded (xrdb -merge: login, tux-theme, tux-font). New
+		 * colours apply at once; a new font needs a restart, which keeps the windows' tags. */
+		char oldfont[sizeof font], oldicon[sizeof iconfont];
+		Monitor *m;
+		Client *cl;
+		strcpy(oldfont, font);
+		strcpy(oldicon, iconfont);
+		loadxrdb();
+		if (strcmp(oldfont, font) || strcmp(oldicon, iconfont)) {
+			Arg a = {.i = 1};
+			quit(&a);
+		} else {
+			xrdb(NULL);
+			for (m = mons; m; m = m->next)
+				for (cl = m->clients; cl; cl = cl->next)
+					XSetWindowBorder(dpy, cl->win, scheme[cl == selmon->sel ? SchemeSel : SchemeNorm][ColBorder].pixel);
+		}
+	}
 	else if (ev->window == root && ev->atom == tuxcmdatom && ev->state == PropertyNewValue) {
 		char cmd[256];
 		if (gettextprop(root, tuxcmdatom, cmd, sizeof cmd)) {
@@ -1701,6 +1730,77 @@ resizemouse(const Arg *arg)
 	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
 		return;
 	restack(selmon);
+	if (!c->isfloating && selmon->lt[selmon->sellt]->arrange) {
+		/* tuxcraft: like i3, Super + right drag on a tiled window resizes it in place, without
+		 * making it float. The border between the master and the other windows follows the mouse
+		 * one way (left-right; up-down in the bottom-stack layout), the window's border with its
+		 * neighbour in the same column follows it the other way (its cfact). Nothing to resize
+		 * in monocle, as in i3's tabbed layout. */
+		void (*lt)(Monitor *) = selmon->lt[selmon->sellt]->arrange;
+		int vert = lt == bstack, colfacts = lt == tile || lt == bstack || lt == deck;
+		int x0, y0, n = 0, i = 0, idx = -1, cols, last = 0, span, total = 0;
+		float mf0 = selmon->mfact, othercf = 0, f;
+		Client *t;
+		if (lt == monocle || !getrootptr(&x0, &y0))
+			return;
+		for (t = nexttiled(selmon->clients); t; t = nexttiled(t->next), i++, n++)
+			if (t == c)
+				idx = i;
+		if (idx < 0)
+			return;
+		/* the window's column: masters or the others; drag its far border unless it is the
+		 * last one there, then the near one (as i3 moves the border closest to the window) */
+		if (idx < selmon->nmaster) { cols = MIN(n, selmon->nmaster); last = idx == cols - 1; }
+		else { cols = n - selmon->nmaster; last = idx == n - 1; }
+		if (lt == deck && idx >= selmon->nmaster)
+			cols = 1;   /* the deck's stack shows one window at a time */
+		span = vert ? c->w : c->h;
+		/* the column's other windows: their factors and the room the column has, so the border
+		 * can follow the mouse exactly */
+		for (i = 0, t = nexttiled(selmon->clients); t; t = nexttiled(t->next), i++)
+			if ((idx < selmon->nmaster) == (i < selmon->nmaster)) {
+				total += vert ? t->w : t->h;
+				if (t != c)
+					othercf += t->cfact;
+			}
+		if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
+			None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
+			return;
+		do {
+			XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
+			switch (ev.type) {
+			case ConfigureRequest:
+			case Expose:
+			case MapRequest:
+				handler[ev.type](&ev);
+				break;
+			case MotionNotify:
+				if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
+					continue;
+				lasttime = ev.xmotion.time;
+				/* the master / stack border */
+				if (n > selmon->nmaster && selmon->nmaster > 0) {
+					f = mf0 + (vert ? (float)(ev.xmotion.y_root - y0) / selmon->wh
+					                : (float)(ev.xmotion.x_root - x0) / selmon->ww);
+					selmon->mfact = MAX(0.05, MIN(0.95, f));
+				}
+				/* the border with the neighbour in the column */
+				if (colfacts && cols > 1 && span > 0 && othercf > 0) {
+					int d = vert ? ev.xmotion.x_root - x0 : ev.xmotion.y_root - y0;
+					int want = span + (last ? -d : d);
+					want = MAX(bh, MIN(total - bh * (cols - 1), want));
+					/* share of the column = want / total -> factor against the others' factors */
+					f = othercf * want / (float)MAX(1, total - want);
+					c->cfact = MAX(0.1, MIN(10.0, f));
+				}
+				arrange(selmon);
+				break;
+			}
+		} while (ev.type != ButtonRelease);
+		XUngrabPointer(dpy, CurrentTime);
+		while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
+		return;
+	}
 	ocx = c->x;
 	ocy = c->y;
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
@@ -1716,7 +1816,7 @@ resizemouse(const Arg *arg)
 			handler[ev.type](&ev);
 			break;
 		case MotionNotify:
-			if ((ev.xmotion.time - lasttime) <= (1000 / 60))
+			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
 
@@ -2001,6 +2101,7 @@ setup(void)
 	tuxcmdatom = XInternAtom(dpy, "_TUX_DWM_CMD", False);
 	tuxtagsatom = XInternAtom(dpy, "_TUX_DWM_TAGS", False);
 	tuxviewatom = XInternAtom(dpy, "_TUX_DWM_VIEW", False);
+	tuxhiddenatom = XInternAtom(dpy, "_TUX_DWM_HIDDEN", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
@@ -2071,32 +2172,73 @@ showhide(Client *c)
 {
 	if (!c)
 		return;
+	/* tuxcraft: dwm hides a window by moving it off screen. _TUX_DWM_HIDDEN is on it during
+	 * those moves (set before hiding, removed after showing), so picom's "geometry" animation
+	 * (dwm.conf) does not slide windows across the screen on every tag switch. */
 	if (ISVISIBLE(c)) {
 		/* show clients top down */
 		XMoveWindow(dpy, c->win, c->x, c->y);
 		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
 			resize(c, c->x, c->y, c->w, c->h, 0);
+		if (c->hidden) {
+			XDeleteProperty(dpy, c->win, tuxhiddenatom);
+			c->hidden = 0;
+		}
 		showhide(c->snext);
 	} else {
 		/* hide clients bottom up */
 		showhide(c->snext);
+		if (!c->hidden) {
+			long one = 1;
+			XChangeProperty(dpy, c->win, tuxhiddenatom, XA_CARDINAL, 32, PropModeReplace,
+				(unsigned char *)&one, 1);
+			c->hidden = 1;
+		}
 		XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
 	}
 }
 
 
+pid_t
+getstatusbarpid(void)
+{
+	char buf[32], *str = buf, *c;
+	FILE *fp;
+
+	if (statuspid > 0) {
+		snprintf(buf, sizeof(buf), "/proc/%u/cmdline", statuspid);
+		if ((fp = fopen(buf, "r"))) {
+			fgets(buf, sizeof(buf), fp);
+			while ((c = strchr(str, '/')))
+				str = c + 1;
+			fclose(fp);
+			if (!strcmp(str, STATUSBAR))
+				return statuspid;
+		}
+	}
+
+	/* tuxcraft: pgrep on every distro (pidof is not always installed), this user's only */
+	if (!(fp = popen("pgrep -o -x -U \"$(id -u)\" "STATUSBAR, "r")))
+		return -1;
+
+
+	fgets(buf, sizeof(buf), fp);
+	pclose(fp);
+	return strtol(buf, NULL, 10);
+}
+
 void
 sigstatusbar(const Arg *arg)
-{ /* tuxcraft: a click on status block N runs "STATUSCLICK click N BUTTON" (tux-dwmbar) */
-	static char blk[8], btn[8];
-	static const char *cmd[] = { STATUSCLICK, "click", blk, btn, NULL };
-	Arg a = {.v = cmd};
+{
+	union sigval sv;
 
 	if (!statussig)
 		return;
-	snprintf(blk, sizeof blk, "%d", statussig);
-	snprintf(btn, sizeof btn, "%d", arg->i);
-	spawn(&a);
+	sv.sival_int = arg->i;
+	if ((statuspid = getstatusbarpid()) <= 0)
+		return;
+
+	sigqueue(statuspid, SIGRTMIN+statussig, sv);
 }
 
 
@@ -2428,6 +2570,7 @@ unmanage(Client *c, int destroyed)
 		XSetErrorHandler(xerrordummy);
 		XSelectInput(dpy, c->win, NoEventMask);
 		XConfigureWindow(dpy, c->win, CWBorderWidth, &wc); /* restore border */
+		XDeleteProperty(dpy, c->win, tuxhiddenatom);
 		XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
 		setclientstate(c, WithdrawnState);
 		XSync(dpy, False);

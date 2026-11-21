@@ -82,6 +82,10 @@ tux-battery start
 idle=$(( ${IDLE_LOCK_MIN:-10} * 60 ))
 case $session in
   i3|dwm)
+    # ~/.xinitrc loads ~/.Xresources before the WM starts, but if no X program is connected at that
+    # moment, X resets and drops them (dwm's and dmenu's colours and font, Xft settings). Load them
+    # again now that the WM holds the display; dwm picks them up at once.
+    [[ -f $HOME/.Xresources ]] && xrdb -merge "$HOME/.Xresources"
     once xsettingsd
     command -v xsetroot >/dev/null && xsetroot -cursor_name left_ptr   # desktop cursor = themed one
     # NVIDIA queues frames ahead by default, so compositor animations trail a little; one
@@ -109,12 +113,12 @@ case $session in
     else
       xset s off -dpms
     fi
-    if command -v copyq >/dev/null; then once copyq
-    elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &
-    fi
+    # Clipboard history (Super+V): BreadOnPenguins' scripts, recording every copy (tux-clip).
+    pgrep -u "$UID" -f 'tux-clip watch' >/dev/null || { tux-clip watch & }
     # i3: polybar is started by the i3 config (exec_always), so an i3 restart starts it again too.
-    # dwm: its own bar shows the tags and title; tux-dwmbar fills in the status on the right.
-    [[ $session == dwm ]] && { tux-dwmbar & }
+    # dwm: its own bar shows the tags and title; dwmblocks fills in the status on the right (her
+    # setup), its blocks are tux-dwmbar.
+    [[ $session == dwm ]] && once dwmblocks
     ;;
   sway)
     once waybar
@@ -133,7 +137,7 @@ case $session in
       once xss-lock --transfer-sleep-lock -- tux-lock --now
       tux-awake start
     fi
-    # GUI side: Wi-Fi icon in the panel's tray, clipboard manager.
+    # GUI side: Wi-Fi icon in the panel's tray, clipboard manager (CopyQ; i3 and dwm use tux-clip).
     once nm-applet
     if command -v copyq >/dev/null; then once copyq
     elif flatpak info com.github.hluk.copyq >/dev/null 2>&1; then pgrep -f hluk.copyq >/dev/null || flatpak run com.github.hluk.copyq &

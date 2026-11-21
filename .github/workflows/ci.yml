@@ -32,10 +32,10 @@ jobs:
             head -n1 "$f" | grep -q python && continue
             bash -n "$f"
           done
-      - name: dwm and dmenu build (src/, the dwm session)
+      - name: dwm, dmenu and dwmblocks build (src/, the dwm session)
         run: |
           sudo apt-get install -y -qq libx11-dev libxft-dev libxinerama-dev libx11-xcb-dev libxcb-res0-dev libfreetype-dev libfontconfig-dev
-          for d in src/dwm src/dmenu; do t=$(mktemp -d); cp -a "$d"/. "$t"; make -C "$t"; done
+          for d in src/dwm src/dmenu src/dwmblocks; do t=$(mktemp -d); cp -a "$d"/. "$t"; make -C "$t"; done
       - name: POSIX bootstrap header (runs under dash on Debian/Void)
         run: |
           awk '/from here on: bash/{exit} {print}' install.sh > /tmp/top.sh && dash -n /tmp/top.sh
