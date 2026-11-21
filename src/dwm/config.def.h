@@ -17,6 +17,15 @@
 /* appearance (her values) */
 static unsigned int borderpx        = 1;        /* border pixel of windows */
 static unsigned int snap            = 32;       /* snap pixel */
+/* system tray (dwm's systray patch): right of the status text, on the focused monitor */
+static const unsigned int systraypinning = 0;   /* 0: sloppy systray follows selected monitor, >0: pin systray to monitor X */
+static const unsigned int systrayonleft = 0;    /* 0: systray in the right corner, >0: systray on left of status text */
+static const unsigned int systrayspacing = 6;   /* systray spacing */
+static const int systraypinningfailfirst = 1;   /* 1: if pinning fails, display systray on the first monitor, False: display systray on the last monitor*/
+static const int showsystray        = 1;        /* 0 means no systray */
+/* Her systray diff also carries an external-panel patch (a window titled panel[0] gets no border
+ * and no focus). tuxcraft runs no such panel: a title no window has keeps that part asleep. */
+static const char *panel[]          = { "tuxcraft-no-external-panel" };
 static const unsigned int refreshrate = 240;    /* tuxcraft: moves and resizes by mouse redraw up to this many times
                                                  * a second (stock dwm: 60, choppy on a 120/144 Hz screen) */
 static const unsigned int gappih    = 20;       /* horiz inner gap between windows */
@@ -220,7 +229,7 @@ static const Key keys[] = {
 	{ 0,                            XK_Print,                 spawn,          SHCMD("tux-capture region") },
 	{ ShiftMask,                    XK_Print,                 spawn,          SHCMD("tux-capture screen") },
 	{ MODKEY,                       XK_Print,                 spawn,          SHCMD("tux-capture menu") },
-	{ MODKEY|ShiftMask,             XK_Print,                 spawn,          SHCMD("tux-capture stop") },
+	{ MODKEY|ShiftMask,             XK_Print,                 spawn,          SHCMD("tux-capture toggle") },
 	/* windows. dwm keeps one list per tag (master first), so Left/Up = previous, Right/Down = next */
 	{ MODKEY,                       XK_Left,                  focusstack,     {.i = INC(-1) } }, /* focus left */
 	{ MODKEY,                       XK_Up,                    focusstack,     {.i = INC(-1) } }, /* focus up */

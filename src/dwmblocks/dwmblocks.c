@@ -23,6 +23,7 @@ typedef struct {
 	char* command;
 	unsigned int interval;
 	unsigned int signal;
+	unsigned int joined; /* tuxcraft: 1 = no delimiter after this block (the music buttons) */
 } Block;
 #ifndef __OpenBSD__
 void dummysighandler(int num);
@@ -80,7 +81,10 @@ void getcmd(const Block *block, char *output)
 	if (i != 0) {
 		//only chop off newline if one is present at the end
 		i = tempstatus[i-1] == '\n' ? i-1 : i;
-		if (delim[0] != '\0') {
+		if (block->joined) {
+			tempstatus[i++] = ' ';
+			tempstatus[i] = '\0';
+		} else if (delim[0] != '\0') {
 			strncpy(tempstatus+i, delim, delimLen);
 		}
 		else

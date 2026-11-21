@@ -418,7 +418,7 @@ square corners, blur and see-through unfocused windows), with **the same keys as
   `~/.Xresources` and restart dwm in place. Windows keep their tags.
 - **Bar:** dwm's own bar on the left; on the right **dwmblocks**, as in her setup
   ([torrinfail's](https://github.com/torrinfail/dwmblocks), with click support, `src/dwmblocks`).
-  Its blocks are `tux-dwmbar` (music, CPU, memory, GPU, updates, Bluetooth, volume, network,
+  Its blocks are `tux-dwmbar` (music with previous / play-pause / next buttons, CPU, memory, GPU, updates, Bluetooth, volume, network,
   battery, power profile, recording, clock), with polybar's clicks.
 - **picom:** dwm uses `~/.config/picom/dwm.conf`; i3 keeps `picom.conf`. The tuxcraft picom
   config from before dwm was added is kept in `~/.config/picom/backup/picom.conf`.

@@ -3,7 +3,10 @@
 # blocks.def.h). The same blocks as tuxcraft's polybar, in BreadOnPenguins' style (glyph + value),
 # and the same clicks: dwmblocks runs the block again with BLOCK_BUTTON set (1 left, 2 middle,
 # 3 right, 4/5 scroll).
-#   tux-dwmbar music|cpu|memory|gpu|updates|bluetooth|volume|network|battery|power|record|clock
+#   tux-dwmbar music|music-prev|music-toggle|music-next|collapse|cpu|memory|gpu|updates|bluetooth|
+#              volume|network|battery|power|record|clock
+# collapse: polybar's chevron (collapse.sh). CPU, memory and GPU start hidden; click 󰅁 to show
+# them, 󰅂 to hide them again (Windows tray-overflow style).
 #   tux-dwmbar refresh [BLOCK]   update the bar now (every block, or one)
 # Slow blocks (updates, Bluetooth) print what they found last time and look again in the
 # background, so dwmblocks never waits for them.
@@ -15,7 +18,7 @@ BTN=${BLOCK_BUTTON:-}
 mkdir -p "$RT"
 
 # Signal numbers, as in blocks.def.h (10 is left out: it is a newline).
-declare -A SIG=([music]=1 [cpu]=2 [memory]=3 [gpu]=4 [updates]=5 [bluetooth]=6 [volume]=7
+declare -A SIG=([music]=1 [music-prev]=14 [music-toggle]=15 [music-next]=16 [collapse]=17 [cpu]=2 [memory]=3 [gpu]=4 [updates]=5 [bluetooth]=6 [volume]=7
                 [network]=8 [battery]=9 [power]=11 [record]=12 [clock]=13)
 
 strip() { sed -E 's/%\{[^}]*\}//g; s/[[:space:]]+$//' | head -n1; }
@@ -41,19 +44,56 @@ cached() {  # cached NAME SECONDS command...
   cat "$f" 2>/dev/null
 }
 
+# Music, as polybar's (tux-nowplaying): 󰝚 + previous / play-pause / next buttons + "Artist – Title",
+# for the player tux-nowplaying picks (playing first, then one you paused). Four blocks, so each
+# button is clickable; they ask tux-nowplaying once a second between them (cached).
+music_state() {
+  local f=$RT/music-state now
+  now=$(date +%s)
+  if [[ ! -f $f ]] || (( now - $(stat -c %Y "$f") >= 1 )) || [[ -n $BTN ]]; then
+    tux-nowplaying status >"$f.new" 2>/dev/null; mv "$f.new" "$f"
+  fi
+  IFS='|' read -r PLAYER STATUS TEXT <"$f" 2>/dev/null || PLAYER=''
+}
+music_ctl() {  # music_ctl ACTION: on the shown player, then redraw the music blocks
+  music_state
+  [[ -n $PLAYER ]] && tux-nowplaying "ctl-$PLAYER" "$1"
+  rm -f "$RT/music-state"
+  (sleep 0.3; refresh music; refresh music-toggle) >/dev/null 2>&1 &
+}
+block_music_prev() {
+  [[ $BTN == 1 ]] && music_ctl previous
+  music_state; [[ -n $PLAYER ]] && echo '󰝚 󰒮'
+}
+block_music_toggle() {
+  [[ $BTN == 1 ]] && music_ctl play-pause
+  music_state; [[ -n $PLAYER ]] || return 0
+  if [[ $STATUS == Playing ]]; then echo '󰏤'; else echo '󰐊'; fi
+}
+block_music_next() {
+  [[ $BTN == 1 ]] && music_ctl next
+  music_state; [[ -n $PLAYER ]] && echo '󰒭'
+}
 block_music() {
   case $BTN in
-    1) tux-nowplaying ctl play-pause; later music ;;
-    3|5) tux-nowplaying ctl next; later music ;;
-    4) tux-nowplaying ctl previous; later music ;;
+    1) music_ctl play-pause ;;
+    3|5) music_ctl next ;;
+    4) music_ctl previous ;;
   esac
-  command -v playerctl >/dev/null || return 0
-  local st artist title text
-  IFS='|' read -r st artist title < <(playerctl metadata --format '{{status}}|{{artist}}|{{title}}' 2>/dev/null | head -n1)
-  [[ -n ${title:-} ]] || return 0
-  text="${artist:+$artist – }$title"
-  ((${#text} > 30)) && text="${text:0:29}…"
-  case $st in Playing) printf ' %s\n' "$text" ;; Paused) printf '❚❚ %s\n' "$text" ;; esac
+  music_state; [[ -n $PLAYER ]] || return 0
+  local text=$TEXT
+  ((${#text} > 32)) && text="${text:0:31}…"
+  printf '%s\n' "$text"
+}
+
+# The chevron: CPU, memory and GPU hidden (󰅁, the default) or shown (󰅂).
+expanded() { [[ -e $RT/expanded ]]; }
+block_collapse() {
+  if [[ $BTN == 1 ]]; then
+    if expanded; then rm -f "$RT/expanded"; else : >"$RT/expanded"; fi
+    (sleep 0.1; refresh collapse; refresh cpu; refresh memory; refresh gpu) >/dev/null 2>&1 &
+  fi
+  if expanded; then echo '󰅂'; else echo '󰅁'; fi
 }
 
 block_cpu() {
@@ -63,16 +103,18 @@ block_cpu() {
   total=$((u + n + s + i + w + q + sq + st)) idle=$((i + w))
   [[ -f $RT/cpu ]] && read -r pt pi <"$RT/cpu"
   echo "$total $idle" >"$RT/cpu"
+  expanded || return 0
   (( total > pt )) && printf '󰻠 %d%%\n' $(( 100 * ((total - pt) - (idle - pi)) / (total - pt) ))
 }
 
 block_memory() {
   [[ -n $BTN ]] && floatbig btop
+  expanded || return 0
   awk '/^MemTotal:/ {t = $2} /^MemAvailable:/ {a = $2}
        END { if (t) printf "󰍛 %d%% %.1fG free\n", (t - a) * 100 / t, a / 1048576 }' /proc/meminfo
 }
 
-block_gpu() { [[ -n $BTN ]] && floatbig btop; "$POLY/gpu.sh" 2>/dev/null | strip; }
+block_gpu() { [[ -n $BTN ]] && floatbig btop; expanded || return 0; "$POLY/gpu.sh" 2>/dev/null | strip; }
 
 block_updates() {
   [[ $BTN == 1 ]] && floatbig sysup --pause
@@ -124,6 +166,7 @@ block_clock() {
 
 case ${1:-} in
   refresh) refresh "${2:-}" ;;
-  music|cpu|memory|gpu|updates|bluetooth|volume|network|battery|power|record|clock) "block_$1" ;;
+  music|collapse|cpu|memory|gpu|updates|bluetooth|volume|network|battery|power|record|clock) "block_$1" ;;
+  music-prev|music-toggle|music-next) "block_${1//-/_}" ;;
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

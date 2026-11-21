@@ -35,6 +35,7 @@ core	udisks2 udiskie gvfs	udisks2 udiskie gvfs	udisks2 udiskie gvfs
 core	ntfs-3g exfatprogs dosfstools	ntfs-3g exfatprogs dosfstools	ntfs-3g exfatprogs dosfstools
 core	imv	imv	imv
 core	mpv	mpv	mpv
+core	mpv-mpris	mpv-mpris	mpv-mpris
 core	ffmpeg	ffmpeg	ffmpeg
 core	playerctl	playerctl	playerctl
 core	lutris	lutris	lutris

@@ -2,9 +2,11 @@
 # tux-nowplaying [width]  — polybar "now playing": icon, prev/play-pause/next buttons and a
 # scrolling "Artist – Title" (default 24 characters wide). Run by polybar with tail = true.
 # tux-nowplaying ctl play-pause|next|previous|stop  — the same for the player shown (media keys).
+# tux-nowplaying status  — the player the bar would show, once: "player|Playing|Artist – Title"
+#   (nothing when there is none). dwm's bar (tux-dwmbar) builds its music blocks from this.
 #
-# Sources: MPRIS media players (browsers playing YouTube/Netflix/music sites, Spotify, mpv,
-# VLC, ...) and mpd (rmpc, ncmpcpp, mpc), which speaks no MPRIS and is asked through mpc.
+# Sources: MPRIS media players (browsers playing YouTube/Netflix/music sites, Spotify, mpv (with
+# the mpv-mpris plugin, which tuxcraft installs), VLC, ...) and mpd (rmpc, ncmpcpp, mpc), which speaks no MPRIS and is asked through mpc.
 # Games do not register as players, so their sound is never shown.
 # A playing player wins over paused ones. Paused shows only for a player seen playing
 # (you paused it); nothing playing or paused that way = the module disappears.
@@ -80,6 +82,7 @@ ctl() {
 }
 
 if [[ ${1:-} == ctl-* ]]; then ctl "${1#ctl-}" "${2:-play-pause}"; exit; fi
+if [[ ${1:-} == status ]]; then pick only-played; exit 0; fi
 if [[ ${1:-} == ctl ]]; then
   IFS='|' read -r player _ _ < <(pick)
   if [[ -n ${player:-} ]]; then ctl "$player" "${2:-play-pause}"; else playerctl "${2:-play-pause}"; fi
