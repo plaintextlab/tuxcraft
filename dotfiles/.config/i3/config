@@ -36,6 +36,7 @@ for_window [window_type="dialog"] floating enable
 for_window [class="mpv"] floating enable, move position center
 for_window [class="imv"] floating enable, move position center
 for_window [class="feh"] floating enable, resize set 1280 720, move position center
+for_window [instance="^tux-wallpaper$"] floating enable, resize set 1400 860, move position center
 for_window [class="(?i)pavucontrol|blueman-manager|nm-connection-editor|arandr|qalculate"] floating enable, move position center
 for_window [class="^webapp-.*"] floating enable, resize set 1280 720, move position center
 for_window [title=".*\.exe$"] floating enable, move position center

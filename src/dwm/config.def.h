@@ -73,6 +73,7 @@ static const Rule rules[] = {
 	{ "mpv",       NULL,    NULL,            0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ "imv",       NULL,    NULL,            0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ "feh",       NULL,    NULL,            0,       1,    0,   0,     0,      1280, 720, -1 },
+	{ NULL,        "tux-wallpaper", NULL,    0,       1,    0,   1,     0,      1400, 860, -1 }, /* the wallpaper thumbnails (nsxiv) */
 	{ "pavucontrol", NULL,  NULL,            0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ "blueman-manager", NULL, NULL,         0,       1,    0,   0,     0,      0,    0,   -1 },
 	{ "nm-connection-editor", NULL, NULL,    0,       1,    0,   0,     0,      0,    0,   -1 },

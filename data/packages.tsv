@@ -69,6 +69,7 @@ i3	polybar	polybar	polybar
 i3	picom	picom	picom
 x11	rofi	rofi	rofi
 x11	feh	feh	feh
+x11	nsxiv	nsxiv	nsxiv
 x11	dex	dex	dex
 x11	numlockx	numlockx	numlockx
 x11	xsettingsd	xsettingsd	xsettingsd

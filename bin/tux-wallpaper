@@ -10,7 +10,9 @@
 #   theme       a gradient generated in the current palette
 #   restore     show the saved choice again (at login)
 #   colors      make the colour theme "wal" from the wallpaper showing now (tux-wal)
-#   --menu      pick one (and its colours): the current theme's wallpapers first, then the rest
+#   --menu      pick one (and its colours): BreadOnPenguins' thumbnail picker (nsxiv: arrows move,
+#               m marks, q uses the marked one); the current theme's wallpapers first, then the rest
+#   --list      the same as a text menu (also what --menu shows without nsxiv)
 # Put your own images in a theme's folder and they join its rotation.
 # Wallpaper colours are the theme "wal" (~/.config/tuxcraft/themes/wal.theme, made by tux-wal).
 # The fixed themes stay: pick one with Super+Ctrl+T (tux-theme) to go back to it.
@@ -83,6 +85,18 @@ pick_theme_image() {
   images "$d" | grep -vxF -e "$cur" | shuf -n1 | grep . || images "$d" | shuf -n1
 }
 
+# Her wallpapermenu: every wallpaper as thumbnails in nsxiv; the one marked (m) when you quit (q)
+# is used. Enter shows one big, Enter again goes back to the thumbnails.
+thumbs() {
+  local t pick
+  t=$(current_theme)
+  notify-send -a tuxcraft -t 4000 "Wallpapers" "Arrows: move   m: mark one   q: use it   Enter: view big" 2>/dev/null
+  pick=$( { images "$DIR/$t" | sort; images "$DIR" | grep -v "^$DIR/$t/" | sort; } |
+          nsxiv -i -o -t -b -N tux-wallpaper 2>/dev/null | tail -n1)
+  [[ -n $pick && -f $pick ]] && exec "$0" set "$pick"
+  exit 0
+}
+
 case ${1:-restore} in
   set)    [[ -f ${2:-} ]] || { echo "No such file: ${2:-}" >&2; exit 1; }
           f=$(readlink -f "$2"); use "$f"
@@ -108,7 +122,8 @@ case ${1:-restore} in
   restore)
           w=$(current_wall)
           if [[ $w == theme || ! -f $w ]]; then f=$(theme_wall) && show "$f"; else show "$w"; fi ;;
-  --menu)
+  --menu|--list)
+          [[ $1 == --menu && -n ${DISPLAY:-} ]] && command -v nsxiv >/dev/null && thumbs
           t=$(current_theme)
           # "folder/name" for each image, the current theme's first.
           list=$( { images "$DIR/$t" | sort; images "$DIR" | grep -v "^$DIR/$t/" | sort; } | sed "s|^$DIR/||")
@@ -118,6 +133,6 @@ case ${1:-restore} in
             *"Random ("*) exec "$0" random ;;
             *) [[ -f $DIR/$pick ]] && exec "$0" set "$DIR/$pick" ;;
           esac ;;
-  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) echo "Unknown command '$1' (try --help)" >&2; exit 1 ;;
 esac

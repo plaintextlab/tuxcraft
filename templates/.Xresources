@@ -42,3 +42,8 @@ dmenu.background: {{bg}}
 dmenu.foreground: {{fg}}
 dmenu.selbackground: {{accent}}
 dmenu.selforeground: {{accent_fg}}
+! nsxiv (the wallpaper thumbnails, tux-wallpaper --menu)
+Nsxiv.window.background: {{bg}}
+Nsxiv.window.foreground: {{fg}}
+Nsxiv.mark.foreground: {{accent}}
+Nsxiv.bar.font: {{term_font}}:size={{font_size}}

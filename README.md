@@ -318,6 +318,10 @@ its wallpapers; **Super+Shift+W** changes to another from the same theme. Drop y
 a theme's folder and they join its rotation; a theme with an empty folder gets a gradient in its
 colours. The installer copies the wallpapers on a new machine; one you delete stays deleted.
 
+**Wallpaper picker (Super+Ctrl+W):** BreadOnPenguins' thumbnail grid (nsxiv): arrows move, `m`
+marks one, `q` uses it, Enter shows one big. `tux-wallpaper --list` is the text menu (with the
+theme gradient and random).
+
 **Colours from the wallpaper (like pywal):** picking a wallpaper with **Super+Ctrl+W**, or
 Thunar's right-click **Set as wallpaper**, also makes a palette from that image (`tux-wal`) and
 switches to it: the theme `wal`. Its background is the image's darkest common colour, made very
