@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# tux-emoji — emoji picker (Super+.): search by name, Enter types the emoji into the window
+# you were in and also copies it to the clipboard (paste it with Ctrl+V if an app ignores
+# typed emoji). The list is data/emoji.txt (from Unicode's emoji-test.txt).
+#   tux-emoji           pick, type and copy
+#   tux-emoji --copy    pick and copy only
+SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
+list=$SHARE/data/emoji.txt
+[[ -f $list ]] || list=$(dirname "$(readlink -f "$0")")/../data/emoji.txt   # run from the repo
+[[ -f $list ]] || { notify-send "tux-emoji" "Emoji list not found: $list"; exit 1; }
+
+sel=$(grep -v '^#' "$list" | tux-menu emoji) || exit 0
+e=${sel%% *}
+[[ -n $e ]] || exit 0
+
+if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+  printf '%s' "$e" | wl-copy
+  [[ ${1:-} == --copy ]] || { command -v wtype >/dev/null && wtype "$e"; }
+else
+  printf '%s' "$e" | xclip -selection clipboard
+  # Give the menu a moment to close and focus to return to the window you were in.
+  [[ ${1:-} == --copy ]] || { sleep 0.15; xdotool type --clearmodifiers -- "$e"; }
+fi

@@ -439,10 +439,10 @@ square corners, blur and see-through unfocused windows), with **the same keys as
 | Super+Space | **workspace overview** (thumbnails, pick one) | Super+Q | close |
 | Super+E / Shift+E | Thunar / Thunar in /media | Super+B | browser |
 | Super+Escape | **system menu** | Super+U | **update (sysup)** |
-| Super+V | clipboard history | Print / Super+Print | screenshot / capture menu |
+| Super+V | clipboard history | Print / Super+Print | screenshot / capture menu (Super+Shift+Print: start / stop recording) |
 | Super+Ctrl+T / F / W | theme / font / wallpaper | Super+Ctrl+N / B / A / M | network / bluetooth / audio / btop |
 | Super+Shift+L | power menu | Super+L | lock |
-| Super+Alt+L | lock keys only: screen stays visible (xtrlock, i3; sway uses the normal lock) | | |
+| Super+Alt+L | lock keys only: screen stays visible (xtrlock, i3; sway uses the normal lock) | Super+. | emoji picker (types it, and copies it) |
 | Super+1..0 | workspaces | Super+Shift+1..0 | move window |
 | Super+O | window switcher | Super+Tab / Shift+Tab | next / previous workspace |
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
