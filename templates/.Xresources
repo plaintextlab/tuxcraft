@@ -27,7 +27,8 @@ Xcursor.size: 24
 *.color15: {{color15}}
 ! dwm session (tux-dwm): her colour layout. Bar = background, text = the light foreground,
 ! unselected tags and the focused window 1px border = muted (both use selbordercolor, as in her
-! build). The bar uses the terminal (monospace) font, as hers does.
+! build). The bar and dmenu use the terminal (monospace) font, as hers do: it also has more
+! symbols (● and the like) than most UI fonts.
 dwm.normbgcolor: {{bg}}
 dwm.normbordercolor: {{bg}}
 dwm.normfgcolor: {{fg}}
@@ -36,7 +37,7 @@ dwm.selfgcolor: {{bg}}
 dwm.selbordercolor: {{muted}}
 dwm.font: {{term_font}}:size={{font_size}}
 dwm.iconfont: Symbols Nerd Font:size={{font_size}}
-dmenu.font: {{font}}:size={{font_size}}
+dmenu.font: {{term_font}}:size={{font_size}}
 dmenu.background: {{bg}}
 dmenu.foreground: {{fg}}
 dmenu.selbackground: {{accent}}
