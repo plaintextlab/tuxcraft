@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tux-capture region|screen|menu|stop|status|obs — screenshots and recordings (from debi3n
+# tux-capture region|screen|menu|toggle|stop|status|obs — screenshots and recordings (from debi3n
 # rofi-screen-capture.sh), for X11 (maim/slop/xclip) and Wayland (grim/slurp/wl-copy).
 SHOTS="$(xdg-user-dir PICTURES 2>/dev/null || echo "$HOME/Pictures")/Screenshots"
 VIDS="$(xdg-user-dir VIDEOS 2>/dev/null || echo "$HOME/Videos")/Screen Captures"
@@ -147,8 +147,15 @@ stop() {
   notify-send -a capture "Recording saved" "${f/#$HOME/\~}"
 }
 
+# Super+Shift+Print: stop whatever is recording (ours, GPU Screen Recorder, OBS), or else
+# start recording the screen. One key to start and stop a take.
+toggle() {
+  if recorder_pid >/dev/null || [[ -n $(gsr_pid) ]] || obs_recording; then stop; else record screen; fi
+}
+
 case ${1:-menu} in
   region|screen) shot "$1" ;;
+  toggle) toggle ;;
   stop) stop ;;
   status)  # for the bar: "REC" while tux-capture or GPU Screen Recorder records, "REC OBS" for OBS
     if recorder_pid >/dev/null || [[ -n $(gsr_pid) ]]; then echo "󰑊 REC"
