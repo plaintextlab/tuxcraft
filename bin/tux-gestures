@@ -3,7 +3,9 @@
 #   left / right: next / previous workspace (Super+Tab / Super+Shift+Tab)
 #   up:           workspace overview (Super+Space)
 #   Reads the touchpad with `libinput debug-events` (needs the input group) and presses the
-#   workspace keys with xdotool, so i3 and dwm do what those keys do. 2- and 3-finger
+#   workspace keys with xdotool, so i3 and dwm do what those keys do. dwm built with libinput
+#   does left and right itself, following the fingers live (_TUX_DWM_SWIPE on the root window
+#   says so), and then this only does up. 2- and 3-finger
 #   gestures, tap and scrolling are left to libinput and X. tux-autostart starts it when a
 #   touchpad is there. GESTURES=off in ~/.config/tuxcraft/state turns it off.
 set -uo pipefail
@@ -26,6 +28,8 @@ has_touchpad() {
 }
 
 press() { xdotool key --clearmodifiers "$1" 2>/dev/null; }
+# dwm drags between tags itself with this many fingers (src/dwm/dwm.c, "touchpad swipe")
+dwm_drags() { [[ $(xprop -root _TUX_DWM_SWIPE 2>/dev/null) == *" = $GESTURE_FINGERS" ]]; }
 
 daemon() {
   exec 9>"$LOCK"; flock -n 9 || exit 0
@@ -44,8 +48,8 @@ daemon() {
       # its right, the next one, as on GNOME and macOS (the workspace follows the fingers, like
       # paging through a phone's home screens). So left = next, right = previous.
       case $action in
-        left)  press super+Tab ;;
-        right) press super+shift+Tab ;;
+        left)  dwm_drags || press super+Tab ;;
+        right) dwm_drags || press super+shift+Tab ;;
         up)    press super+space ;;
       esac
     # stdbuf -oL: into a pipe, libinput writes its lines out only once 4 KB have piled up, so
@@ -73,7 +77,7 @@ case ${1:-start} in
   start)
     [[ -n ${WAYLAND_DISPLAY:-} || -z ${DISPLAY:-} ]] && exit 0   # X11 only
     [[ $GESTURES == off ]] && exit 0
-    for c in libinput xdotool xinput; do
+    for c in libinput xdotool xinput xprop; do
       command -v "$c" >/dev/null || { echo "tux-gestures: $c is not installed" >&2; exit 1; }
     done
     has_touchpad || exit 0

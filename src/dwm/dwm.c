@@ -31,6 +31,15 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#ifdef TUXSWIPE
+#include <fcntl.h>
+#include <math.h>
+#include <poll.h>
+#include <stdint.h>
+#include <time.h>
+#include <libinput.h>
+#include <libudev.h>
+#endif
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
 #include <X11/Xatom.h>
@@ -349,6 +358,10 @@ static void movetagsmon(const Arg *arg);
 static void resizemode(const Arg *arg);
 static void resizedir(const Arg *arg);
 static void tuxcmd(const char *cmd);
+static void swipeinit(void);
+static void swipecleanup(void);
+static void swipeabort(void);
+static int swipebusy(void);
 static void updatedesktops(void);
 static void savestate(void);
 static int casestr(const char *hay, const char *needle);
@@ -531,6 +544,7 @@ void
 arrange(Monitor *m) /* if a specific monitor *m is given, it arranges that one. if NULL, it loops thru all */
 {
 	XEvent ev; /* declares a generic X event */
+	swipeabort(); /* tuxcraft: a touchpad drag between tags stops where it is */
 	if (m)
 		showhide(m->stack); /* show visible windows and hide others */
 	else for (m = mons; m; m = m->next)
@@ -700,6 +714,7 @@ cleanup(void)
 	Monitor *m;
 	size_t i;
 
+	swipecleanup();
 	view(&a);
 	selmon->lt[selmon->sellt] = &foo;
 	for (m = mons; m; m = m->next) /* loop through every monitor */
@@ -1120,6 +1135,8 @@ enternotify(XEvent *e)
 	Monitor *m;
 	XCrossingEvent *ev = &e->xcrossing;
 
+	if (swipebusy()) /* tuxcraft: windows slide under the pointer during a touchpad drag */
+		return;
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
@@ -2074,15 +2091,491 @@ restack(Monitor *m)
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 }
 
+/* tuxcraft: touchpad swipe between tags that follows the fingers, as on macOS. dwm reads the
+ * touchpad itself through libinput (the input group is enough), next to X, which still gets
+ * every event: 2- and 3-finger gestures, taps and scrolling are not touched. While a 4-finger
+ * swipe goes sideways, this tag's windows slide with the fingers and the next or previous
+ * occupied tag slides in from its side (no wrap: at the first or last tag it gives a little
+ * and springs back). Let go past SWIPECOMMIT of the screen, or with a flick, and it finishes
+ * the move; otherwise it slides back. All the windows involved carry _TUX_DWM_HIDDEN meanwhile,
+ * so picom does not animate the moves itself. _TUX_DWM_SWIPE on the root window (the finger
+ * count) tells tux-gestures that dwm does left and right, so it only handles up. Built only
+ * when libinput's and libudev's headers are there (config.mk); without them dwm has no swipe
+ * and tux-gestures presses Super+Tab instead. */
+#ifdef TUXSWIPE
+#ifndef SWIPEFINGERS
+#define SWIPEFINGERS 4      /* fingers for the swipe */
+#endif
+#ifndef SWIPEDIST
+#define SWIPEDIST 1500.0    /* finger travel (libinput's units) for one screen width */
+#endif
+#ifndef SWIPECOMMIT
+#define SWIPECOMMIT 0.3     /* let go past this part of the screen: the move finishes */
+#endif
+#ifndef SWIPEFRAME
+#define SWIPEFRAME 6        /* ms between frames while a drag is on (about 165 Hz) */
+#endif
+
+enum { SwipeIdle, SwipeWait, SwipeIgnore, SwipeDrag, SwipeAnim };
+static struct libinput *li;
+static struct udev *lidev;
+static int lipads;          /* touchpads libinput reports (gesture capable) */
+static Atom tuxswipeatom;
+static struct {
+	int state, commit;
+	Monitor *m;
+	unsigned int cur, prev, next, shown, laid; /* tagsets; prev/next 0: none that way */
+	double fx, fy, off, vel, from, to; /* finger travel, offset shown (px), px per ms */
+	double goal;                        /* offset the fingers ask for */
+	int placed;                         /* offset last sent to X */
+	uint64_t t;                         /* time of the last update (usec) */
+	struct timespec t0, tf;             /* animation start, last frame */
+	double dur;                         /* animation length (ms) */
+} sg;
+
+static int
+liopen(const char *path, int flags, void *data)
+{
+	int fd = open(path, flags | O_CLOEXEC);
+	(void)data;
+	return fd < 0 ? -errno : fd;
+}
+
+static void
+liclose(int fd, void *data)
+{
+	(void)data;
+	close(fd);
+}
+
+static const struct libinput_interface liiface = { liopen, liclose };
+
+static void
+swipeprop(void)
+{
+	long n = SWIPEFINGERS;
+	if (li && lipads > 0)
+		XChangeProperty(dpy, root, tuxswipeatom, XA_CARDINAL, 32, PropModeReplace,
+			(unsigned char *)&n, 1);
+	else
+		XDeleteProperty(dpy, root, tuxswipeatom);
+}
+
+static void
+swipemark(Client *c, int on)
+{
+	long one = 1;
+	if (on)
+		XChangeProperty(dpy, c->win, tuxhiddenatom, XA_CARDINAL, 32, PropModeReplace,
+			(unsigned char *)&one, 1);
+	else
+		XDeleteProperty(dpy, c->win, tuxhiddenatom);
+}
+
+/* where showhide() parks a hidden window: off the left edge for lower tags, right for higher */
+static int
+swipepark(Client *c)
+{
+	unsigned int cur = c->mon->tagset[c->mon->seltags];
+	return (c->tags & -c->tags) < (cur & -cur) ? WIDTH(c) * -2 : sw + WIDTH(c);
+}
+
+/* move the windows of this tag by the offset, and those of the tag coming in beside them */
+static void
+swipeplace(void)
+{
+	Monitor *m = sg.m;
+	Client *c;
+	int o = (int)sg.off, oo = o < 0 ? o + m->mw : o - m->mw;
+	unsigned int other = o < 0 ? sg.next : o > 0 ? sg.prev : 0;
+
+	if (!(other & sg.laid)) /* not laid out yet (the frames still lag on the other side) */
+		other = 0;
+	for (c = m->clients; c; c = c->next) {
+		if (c->issticky || c->isscratch)
+			continue;
+		if (c->tags & sg.cur)
+			XMoveWindow(dpy, c->win, c->x + o, c->y);
+		else if (other && (c->tags & other))
+			XMoveWindow(dpy, c->win, c->x + oo, c->y);
+		else if (sg.shown && (c->tags & sg.shown))
+			XMoveWindow(dpy, c->win, swipepark(c), c->y); /* the other side went out of view */
+	}
+	sg.shown = other;
+}
+
+/* lay out a tag that is about to come in, without showing it: its windows are tiled where
+ * they will be and placed beside the screen in the same server grab, so picom never sees
+ * them in between */
+static void
+swipelayout(unsigned int tags)
+{
+	Monitor *m = sg.m;
+	unsigned int save = m->tagset[m->seltags];
+
+	if (!tags || (sg.laid & tags))
+		return;
+	sg.laid |= tags;
+	XGrabServer(dpy);
+	m->tagset[m->seltags] = tags;
+	arrangemon(m);
+	m->tagset[m->seltags] = save;
+	sg.shown = 0;
+	swipeplace();
+	XUngrabServer(dpy);
+	XFlush(dpy);
+}
+
+static double
+swipesince(struct timespec *a)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (t.tv_sec - a->tv_sec) * 1e3 + (t.tv_nsec - a->tv_nsec) / 1e6;
+}
+
+/* one frame: every window of both tags moves in one server grab, so picom never draws a
+ * frame with some moved and some not */
+static void
+swipeshow(void)
+{
+	if ((int)sg.off == sg.placed)
+		return;
+	sg.placed = (int)sg.off;
+	XGrabServer(dpy);
+	swipeplace();
+	XUngrabServer(dpy);
+	XFlush(dpy);
+}
+
+static void
+swipestart(void)
+{
+	Monitor *m = selmon;
+	Client *c;
+	unsigned int occ = 0, cur = m->tagset[m->seltags], i, n = LENGTH(tags);
+
+	for (c = m->clients; c; c = c->next)
+		if (!c->issticky && !c->isscratch)
+			occ |= c->tags & TAGMASK;
+	sg.m = m;
+	sg.cur = cur;
+	sg.prev = sg.next = sg.shown = sg.laid = 0;
+	for (i = 0; i < n; i++) /* first occupied tag below the lowest one shown */
+		if (cur & 1 << i)
+			break;
+	while (i-- > 0)
+		if (occ & 1 << i) {
+			sg.prev = 1 << i;
+			break;
+		}
+	for (i = n; i-- > 0;) /* first occupied tag above the highest one shown */
+		if (cur & 1 << i)
+			break;
+	for (i++; i < n; i++)
+		if (occ & 1 << i) {
+			sg.next = 1 << i;
+			break;
+		}
+	for (c = m->clients; c; c = c->next)
+		if (!c->issticky && !c->isscratch && (c->tags & cur))
+			swipemark(c, 1);
+	sg.state = SwipeDrag;
+}
+
+/* the drag is over: either show the tag that came in, or put everything back */
+static void
+swipefinish(void)
+{
+	Monitor *m = sg.m;
+	Client *c;
+	XEvent ev;
+	unsigned int target = sg.off < 0 ? sg.next : sg.prev;
+
+	sg.state = SwipeIdle;
+	if (sg.commit && target) {
+		/* the windows are where view() puts them: it unmarks the new tag's, parks the old */
+		Arg a = {.ui = target};
+		view(&a);
+	} else {
+		for (c = m->clients; c; c = c->next)
+			if (!c->issticky && !c->isscratch && (c->tags & sg.cur)) {
+				XMoveWindow(dpy, c->win, c->x, c->y);
+				swipemark(c, 0);
+			}
+		arrange(m); /* parks the tag that peeked in again */
+	}
+	XSync(dpy, False);
+	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev)); /* windows slid under the pointer */
+}
+
+static int
+swipebusy(void)
+{
+	return sg.state == SwipeDrag || sg.state == SwipeAnim;
+}
+
+/* something else rearranges (a new window, a key): drop the drag where it is */
+static void
+swipeabort(void)
+{
+	Client *c;
+
+	if (sg.state != SwipeDrag && sg.state != SwipeAnim)
+		return;
+	sg.state = SwipeIdle;
+	for (c = sg.m->clients; c; c = c->next)
+		if (!c->issticky && !c->isscratch && (c->tags & sg.cur) && !c->hidden)
+			swipemark(c, 0);
+}
+
+/* the frame clock (run() calls this every SWIPEFRAME ms during a drag): the touchpad reports
+ * at its own uneven rate, so the windows follow the fingers smoothly at the screen's pace
+ * instead of jumping at each report, then glide to the end once the fingers let go */
+static void
+swipeframe(void)
+{
+	double dt = swipesince(&sg.tf), p, e;
+
+	if (dt < SWIPEFRAME - 0.5)
+		return;
+	clock_gettime(CLOCK_MONOTONIC, &sg.tf);
+	if (sg.state == SwipeDrag) {
+		sg.off += (sg.goal - sg.off) * (1 - exp(-dt / 12.0));
+		if (fabs(sg.goal - sg.off) < 0.5)
+			sg.off = sg.goal;
+		swipeshow();
+		return;
+	}
+	p = swipesince(&sg.t0) / sg.dur;
+	if (p > 1)
+		p = 1;
+	e = 1 - (1 - p) * (1 - p) * (1 - p); /* ease out */
+	sg.off = sg.from + (sg.to - sg.from) * e;
+	swipeshow();
+	if (p >= 1)
+		swipefinish();
+}
+
+static int
+swipewait(void)
+{
+	double left;
+
+	if (sg.state != SwipeDrag && sg.state != SwipeAnim)
+		return -1;
+	left = SWIPEFRAME - swipesince(&sg.tf);
+	return left > 0 ? (int)left + 1 : 0;
+}
+
+static void
+swipemove(double dx, double dy, uint64_t t)
+{
+	Monitor *m;
+	double raw, off, dt, v;
+	unsigned int other;
+
+	if (sg.state == SwipeWait) {
+		sg.fx += dx;
+		sg.fy += dy;
+		if (fabs(sg.fx) + fabs(sg.fy) < 15)
+			return;
+		if (fabs(sg.fy) > fabs(sg.fx)) { /* up or down: tux-gestures' */
+			sg.state = SwipeIgnore;
+			return;
+		}
+		swipestart();
+		dx = sg.fx;
+		sg.fx = 0;
+		sg.off = sg.goal = sg.vel = 0;
+		sg.placed = 0;
+		sg.t = t;
+		clock_gettime(CLOCK_MONOTONIC, &sg.tf);
+	} else if (sg.state != SwipeDrag)
+		return;
+	m = sg.m;
+	sg.fx += dx;
+	raw = sg.fx * m->mw / SWIPEDIST;
+	if (raw < -m->mw)
+		raw = -m->mw;
+	if (raw > m->mw)
+		raw = m->mw;
+	other = raw < 0 ? sg.next : sg.prev;
+	off = other ? raw : raw / 4; /* nothing that way: it only gives a little */
+	if (!other && fabs(off) > m->mw / 16.0)
+		off = off < 0 ? -m->mw / 16.0 : m->mw / 16.0;
+	dt = ((double)t - (double)sg.t) / 1e3;
+	if (dt > 0) {
+		v = (off - sg.goal) / dt;
+		sg.vel = sg.vel * 0.5 + v * 0.5;
+	}
+	sg.t = t;
+	sg.goal = off;
+	swipelayout(other); /* lays out the tag coming in, the first time it shows */
+}
+
+static void
+swipeend(int cancelled)
+{
+	Monitor *m = sg.m;
+	unsigned int target;
+	double left;
+
+	if (sg.state != SwipeDrag) {
+		if (sg.state != SwipeAnim)
+			sg.state = SwipeIdle;
+		return;
+	}
+	/* judged by where the fingers ended (goal), glides on from where the frames have got to */
+	target = sg.goal < 0 ? sg.next : sg.prev;
+	sg.commit = !cancelled && target && sg.goal != 0
+		&& (fabs(sg.goal) > m->mw * SWIPECOMMIT                /* far enough */
+		    || (sg.vel * sg.goal > 0 && fabs(sg.vel) > 0.6)); /* or a flick that way */
+	if (sg.vel * sg.goal < 0 && fabs(sg.vel) > 0.6)
+		sg.commit = 0;                                        /* flicked back */
+	sg.from = sg.off;
+	sg.to = sg.commit ? (sg.goal < 0 ? -m->mw : m->mw) : 0;
+	left = fabs(sg.to - sg.from) / m->mw;
+	sg.dur = 90 + 160 * left;
+	clock_gettime(CLOCK_MONOTONIC, &sg.t0);
+	sg.state = SwipeAnim;
+}
+
+static void
+swipeevents(void)
+{
+	struct libinput_event *e;
+	struct libinput_event_gesture *g;
+	struct libinput_device *d;
+	int gest;
+
+	libinput_dispatch(li);
+	while ((e = libinput_get_event(li))) {
+		switch (libinput_event_get_type(e)) {
+		case LIBINPUT_EVENT_DEVICE_ADDED:
+			d = libinput_event_get_device(e);
+			if (libinput_device_has_capability(d, LIBINPUT_DEVICE_CAP_GESTURE)) {
+				lipads++;
+				swipeprop();
+			} else /* keyboards, mice: not needed here (X still gets them) */
+				libinput_device_config_send_events_set_mode(d, LIBINPUT_CONFIG_SEND_EVENTS_DISABLED);
+			break;
+		case LIBINPUT_EVENT_DEVICE_REMOVED:
+			d = libinput_event_get_device(e);
+			gest = libinput_device_has_capability(d, LIBINPUT_DEVICE_CAP_GESTURE);
+			if (gest && --lipads <= 0) {
+				lipads = 0;
+				swipeprop();
+			}
+			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN:
+			g = libinput_event_get_gesture_event(e);
+			if (sg.state == SwipeIdle && libinput_event_gesture_get_finger_count(g) == SWIPEFINGERS) {
+				sg.state = SwipeWait;
+				sg.fx = sg.fy = 0;
+			}
+			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_UPDATE:
+			g = libinput_event_get_gesture_event(e);
+			swipemove(libinput_event_gesture_get_dx(g), libinput_event_gesture_get_dy(g),
+				libinput_event_gesture_get_time_usec(g));
+			break;
+		case LIBINPUT_EVENT_GESTURE_SWIPE_END:
+			g = libinput_event_get_gesture_event(e);
+			swipeend(libinput_event_gesture_get_cancelled(g));
+			break;
+		default:
+			break;
+		}
+		libinput_event_destroy(e);
+	}
+}
+
+static void
+swipeinit(void)
+{
+	tuxswipeatom = XInternAtom(dpy, "_TUX_DWM_SWIPE", False);
+	if (!(lidev = udev_new()))
+		return;
+	if (!(li = libinput_udev_create_context(&liiface, NULL, lidev))
+	|| libinput_udev_assign_seat(li, "seat0") != 0) {
+		if (li)
+			libinput_unref(li);
+		li = NULL;
+		udev_unref(lidev);
+		lidev = NULL;
+		return;
+	}
+	swipeevents(); /* the devices there now */
+	if (!lipads) { /* no touchpad (a desktop): no reason to read the mouse and keyboard */
+		libinput_unref(li);
+		li = NULL;
+		udev_unref(lidev);
+		lidev = NULL;
+	}
+	swipeprop();
+}
+
+static void
+swipecleanup(void)
+{
+	if (li)
+		libinput_unref(li);
+	if (lidev)
+		udev_unref(lidev);
+	li = NULL;
+	lidev = NULL;
+	if (tuxswipeatom)
+		XDeleteProperty(dpy, root, tuxswipeatom);
+}
+#else
+static void swipeinit(void) {}
+static void swipecleanup(void) {}
+static void swipeabort(void) {}
+static int swipebusy(void) { return 0; }
+#endif
+
 void
 run(void)
 {
 	XEvent ev; /* store any type of X11 event received - keypress, mouse, etc. */
+#ifdef TUXSWIPE
+	/* tuxcraft: wait for X and the touchpad (libinput) at once, and tick a drag's last glide */
+	struct pollfd pfd[2];
+	int n;
+
+	XSync(dpy, False);
+	while (running) {
+		while (running && XPending(dpy)) { /* XPending also sends what is queued */
+			XNextEvent(dpy, &ev);
+			if (handler[ev.type])
+				handler[ev.type](&ev);
+		}
+		if (!running)
+			break;
+		pfd[0].fd = ConnectionNumber(dpy);
+		pfd[0].events = POLLIN;
+		n = 1;
+		if (li) {
+			pfd[1].fd = libinput_get_fd(li);
+			pfd[1].events = POLLIN;
+			pfd[1].revents = 0;
+			n = 2;
+		}
+		if (poll(pfd, n, swipewait()) < 0 && errno != EINTR)
+			die("dwm: poll:");
+		if (n == 2 && (pfd[1].revents & POLLIN))
+			swipeevents();
+		if (sg.state == SwipeDrag || sg.state == SwipeAnim)
+			swipeframe();
+	}
+#else
 	/* main event loop */
 	XSync(dpy, False); /* all pending X11 requests sent to X server */
 	while (running && !XNextEvent(dpy, &ev)) /* keep running while dwm is supposed to be running, and keep handling events from X */
 		if (handler[ev.type]) /* check if there's a handler for the event type */
 			handler[ev.type](&ev); /* call that handler and pass it the event data */
+#endif
 }
 
 void
@@ -2382,6 +2875,7 @@ setup(void)
 	XChangeWindowAttributes(dpy, root, CWEventMask|CWCursor, &wa); /* applies the event mask and cursor to the root window */
 	XSelectInput(dpy, root, wa.event_mask);
 	grabkeys(); /* register the keybinds in config.h */
+	swipeinit(); /* tuxcraft: touchpad swipe between tags */
 	focus(NULL); /* focus needs to start cleanly */
 }
 

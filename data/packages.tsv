@@ -101,6 +101,8 @@ xfce	copyq	copyq	CopyQ
 # dwm and dmenu are built from src/ (BreadOnPenguins' builds), so these are their build needs
 # (headers) plus the launcher and the tools tux-dwm uses (xprop, xsetroot, picom).
 dwm	libx11 libxft libxinerama libxcb freetype2 fontconfig	libx11-dev libxft-dev libxinerama-dev libx11-xcb-dev libxcb-res0-dev libfreetype-dev libfontconfig-dev	libX11-devel libXft-devel libXinerama-devel libxcb-devel freetype-devel fontconfig-devel
+# libinput + libudev headers: the touchpad swipe between tags that follows the fingers (dwm builds without it if missing)
+dwm	libinput systemd-libs pkgconf	libinput-dev libudev-dev pkgconf	libinput-devel eudev-libudev-devel pkg-config
 dwm	j4-dmenu-desktop picom xorg-xprop xorg-xsetroot	j4-dmenu-desktop picom x11-utils x11-xserver-utils	j4-dmenu-desktop picom xprop xsetroot
 
 # ---- tui: the terminal app suite
