@@ -56,9 +56,10 @@ case $session in
     # Optional dwm session (tux-dwm install): BreadOnPenguins' look, the same keys as i3.
     export XDG_CURRENT_DESKTOP=dwm XDG_SESSION_DESKTOP=dwm XDG_SESSION_TYPE=x11
     if [ -n "$DISPLAY" ]; then            # a display manager already started X
-      tux-autostart dwm &
+      # tux-autostart must run inside the same D-Bus session as dwm, or the keyring, dunst and
+      # pipewire end up on an autolaunched bus the apps never see ("no system keyring").
       # shellcheck disable=SC2086
-      exec $wrap dwm
+      exec $wrap sh -c 'tux-autostart dwm & exec dwm'
     fi
     vt=''
     [ -n "$XDG_VTNR" ] && vt="vt$XDG_VTNR"
