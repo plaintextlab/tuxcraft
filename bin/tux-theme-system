@@ -3,13 +3,52 @@
 # console (TTY) palette, the tuigreet login screen, the GRUB boot menu, Papirus folder colours.
 # tux-theme-system --console-font FILE   the login screen/TTY font, also used for boot messages
 # tux-theme-system --grub-font FILE      the GRUB menu font (a PF2 file made by tux-psf --pf2)
-# tux-theme-system --folders COLOUR      only the Papirus folder colour, for per-user themes (the
-#                                        wallpaper colours, "wal"), which the rest leaves alone
+# tux-theme-system --palette NAME < FILE  the same for your own themes (the wallpaper colours "wal",
+#                                        ~/.config/tuxcraft/themes): the palette comes in on stdin and
+#                                        only its colours and a few known words are taken from it
+# tux-theme-system --folders COLOUR      only the Papirus folder colour
 # wheel users may run it via sudo without a password (see /etc/sudoers.d/20-tuxcraft-theme).
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 
 GRUB_THEME_DIR=/boot/grub/themes/tuxcraft
+# The palette the login screen, TTY and boot menu use now, whichever theme it came from.
+PALETTE=/etc/tuxcraft/system.palette
+PAPIRUS=" adwaita black blue bluegrey breeze brown carmine cyan darkcyan deeporange green grey indigo magenta nordic orange palebrown paleorange pink red teal violet white yaru yellow "
+COLOR_KEYS=(bg fg muted accent accent_fg color1 color2 color3 color4 color5 color6
+            color8 color9 color10 color11 color12 color13 color14 color15)
+
+# read_palette < THEME_FILE : the variables the system half needs, from a theme file of any
+# user. It runs as root for every wheel user, so the file is never sourced: colours must be
+# #rrggbb, the words come from fixed lists, the name keeps only plain characters.
+read_palette() {
+  local in k v
+  in=$(head -c 65536)
+  for k in "${COLOR_KEYS[@]}"; do
+    v=$(grep -oE "(^|[[:space:]])$k=[\"']?#[0-9A-Fa-f]{6}" <<<"$in" | tail -n1 || true)
+    v=${v##*#}
+    [[ $v =~ ^[0-9A-Fa-f]{6}$ ]] || { echo "tux-theme-system: the palette has no colour $k" >&2; return 1; }
+    printf -v "$k" '#%s' "${v,,}"
+  done
+  word() { sed -nE "s/^(.*[[:space:]])?$1=[\"']?([a-z-]+)[\"']?([[:space:]].*)?\$/\2/p" <<<"$in" | tail -n1; }
+  variant=$(word variant); [[ $variant == light ]] || variant=dark
+  ansi_accent=$(word ansi_accent)
+  [[ " red green yellow blue magenta cyan " == *" $ansi_accent "* ]] || ansi_accent=yellow
+  papirus=$(word papirus)
+  [[ -n $papirus && $PAPIRUS == *" $papirus "* ]] || papirus=''
+  name=$(sed -nE 's/^[[:space:]]*name=//p' <<<"$in" | tail -n1 | tr -cd 'A-Za-z0-9 ()._+-' | cut -c1-60)
+  name=${name:-Custom}
+}
+
+# The palette in use, for --grub-font (which re-renders the boot menu) and to see what is set.
+write_palette() {
+  local k
+  {
+    echo "# The system theme (login screen, TTY, boot menu), written by tux-theme-system"
+    printf 'name="%s"\nvariant=%s\npapirus=%s\nansi_accent=%s\n' "$name" "$variant" "$papirus" "$ansi_accent"
+    for k in "${COLOR_KEYS[@]}"; do printf '%s=%s\n' "$k" "${!k}"; done
+  } >"$PALETTE.new" && mv "$PALETTE.new" "$PALETTE"
+}
 
 # set_grub KEY VALUE : set (or add) one /etc/default/grub variable; true when it changed.
 set_grub() {
@@ -160,7 +199,7 @@ fi
 if [[ ${1:-} == --folders ]]; then
   c=${2:-}
   # Only Papirus' own colour names: this runs as root for any wheel user.
-  [[ " adwaita black blue bluegrey breeze brown carmine cyan darkcyan deeporange green grey indigo magenta nordic orange palebrown paleorange pink red teal violet white yaru yellow " == *" $c "* ]] ||
+  [[ $PAPIRUS == *" $c "* ]] ||
     { echo "tux-theme-system: not a Papirus folder colour: '$c'" >&2; exit 1; }
   if command -v papirus-folders >/dev/null; then
     papirus-folders -C "$c" --theme Papirus-Dark >/dev/null 2>&1 || true
@@ -178,21 +217,31 @@ if [[ ${1:-} == --grub-font ]]; then
   mkdir -p "$GRUB_THEME_DIR"
   install -m644 "$f" "$GRUB_THEME_DIR/tuxcraft.pf2.new" && mv "$GRUB_THEME_DIR/tuxcraft.pf2.new" "$GRUB_THEME_DIR/tuxcraft.pf2"
   # Re-render theme.txt for the new size, in the colours of the system theme.
-  name=$(cat /etc/tuxcraft/system-theme 2>/dev/null || true)
-  tf=/usr/share/tuxcraft/themes/$name.theme
-  if [[ $name =~ ^[a-z0-9-]+$ && -f $tf ]]; then
-    # shellcheck source=/dev/null
-    . "$tf"; grub_theme
+  if [[ -f $PALETTE ]]; then
+    read_palette <"$PALETTE" && grub_theme
+  else   # set before system.palette existed: only a shipped theme could be the system theme
+    name=$(cat /etc/tuxcraft/system-theme 2>/dev/null || true)
+    tf=/usr/share/tuxcraft/themes/$name.theme
+    if [[ $name =~ ^[a-z0-9-]+$ && -f $tf ]]; then
+      # shellcheck source=/dev/null
+      . "$tf"; grub_theme
+    fi
   fi
   exit 0
 fi
 
-key=${1:-}
-[[ $key =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system <theme>" >&2; exit 1; }
-tf=/usr/share/tuxcraft/themes/$key.theme
-[[ -f $tf ]] || { echo "Unknown system theme $key (custom themes stay per-user)" >&2; exit 1; }
-# shellcheck source=/dev/null
-. "$tf"
+if [[ ${1:-} == --palette ]]; then
+  key=${2:-custom}
+  [[ $key =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system --palette NAME < FILE" >&2; exit 1; }
+  read_palette || exit 1
+else
+  key=${1:-}
+  [[ $key =~ ^[a-z0-9-]+$ ]] || { echo "usage: tux-theme-system <theme> | --palette NAME < FILE" >&2; exit 1; }
+  tf=/usr/share/tuxcraft/themes/$key.theme
+  [[ -f $tf ]] || { echo "Unknown system theme $key (your own themes: --palette $key < FILE)" >&2; exit 1; }
+  # shellcheck source=/dev/null
+  . "$tf"
+fi
 
 mkdir -p /etc/tuxcraft
 # Console palette: slot 0 = background, slot 7 = foreground, so the TTY looks like the desktop.
@@ -223,3 +272,4 @@ fi
 grub_theme || true
 # The theme's key (the file name), not its display name: --grub-font finds the theme by it.
 echo "$key" >/etc/tuxcraft/system-theme
+write_palette

@@ -134,14 +134,12 @@ reload_all() {
   if command -v tux-firefox >/dev/null && tux-firefox apply >/dev/null 2>&1; then
     { pgrep -x firefox || pgrep -x firefox-bin || pgrep -x librewolf || pgrep -f org.mozilla.firefox; } >/dev/null 2>&1 && ff_running=1
   fi
-  # Login screen, TTY palette and icon folder colours (needs root; allowed via sudoers rule).
-  # Your own themes and the wallpaper colours ("wal") are not system themes: only the folder
-  # colour follows those.
-  if [[ -f $SHARE/themes/$THEME.theme ]]; then
+  # Login screen, TTY palette, boot menu and icon folder colours (needs root; allowed via the
+  # sudoers rule). Your own themes and the wallpaper colours ("wal") go in as a palette.
+  if [[ $tf == "$SHARE/themes/"* ]]; then
     sudo -n /usr/local/bin/tux-theme-system "$THEME" >/dev/null 2>&1 || true
   else
-    local folders; folders=$(. "$tf"; echo "${papirus:-}")
-    [[ -n $folders ]] && { sudo -n /usr/local/bin/tux-theme-system --folders "$folders" >/dev/null 2>&1 || true; }
+    sudo -n /usr/local/bin/tux-theme-system --palette "$THEME" <"$tf" >/dev/null 2>&1 || true
   fi
   local msg; msg="$(. "$tf"; echo "$name") applied"
   ((ff_running)) && msg+=$'\n'"Restart Firefox to see it there"

@@ -329,8 +329,8 @@ dark; its accent is the image's most colourful common colour. Warning red, OK gr
 named colours keep their meaning, in the wallpaper's own shade where it has one. Super+Shift+W
 then picks any wallpaper, with its colours. The fixed themes are all still there: pick one with
 **Super+Ctrl+T** to go back (and `wal` in that menu to return to wallpaper colours).
-`tux-wallpaper set FILE --keep-colours` changes only the image. The login screen and TTY keep the
-last fixed theme.
+`tux-wallpaper set FILE --keep-colours` changes only the image. The login screen, TTY and GRUB
+boot menu take the wallpaper colours too, like any other theme.
 
 **Firefox** follows too (`tux-firefox`, run by every theme or font change): tabs, toolbar,
 address bar, menus and the new-tab page take the palette, with square corners on menus,

@@ -337,7 +337,13 @@ default_apps() {
 
 theme_stage() {
   step "Applying theme '$TUX_THEME' system-wide"
-  /usr/local/bin/tux-theme-system "$TUX_THEME" || warn "System theme step failed"
+  # Your own theme (the wallpaper colours "wal", ~/.config/tuxcraft/themes) goes in as a palette.
+  local own="$TUX_HOME/.config/tuxcraft/themes/$TUX_THEME.theme"
+  if [[ ! -f /usr/share/tuxcraft/themes/$TUX_THEME.theme && -f $own ]]; then
+    /usr/local/bin/tux-theme-system --palette "$TUX_THEME" <"$own" || warn "System theme step failed"
+  else
+    /usr/local/bin/tux-theme-system "$TUX_THEME" || warn "System theme step failed"
+  fi
   as_user /usr/local/bin/tux-theme apply || warn "tux-theme apply failed (see $TUX_LOG)"
   # Login screen in the desktop font (best effort: needs python3-pillow and the font installed).
   as_user /usr/local/bin/tux-font login >/dev/null 2>&1 || true
