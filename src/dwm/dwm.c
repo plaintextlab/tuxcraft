@@ -2403,18 +2403,22 @@ showhide(Client *c)
 {
 	if (!c)
 		return;
-	/* tuxcraft: dwm hides a window by moving it off screen. _TUX_DWM_HIDDEN is on it during
-	 * those moves (set before hiding, removed after showing), so picom's "geometry" animation
-	 * (dwm.conf) does not slide windows across the screen on every tag switch. */
+	/* tuxcraft: dwm hides a window by moving it off screen. _TUX_DWM_HIDDEN is on it while it
+	 * is hidden (set before it leaves), so picom's "geometry" animation (dwm.conf) neither
+	 * slides it out nor moves it across the screen when it is parked on the other side.
+	 * Windows of lower tags wait off the left edge, those of higher tags off the right edge,
+	 * and the mark comes off before a window comes back: picom then glides it in from its
+	 * side, so the next tag slides in from the right and the previous one from the left, the
+	 * way the fingers move on the touchpad (tux-gestures). */
 	if (ISVISIBLE(c)) {
 		/* show clients top down */
-		XMoveWindow(dpy, c->win, c->x, c->y);
-		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
-			resize(c, c->x, c->y, c->w, c->h, 0);
 		if (c->hidden) {
 			XDeleteProperty(dpy, c->win, tuxhiddenatom);
 			c->hidden = 0;
 		}
+		XMoveWindow(dpy, c->win, c->x, c->y);
+		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
+			resize(c, c->x, c->y, c->w, c->h, 0);
 		showhide(c->snext);
 	} else {
 		/* hide clients bottom up */
@@ -2425,7 +2429,10 @@ showhide(Client *c)
 				(unsigned char *)&one, 1);
 			c->hidden = 1;
 		}
-		XMoveWindow(dpy, c->win, WIDTH(c) * -2, c->y);
+		/* lowest tag of the window against the lowest tag shown */
+		unsigned int cur = c->mon->tagset[c->mon->seltags];
+		XMoveWindow(dpy, c->win,
+			(c->tags & -c->tags) < (cur & -cur) ? WIDTH(c) * -2 : sw + WIDTH(c), c->y);
 	}
 }
 
