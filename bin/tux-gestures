@@ -9,7 +9,8 @@
 set -uo pipefail
 GESTURES=on
 GESTURE_FINGERS=4
-GESTURE_MIN=60   # how far the fingers must travel (libinput units, roughly mm) before it counts
+GESTURE_MIN=150  # how far the fingers must travel before it counts (libinput's accelerated
+                 # units: a short flick is about 40, a deliberate swipe 300 and up)
 # shellcheck source=/dev/null
 [[ -f $HOME/.config/tuxcraft/state ]] && . "$HOME/.config/tuxcraft/state"
 LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-gestures.$UID.lock
@@ -17,9 +18,11 @@ LOCK=${XDG_RUNTIME_DIR:-/tmp}/tux-gestures.$UID.lock
 running() { pgrep -u "$UID" -f '^bash .*tux-gestures daemon' >/dev/null; }
 
 # A touchpad libinput can read (it reports the "gesture" capability), or one X knows about.
+# No grep -q: it stops reading at the first match, the writer dies of SIGPIPE, and pipefail
+# then calls the whole pipe a failure.
 has_touchpad() {
-  libinput list-devices 2>/dev/null | grep -q '^Capabilities:.*gesture' && return 0
-  xinput list 2>/dev/null | grep -qi 'touchpad.*slave *pointer'
+  libinput list-devices 2>/dev/null | grep '^Capabilities:.*gesture' >/dev/null && return 0
+  xinput list 2>/dev/null | grep -i 'touchpad.*slave *pointer' >/dev/null
 }
 
 press() { xdotool key --clearmodifiers "$1" 2>/dev/null; }
@@ -32,7 +35,10 @@ daemon() {
   while xinput list >/dev/null 2>&1; do   # until X exits
     # One line per finished swipe: left, right, up or down (where the fingers went). awk adds up
     # the deltas of a swipe and decides at its end, so mouse motion never reaches the loop.
-    # Lines look like: " event7  GESTURE_SWIPE_UPDATE  +1.24s  4 -2.31/ 0.12 (-6.50/ 0.34 unaccelerated)"
+    # Lines look like: " event7  GESTURE_SWIPE_UPDATE  3  +1.24s  4 -2.31/ 0.12 (-6.50/ 0.34 unaccelerated)"
+    # The event counter (3) is only there from the second line of a swipe on, and only in newer
+    # libinput, so fields are found by their shape: the finger count follows the "+1.24s" time,
+    # and the first "x/ y" pair is the accelerated movement.
     while read -r action; do
       # Fingers moving left push the current workspace out to the left and pull in the one on
       # its right, the next one, as on GNOME and macOS (the workspace follows the fingers, like
@@ -42,12 +48,16 @@ daemon() {
         right) press super+shift+Tab ;;
         up)    press super+space ;;
       esac
-    done < <(exec 9>&-; libinput debug-events 2>/dev/null | awk -v fingers="$GESTURE_FINGERS" -v min="$GESTURE_MIN" '
+    # stdbuf -oL: into a pipe, libinput writes its lines out only once 4 KB have piled up, so
+    # the end of a swipe would wait for the next few gestures.
+    done < <(exec 9>&-; stdbuf -oL libinput debug-events 2>/dev/null | awk -v fingers="$GESTURE_FINGERS" -v min="$GESTURE_MIN" '
       function abs(v) { return v < 0 ? -v : v }
-      $2 == "GESTURE_SWIPE_BEGIN"  { on = ($4 == fingers); dx = dy = 0; next }
+      function nfingers(  i) { for (i = 3; i < NF; i++) if ($i ~ /^\+[0-9.]+s$/) return $(i + 1) }
+      $2 == "GESTURE_SWIPE_BEGIN"  { on = (nfingers() == fingers); dx = dy = 0; next }
       $2 == "GESTURE_SWIPE_UPDATE" && on {
-        s = $0; sub(/.*GESTURE_SWIPE_UPDATE[ \t]+[^ \t]+[ \t]+[0-9]+[ \t]+/, "", s)
-        sub(/[ \t]*\(.*/, "", s); gsub(/[ \t]/, "", s); split(s, d, "/"); dx += d[1]; dy += d[2]; next }
+        if (match($0, /-?[0-9]+\.[0-9]+\/ *-?[0-9]+\.[0-9]+/)) {
+          split(substr($0, RSTART, RLENGTH), d, "/"); dx += d[1]; dy += d[2] }
+        next }
       $2 == "GESTURE_SWIPE_END" && on {
         on = 0
         if ($0 ~ /cancelled/) next
@@ -69,7 +79,10 @@ case ${1:-start} in
     has_touchpad || exit 0
     readable=0; for d in /dev/input/event*; do [[ -r $d ]] && { readable=1; break; }; done
     ((readable)) || { echo "tux-gestures: cannot read the touchpad (is $USER in the input group?)" >&2; exit 1; }
-    running || setsid -f "$0" daemon >/dev/null 2>&1 ;;
+    running && exit 0
+    setsid -f "$0" daemon >/dev/null 2>&1
+    # setsid returns before the daemon is up: wait for it, so "start; status" says on.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do running && exit 0; sleep 0.1; done ;;
   stop) pkill -u "$UID" -f '^bash .*tux-gestures daemon'; true ;;
   restart) "$0" stop; sleep 0.3; "$0" start ;;
   status)
