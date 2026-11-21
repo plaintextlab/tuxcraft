@@ -305,6 +305,12 @@ static const Button buttons[] = {
 	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {0} },
 	{ ClkClientWin,         MODKEY,         Button2,        togglefloating, {0} },
 	{ ClkClientWin,         MODKEY,         Button3,        resizemouse,    {0} },
+	/* Super + two-finger touchpad drag resizes as Super + right drag does (dwm reads the
+	 * touchpad itself, dwm.c "tfscroll"); these keep the scroll it also makes from the window */
+	{ ClkClientWin,         MODKEY,         Button4,        NULL,           {0} },
+	{ ClkClientWin,         MODKEY,         Button5,        NULL,           {0} },
+	{ ClkClientWin,         MODKEY,         6,              NULL,           {0} },
+	{ ClkClientWin,         MODKEY,         7,              NULL,           {0} },
 	{ ClkTagBar,            0,              Button1,        view,           {0} },
 	{ ClkTagBar,            0,              Button2,        spawntag,       {0} },
 	{ ClkTagBar,            0,              Button3,        toggleview,     {0} },

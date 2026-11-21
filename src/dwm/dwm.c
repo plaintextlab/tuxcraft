@@ -31,12 +31,12 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <poll.h>
+#include <time.h>
 #ifdef TUXSWIPE
 #include <fcntl.h>
 #include <math.h>
-#include <poll.h>
 #include <stdint.h>
-#include <time.h>
 #include <libinput.h>
 #include <libudev.h>
 #endif
@@ -152,6 +152,10 @@ struct Client { /* a window that dwm is managing */
 	int isscratch; /* tuxcraft: sent to the scratchpad (Super+Shift+minus) */
 	float cfact;   /* tuxcraft: share of its column (cfacts; 1 = equal), set by Super + right drag */
 	int hidden;    /* tuxcraft: moved off screen (its tag is not shown); _TUX_DWM_HIDDEN is set */
+	int glide;     /* tuxcraft: came back with its tag, _TUX_DWM_GLIDE is set until it next moves */
+	int leaving;   /* tuxcraft: sliding out with its tag (leaveframe), from lx0 to lx1, then parked */
+	int lx0, lx1, lpark;
+	int still;     /* tuxcraft: being moved or resized by hand, _TUX_DWM_STILL is set (no animation) */
 	long desktop; /* tuxcraft: last _NET_WM_DESKTOP written */
 	pid_t pid; /* pid of application in window - useful for swallowing */
 	Client *next; /* next client, in the linked list of all clients */
@@ -285,6 +289,10 @@ static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizebarwin(Monitor *m);
 static void resizeclient(Client *c, int x, int y, int w, int h);
 static void resizemouse(const Arg *arg);
+static int rsbegin(Client *c);
+static void rsstep(int dx, int dy);
+static void rsend(void);
+static void stillmark(Client *c, int on);
 static void resizerequest(XEvent *e);
 static void restack(Monitor *m);
 static void run(void);
@@ -362,6 +370,7 @@ static void swipeinit(void);
 static void swipecleanup(void);
 static void swipeabort(void);
 static int swipebusy(void);
+static void leavestart(void);
 static void updatedesktops(void);
 static void savestate(void);
 static int casestr(const char *hay, const char *needle);
@@ -380,7 +389,8 @@ static int statusw;
 static int statussig;
 static pid_t statuspid = -1;
 static int keymode = 0; /* tuxcraft: 1 = resize mode (Super+R) */
-static Atom tuxcmdatom, tuxtagsatom, tuxviewatom, tuxhiddenatom;
+static Atom tuxcmdatom, tuxtagsatom, tuxviewatom, tuxhiddenatom, tuxglideatom, tuxstillatom;
+static int leavenone; /* tuxcraft: park leaving windows at once (a touchpad drag already moved them) */
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
 static int bh;               /* bar height */
@@ -1137,6 +1147,8 @@ enternotify(XEvent *e)
 
 	if (swipebusy()) /* tuxcraft: windows slide under the pointer during a touchpad drag */
 		return;
+	if ((c = wintoclient(ev->window)) && c->leaving) /* tuxcraft: sliding out with its tag */
+		return;
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
@@ -1578,6 +1590,8 @@ manage(Window w, XWindowAttributes *wa)
 	c->desktop = -2;
 	c->cfact = 1.0;
 	XDeleteProperty(dpy, w, tuxhiddenatom); /* left from before a restart */
+	XDeleteProperty(dpy, w, tuxglideatom);
+	XDeleteProperty(dpy, w, tuxstillatom);
 		/* ensure window fits to visible bounds of monitor */
 	if (c->x + WIDTH(c) > c->mon->wx + c->mon->ww)
 		c->x = c->mon->wx + c->mon->ww - WIDTH(c);
@@ -1702,6 +1716,7 @@ movemouse(const Arg *arg)
 		return;
 	if (!getrootptr(&x, &y))
 		return;
+	stillmark(c, 1);
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -1734,6 +1749,7 @@ movemouse(const Arg *arg)
 		}
 	} while (ev.type != ButtonRelease);
 	XUngrabPointer(dpy, CurrentTime);
+	stillmark(c, 0);
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
@@ -1920,6 +1936,11 @@ resizeclient(Client *c, int x, int y, int w, int h)
 	wc.border_width = c->bw;
     // nail it to no border & y=0:
     if (ispanel(c)) c->y = c->oldy = c->bw = wc.y = wc.border_width = 0;
+	if (c->glide) { /* tuxcraft: a move of its own now, not its tag coming back (showhide) */
+		XDeleteProperty(dpy, c->win, tuxglideatom);
+		c->glide = 0;
+	}
+	c->leaving = 0; /* moved or resized by dwm: no more sliding out */
 	XConfigureWindow(dpy, c->win, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, &wc);
 	configure(c);
 	XSync(dpy, False);
@@ -1938,19 +1959,53 @@ resizerequest(XEvent *e)
 	}
 }
 
-void
-resizemouse(const Arg *arg)
-{
-	int ocx, ocy, nw, nh;
+/* tuxcraft: one resize, by the mouse (Super + right drag, resizemouse) or the touchpad (Super
+ * + two-finger drag, tfscroll): rsbegin() looks at the window, rsstep() follows the distance
+ * moved since the start, rsend() finishes. */
+static struct {
 	Client *c;
-	Monitor *m;
-	XEvent ev;
-	Time lasttime = 0;
+	int tiled, vert, colfacts, n, idx, cols, last, span, total, w0, h0;
+	float mf0, othercf;
+} rs;
 
-	if (!(c = selmon->sel))
+/* While a window is moved or resized by hand it changes every frame, and picom would start its
+ * move animation (dwm.conf) again at each one: the content and the see-through background
+ * flicker. _TUX_DWM_STILL switches that off for the windows that move, until the hand lets go. */
+static void
+stillmark(Client *c, int on)
+{
+	long one = 1;
+
+	if (!c || c->still == on)
 		return;
-	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
-		return;
+	c->still = on;
+	if (on)
+		XChangeProperty(dpy, c->win, tuxstillatom, XA_CARDINAL, 32, PropModeReplace,
+			(unsigned char *)&one, 1);
+	else
+		XDeleteProperty(dpy, c->win, tuxstillatom);
+}
+
+static void
+stillall(Monitor *m, int on) /* a tiled resize moves its neighbours too */
+{
+	Client *c;
+
+	for (c = m->clients; c; c = c->next)
+		if (on ? ISVISIBLE(c) : c->still)
+			stillmark(c, on);
+}
+
+static int
+rsbegin(Client *c)
+{
+	Client *t;
+	int i = 0;
+
+	memset(&rs, 0, sizeof rs);
+	if (!c || c->isfullscreen) /* no support resizing fullscreen windows by mouse */
+		return 0;
+	rs.c = c;
 	restack(selmon);
 	if (!c->isfloating && selmon->lt[selmon->sellt]->arrange) {
 		/* tuxcraft: like i3, Super + right drag on a tiled window resizes it in place, without
@@ -1959,76 +2014,124 @@ resizemouse(const Arg *arg)
 		 * neighbour in the same column follows it the other way (its cfact). Nothing to resize
 		 * in monocle, as in i3's tabbed layout. */
 		void (*lt)(Monitor *) = selmon->lt[selmon->sellt]->arrange;
-		int vert = lt == bstack, colfacts = lt == tile || lt == bstack || lt == deck;
-		int x0, y0, n = 0, i = 0, idx = -1, cols, last = 0, span, total = 0;
-		float mf0 = selmon->mfact, othercf = 0, f;
-		Client *t;
-		if (lt == monocle || !getrootptr(&x0, &y0))
-			return;
-		for (t = nexttiled(selmon->clients); t; t = nexttiled(t->next), i++, n++)
+		rs.tiled = 1;
+		rs.vert = lt == bstack;
+		rs.colfacts = lt == tile || lt == bstack || lt == deck;
+		rs.mf0 = selmon->mfact;
+		rs.idx = -1;
+		if (lt == monocle)
+			return 0;
+		for (t = nexttiled(selmon->clients); t; t = nexttiled(t->next), i++, rs.n++)
 			if (t == c)
-				idx = i;
-		if (idx < 0)
-			return;
+				rs.idx = i;
+		if (rs.idx < 0)
+			return 0;
 		/* the window's column: masters or the others; drag its far border unless it is the
 		 * last one there, then the near one (as i3 moves the border closest to the window) */
-		if (idx < selmon->nmaster) { cols = MIN(n, selmon->nmaster); last = idx == cols - 1; }
-		else { cols = n - selmon->nmaster; last = idx == n - 1; }
-		if (lt == deck && idx >= selmon->nmaster)
-			cols = 1;   /* the deck's stack shows one window at a time */
-		span = vert ? c->w : c->h;
+		if (rs.idx < selmon->nmaster) { rs.cols = MIN(rs.n, selmon->nmaster); rs.last = rs.idx == rs.cols - 1; }
+		else { rs.cols = rs.n - selmon->nmaster; rs.last = rs.idx == rs.n - 1; }
+		if (lt == deck && rs.idx >= selmon->nmaster)
+			rs.cols = 1;   /* the deck's stack shows one window at a time */
+		rs.span = rs.vert ? c->w : c->h;
+		stillall(selmon, 1);
 		/* the column's other windows: their factors and the room the column has, so the border
 		 * can follow the mouse exactly */
 		for (i = 0, t = nexttiled(selmon->clients); t; t = nexttiled(t->next), i++)
-			if ((idx < selmon->nmaster) == (i < selmon->nmaster)) {
-				total += vert ? t->w : t->h;
+			if ((rs.idx < selmon->nmaster) == (i < selmon->nmaster)) {
+				rs.total += rs.vert ? t->w : t->h;
 				if (t != c)
-					othercf += t->cfact;
+					rs.othercf += t->cfact;
 			}
-		if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
-			None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
-			return;
-		do {
-			XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
-			switch (ev.type) {
-			case ConfigureRequest:
-			case Expose:
-			case MapRequest:
-				handler[ev.type](&ev);
-				break;
-			case MotionNotify:
-				if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
-					continue;
-				lasttime = ev.xmotion.time;
-				/* the master / stack border */
-				if (n > selmon->nmaster && selmon->nmaster > 0) {
-					f = mf0 + (vert ? (float)(ev.xmotion.y_root - y0) / selmon->wh
-					                : (float)(ev.xmotion.x_root - x0) / selmon->ww);
-					selmon->mfact = MAX(0.05, MIN(0.95, f));
-				}
-				/* the border with the neighbour in the column */
-				if (colfacts && cols > 1 && span > 0 && othercf > 0) {
-					int d = vert ? ev.xmotion.x_root - x0 : ev.xmotion.y_root - y0;
-					int want = span + (last ? -d : d);
-					want = MAX(bh, MIN(total - bh * (cols - 1), want));
-					/* share of the column = want / total -> factor against the others' factors */
-					f = othercf * want / (float)MAX(1, total - want);
-					c->cfact = MAX(0.1, MIN(10.0, f));
-				}
-				arrange(selmon);
-				break;
-			}
-		} while (ev.type != ButtonRelease);
-		XUngrabPointer(dpy, CurrentTime);
-		while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
+		return 1;
+	}
+	rs.w0 = c->w;
+	rs.h0 = c->h;
+	stillmark(c, 1);
+	return 1;
+}
+
+static void
+rsstep(int dx, int dy)
+{
+	Client *c = rs.c;
+	int nw, nh;
+	float f;
+
+	if (!c)
+		return;
+	if (rs.tiled) {
+		/* the master / stack border */
+		if (rs.n > selmon->nmaster && selmon->nmaster > 0) {
+			f = rs.mf0 + (rs.vert ? (float)dy / selmon->wh : (float)dx / selmon->ww);
+			selmon->mfact = MAX(0.05, MIN(0.95, f));
+		}
+		/* the border with the neighbour in the column */
+		if (rs.colfacts && rs.cols > 1 && rs.span > 0 && rs.othercf > 0) {
+			int d = rs.vert ? dx : dy;
+			int want = rs.span + (rs.last ? -d : d);
+			want = MAX(bh, MIN(rs.total - bh * (rs.cols - 1), want));
+			/* share of the column = want / total -> factor against the others' factors */
+			f = rs.othercf * want / (float)MAX(1, rs.total - want);
+			c->cfact = MAX(0.1, MIN(10.0, f));
+		}
+		arrange(selmon);
 		return;
 	}
-	ocx = c->x;
-	ocy = c->y;
-	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
-		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
+	nw = MAX(rs.w0 + dx, 1);
+	nh = MAX(rs.h0 + dy, 1);
+	if (c->mon->wx + nw >= selmon->wx && c->mon->wx + nw <= selmon->wx + selmon->ww
+	&& c->mon->wy + nh >= selmon->wy && c->mon->wy + nh <= selmon->wy + selmon->wh)
+	{
+		if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
+		&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap))
+			togglefloating(NULL);
+	}
+	if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
+		resize(c, c->x, c->y, nw, nh, 1);
+}
+
+static void
+rsend(void)
+{
+	Client *c = rs.c;
+	Monitor *m;
+
+	rs.c = NULL;
+	if (!c)
 		return;
-	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+	stillall(c->mon, 0);
+	if (rs.tiled)
+		return;
+	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
+		sendmon(c, m);
+		selmon = m;
+		focus(NULL);
+	}
+}
+
+void
+resizemouse(const Arg *arg)
+{
+	int x0, y0;
+	Client *c;
+	XEvent ev;
+	Time lasttime = 0;
+
+	if (!rsbegin(selmon->sel))
+		return;
+	c = rs.c;
+	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
+		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess) {
+		rsend();
+		return;
+	}
+	if (!rs.tiled) /* the pointer to the corner it drags */
+		XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+	if (!getrootptr(&x0, &y0)) {
+		XUngrabPointer(dpy, CurrentTime);
+		rsend();
+		return;
+	}
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -2041,29 +2144,15 @@ resizemouse(const Arg *arg)
 			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
-
-			nw = MAX(ev.xmotion.x - ocx - 2 * c->bw + 1, 1);
-			nh = MAX(ev.xmotion.y - ocy - 2 * c->bw + 1, 1);
-			if (c->mon->wx + nw >= selmon->wx && c->mon->wx + nw <= selmon->wx + selmon->ww
-			&& c->mon->wy + nh >= selmon->wy && c->mon->wy + nh <= selmon->wy + selmon->wh)
-			{
-				if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
-				&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap))
-					togglefloating(NULL);
-			}
-			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
-				resize(c, c->x, c->y, nw, nh, 1);
+			rsstep(ev.xmotion.x_root - x0, ev.xmotion.y_root - y0);
 			break;
 		}
 	} while (ev.type != ButtonRelease);
-	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
+	if (!rs.tiled)
+		XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
 	XUngrabPointer(dpy, CurrentTime);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
-	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
-		sendmon(c, m);
-		selmon = m;
-		focus(NULL);
-	}
+	rsend();
 }
 
 void
@@ -2294,9 +2383,12 @@ swipefinish(void)
 
 	sg.state = SwipeIdle;
 	if (sg.commit && target) {
-		/* the windows are where view() puts them: it unmarks the new tag's, parks the old */
+		/* the windows are where view() puts them: it unmarks the new tag's, parks the old
+		 * (off screen already, so no sliding out) */
 		Arg a = {.ui = target};
+		leavenone = 1;
 		view(&a);
+		leavenone = 0;
 	} else {
 		for (c = m->clients; c; c = c->next)
 			if (!c->issticky && !c->isscratch && (c->tags & sg.cur)) {
@@ -2441,6 +2533,68 @@ swipeend(int cancelled)
 	sg.state = SwipeAnim;
 }
 
+/* tuxcraft: Super + two-finger drag on the touchpad does what Super + right drag does with the
+ * mouse (rsbegin/rsstep/rsend): on a tiled window the splits follow the fingers, a floating one
+ * is resized from its bottom-right corner. The window under the pointer takes the focus first,
+ * as a click would. Super must be down when the fingers start; the scroll that X also sends is
+ * kept from the window by the Super + wheel buttons in config.h. */
+#ifndef TFRESIZE
+#define TFRESIZE 1.5        /* pixels per unit of two-finger travel */
+#endif
+static struct {
+	int state;              /* 0 idle, 1 resizing, 2 not ours until the fingers stop */
+	double x, y;
+	struct timespec t;      /* last step */
+} tf;
+
+static void
+tfscroll(double dx, double dy, int stop)
+{
+	Window r, ch;
+	int rx, ry, wx, wy;
+	unsigned int mask;
+	Client *c;
+	struct timespec now;
+	double ms;
+
+	if (stop) {
+		if (tf.state == 1) {
+			rsstep((int)tf.x, (int)tf.y); /* where the fingers ended */
+			rsend();
+		}
+		tf.state = 0;
+		return;
+	}
+	if (tf.state == 0) {
+		tf.state = 2;
+		if (sg.state != SwipeIdle)
+			return;
+		if (!XQueryPointer(dpy, root, &r, &ch, &rx, &ry, &wx, &wy, &mask) || !(mask & MODKEY))
+			return;
+		if (!(c = wintoclient(ch)) || c->leaving)
+			return;
+		if (c->mon != selmon || c != selmon->sel) {
+			selmon = c->mon;
+			focus(c);
+		}
+		if (!rsbegin(c))
+			return;
+		tf.state = 1;
+		tf.x = tf.y = 0;
+		tf.t.tv_sec = tf.t.tv_nsec = 0;
+	}
+	if (tf.state != 1)
+		return;
+	tf.x += dx * TFRESIZE;
+	tf.y += dy * TFRESIZE;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	ms = (now.tv_sec - tf.t.tv_sec) * 1e3 + (now.tv_nsec - tf.t.tv_nsec) / 1e6;
+	if (ms < 1000.0 / refreshrate) /* as the mouse: no more redraws than the screen shows */
+		return;
+	tf.t = now;
+	rsstep((int)tf.x, (int)tf.y);
+}
+
 static void
 swipeevents(void)
 {
@@ -2468,6 +2622,15 @@ swipeevents(void)
 				swipeprop();
 			}
 			break;
+		case LIBINPUT_EVENT_POINTER_SCROLL_FINGER: {
+			struct libinput_event_pointer *pe = libinput_event_get_pointer_event(e);
+			int hx = libinput_event_pointer_has_axis(pe, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL);
+			int hy = libinput_event_pointer_has_axis(pe, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL);
+			double x = hx ? libinput_event_pointer_get_scroll_value(pe, LIBINPUT_POINTER_AXIS_SCROLL_HORIZONTAL) : 0;
+			double y = hy ? libinput_event_pointer_get_scroll_value(pe, LIBINPUT_POINTER_AXIS_SCROLL_VERTICAL) : 0;
+			tfscroll(x, y, x == 0 && y == 0); /* both 0: the fingers stopped or lifted */
+			break;
+		}
 		case LIBINPUT_EVENT_GESTURE_SWIPE_BEGIN:
 			g = libinput_event_get_gesture_event(e);
 			if (sg.state == SwipeIdle && libinput_event_gesture_get_finger_count(g) == SWIPEFINGERS) {
@@ -2535,14 +2698,85 @@ static void swipeabort(void) {}
 static int swipebusy(void) { return 0; }
 #endif
 
+/* tuxcraft: windows leaving with their tag slide out to their side (showhide starts it), moved
+ * by dwm on its frame clock: picom does not draw a window whose real place is off screen. */
+#ifndef LEAVEMS
+#define LEAVEMS 140.0       /* how long the old tag takes to slide out (ms), as picom's glide in */
+#endif
+static int leaveanim;
+static struct timespec leavet0, leavetf;
+
+static double
+leavesince(struct timespec *a)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (t.tv_sec - a->tv_sec) * 1e3 + (t.tv_nsec - a->tv_nsec) / 1e6;
+}
+
+static void
+leavestart(void)
+{
+	if (leaveanim)
+		return; /* already running: this window joins in (a tag of several windows) */
+	leaveanim = 1;
+	clock_gettime(CLOCK_MONOTONIC, &leavet0);
+	leavetf.tv_sec = 0;
+	leavetf.tv_nsec = 0;
+}
+
+static int
+leavewait(void)
+{
+	double left;
+
+	if (!leaveanim)
+		return -1;
+	left = 6 - leavesince(&leavetf);
+	return left > 0 ? (int)left + 1 : 0;
+}
+
+static void
+leaveframe(void)
+{
+	double p, e;
+	Monitor *m;
+	Client *c;
+	int any = 0;
+
+	if (!leaveanim || leavesince(&leavetf) < 5.5)
+		return;
+	clock_gettime(CLOCK_MONOTONIC, &leavetf);
+	p = leavesince(&leavet0) / LEAVEMS;
+	if (p > 1)
+		p = 1;
+	e = 1 - (1 - p) * (1 - p) * (1 - p); /* ease out */
+	XGrabServer(dpy);
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next) {
+			if (!c->leaving)
+				continue;
+			if (p >= 1) {
+				c->leaving = 0;
+				XMoveWindow(dpy, c->win, c->lpark, c->y);
+			} else {
+				XMoveWindow(dpy, c->win, c->lx0 + (int)((c->lx1 - c->lx0) * e), c->y);
+				any = 1;
+			}
+		}
+	XUngrabServer(dpy);
+	XFlush(dpy);
+	leaveanim = any;
+}
+
 void
 run(void)
 {
 	XEvent ev; /* store any type of X11 event received - keypress, mouse, etc. */
-#ifdef TUXSWIPE
-	/* tuxcraft: wait for X and the touchpad (libinput) at once, and tick a drag's last glide */
+	/* tuxcraft: wait for X and the touchpad (libinput) at once, and tick the frames of a
+	 * touchpad drag and of a tag sliding out */
 	struct pollfd pfd[2];
-	int n;
+	int n, wait, lw;
 
 	XSync(dpy, False);
 	while (running) {
@@ -2556,26 +2790,29 @@ run(void)
 		pfd[0].fd = ConnectionNumber(dpy);
 		pfd[0].events = POLLIN;
 		n = 1;
+		wait = -1;
+#ifdef TUXSWIPE
 		if (li) {
 			pfd[1].fd = libinput_get_fd(li);
 			pfd[1].events = POLLIN;
 			pfd[1].revents = 0;
 			n = 2;
 		}
-		if (poll(pfd, n, swipewait()) < 0 && errno != EINTR)
+		wait = swipewait();
+#endif
+		lw = leavewait();
+		if (lw >= 0 && (wait < 0 || lw < wait))
+			wait = lw;
+		if (poll(pfd, n, wait) < 0 && errno != EINTR)
 			die("dwm: poll:");
+#ifdef TUXSWIPE
 		if (n == 2 && (pfd[1].revents & POLLIN))
 			swipeevents();
 		if (sg.state == SwipeDrag || sg.state == SwipeAnim)
 			swipeframe();
-	}
-#else
-	/* main event loop */
-	XSync(dpy, False); /* all pending X11 requests sent to X server */
-	while (running && !XNextEvent(dpy, &ev)) /* keep running while dwm is supposed to be running, and keep handling events from X */
-		if (handler[ev.type]) /* check if there's a handler for the event type */
-			handler[ev.type](&ev); /* call that handler and pass it the event data */
 #endif
+		leaveframe();
+	}
 }
 
 void
@@ -2824,6 +3061,8 @@ setup(void)
 	tuxtagsatom = XInternAtom(dpy, "_TUX_DWM_TAGS", False);
 	tuxviewatom = XInternAtom(dpy, "_TUX_DWM_VIEW", False);
 	tuxhiddenatom = XInternAtom(dpy, "_TUX_DWM_HIDDEN", False);
+	tuxglideatom = XInternAtom(dpy, "_TUX_DWM_GLIDE", False);
+	tuxstillatom = XInternAtom(dpy, "_TUX_DWM_STILL", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
@@ -2903,10 +3142,21 @@ showhide(Client *c)
 	 * Windows of lower tags wait off the left edge, those of higher tags off the right edge,
 	 * and the mark comes off before a window comes back: picom then glides it in from its
 	 * side, so the next tag slides in from the right and the previous one from the left, the
-	 * way the fingers move on the touchpad (tux-gestures). */
+	 * way the fingers move on the touchpad (tux-gestures). A window coming back also gets
+	 * _TUX_DWM_GLIDE, set before the move and taken off only at its next move or resize
+	 * (resizeclient), so picom can give a tag switch a plain glide and tiling its own
+	 * animation; marks taken off in the same breath as a move would race picom. A window
+	 * leaving with its tag slides out to its side while the new tag glides in, moved by dwm
+	 * itself (leaveframe): picom does not draw a window whose real place is off screen, so
+	 * it cannot animate one going there. */
 	if (ISVISIBLE(c)) {
 		/* show clients top down */
+		c->leaving = 0; /* back before it had slid out: glides in from where it is */
 		if (c->hidden) {
+			long one = 1;
+			XChangeProperty(dpy, c->win, tuxglideatom, XA_CARDINAL, 32, PropModeReplace,
+				(unsigned char *)&one, 1);
+			c->glide = 1;
 			XDeleteProperty(dpy, c->win, tuxhiddenatom);
 			c->hidden = 0;
 		}
@@ -2917,16 +3167,34 @@ showhide(Client *c)
 	} else {
 		/* hide clients bottom up */
 		showhide(c->snext);
+		if (c->glide) {
+			XDeleteProperty(dpy, c->win, tuxglideatom);
+			c->glide = 0;
+		}
+		/* lowest tag of the window against the lowest tag shown */
+		unsigned int cur = c->mon->tagset[c->mon->seltags];
+		int left = (c->tags & -c->tags) < (cur & -cur);
+		int park = left ? WIDTH(c) * -2 : sw + WIDTH(c);
 		if (!c->hidden) {
 			long one = 1;
 			XChangeProperty(dpy, c->win, tuxhiddenatom, XA_CARDINAL, 32, PropModeReplace,
 				(unsigned char *)&one, 1);
 			c->hidden = 1;
+			if (!leavenone && !c->isfullscreen && c->x < c->mon->mx + c->mon->mw
+			&& c->x + WIDTH(c) > c->mon->mx) {
+				/* on screen: slide out to its side first (leaveframe), then park */
+				c->leaving = 1;
+				c->lx0 = c->x;
+				c->lx1 = left ? c->mon->mx - WIDTH(c) : c->mon->mx + c->mon->mw;
+				c->lpark = park;
+				leavestart();
+				return;
+			}
+		} else if (c->leaving) {
+			c->lpark = park; /* still sliding out: its slide decides, it parks at the end */
+			return;
 		}
-		/* lowest tag of the window against the lowest tag shown */
-		unsigned int cur = c->mon->tagset[c->mon->seltags];
-		XMoveWindow(dpy, c->win,
-			(c->tags & -c->tags) < (cur & -cur) ? WIDTH(c) * -2 : sw + WIDTH(c), c->y);
+		XMoveWindow(dpy, c->win, park, c->y);
 	}
 }
 
@@ -3314,6 +3582,8 @@ unmanage(Client *c, int destroyed)
 		XSelectInput(dpy, c->win, NoEventMask);
 		XConfigureWindow(dpy, c->win, CWBorderWidth, &wc); /* restore border */
 		XDeleteProperty(dpy, c->win, tuxhiddenatom);
+		XDeleteProperty(dpy, c->win, tuxglideatom);
+		XDeleteProperty(dpy, c->win, tuxstillatom);
 		XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
 		setclientstate(c, WithdrawnState);
 		XSync(dpy, False);
