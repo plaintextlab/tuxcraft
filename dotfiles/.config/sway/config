@@ -40,6 +40,8 @@ for_window [app_id="^webapp-.*"] floating enable, resize set 1280 720, move posi
 for_window [class="^webapp-.*"] floating enable, resize set 1280 720, move position center
 for_window [title=".*\.exe$"] floating enable
 for_window [app_id="org.keepassxc.KeePassXC"] floating enable
+# Drag shelf (tux-shelf): floats on every workspace. X11 needs no rule (it is a popup there).
+for_window [app_id="^(tux-shelf|io\.github\.tuxcraft\.Shelf)$"] floating enable, sticky enable, border none, move position cursor
 
 assign [app_id="(?i)firefox|chromium|brave"] workspace number 2
 assign [class="(?i)steam|lutris"] workspace number 5

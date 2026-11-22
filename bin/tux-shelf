@@ -1,0 +1,705 @@
+#!/usr/bin/env python3
+# tux-shelf [toggle|show|hide|clear|add FILE...|list|quit] — a drag shelf (Super+G).
+#   Drop files, folders, text, links or images on it; they stay there while you switch tags,
+#   windows or apps; drag them back out one at a time, or all at once with the "all" handle.
+#   Right-click an item: open, show in folder, copy path, remove. Middle-click / double-click opens.
+#   X11 (dwm, i3): shake the mouse left-right while dragging something and the shelf opens under
+#   the pointer. If the drag ends without a drop and the shelf is empty, it goes away again.
+#   Wayland (sway) has no global pointer to watch, so there it is Super+G only.
+#   Files are kept by reference (nothing is copied). Text, links and image data have no file, so
+#   they are saved in ~/.cache/tux-shelf/items. The shelf is kept across restarts.
+#   One shelf per session: the first `tux-shelf` stays running (tux-autostart starts it) and later
+#   calls talk to it over D-Bus.
+import ctypes
+import ctypes.util
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
+
+APP_ID = "io.github.tuxcraft.Shelf"
+CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "tux-shelf"
+ITEMS = CACHE / "items"
+STATE = CACHE / "shelf.json"
+COLORS = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "tuxcraft/colors.sh"
+
+# Shake: this many changes of direction, each at least SHAKE_PX long, within SHAKE_MS.
+# A deliberate back-and-forth, not the wobble of an ordinary drag: raise them if it still opens
+# by accident, lower them if it is hard to open.
+SHAKE_TURNS = 5
+SHAKE_PX = 60
+SHAKE_MS = 900
+
+T_URI, T_TEXT, T_IMAGE = 0, 1, 2
+TILE = 76
+
+
+def is_x11():
+    return type(Gdk.Display.get_default()).__name__.startswith("X11")
+
+
+def palette():
+    c = dict(bg="#1e1e2e", bg_alt="#313244", bg_hl="#45475a", fg="#cdd6f4", muted="#7f849c",
+             accent="#89b4fa", accent_fg="#1e1e2e")
+    try:
+        c.update(re.findall(r"(\w+)=(#[0-9a-fA-F]{6})", COLORS.read_text()))
+    except OSError:
+        pass
+    return c
+
+
+CSS = """
+window.shelf {{ background: transparent; }}
+.shelf-box {{ background: {bg}; color: {fg}; border: 2px solid {bg_hl}; border-radius: 14px; padding: 8px; }}
+.shelf-box.hover {{ border-color: {accent}; background: {bg_alt}; }}
+.shelf-head {{ color: {muted}; font-weight: bold; }}
+.shelf-head button {{ background: none; border: none; box-shadow: none; color: {muted}; padding: 0 6px; min-height: 0; min-width: 0; }}
+.shelf-head button:hover {{ color: {fg}; }}
+.shelf-all {{ background: {accent}; color: {accent_fg}; border-radius: 8px; padding: 1px 10px; font-weight: bold; }}
+.shelf-empty {{ color: {muted}; border: 2px dashed {bg_hl}; border-radius: 10px; padding: 28px 40px; }}
+.shelf-box.hover .shelf-empty {{ border-color: {accent}; color: {fg}; }}
+flowboxchild {{ padding: 0; border-radius: 10px; }}
+flowboxchild:hover {{ background: {bg_hl}; }}
+.shelf-tile label {{ font-size: smaller; }}
+"""
+
+
+# ---- X11 pointer watch (libX11 via ctypes: no extra packages) -----------------------------------
+class X11Pointer:
+    BUTTON1 = 1 << 8
+
+    def __init__(self):
+        self.x = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+        x = self.x
+        x.XOpenDisplay.restype = ctypes.c_void_p
+        x.XOpenDisplay.argtypes = [ctypes.c_char_p]
+        x.XDefaultRootWindow.restype = ctypes.c_ulong
+        x.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+        x.XInternAtom.restype = ctypes.c_ulong
+        x.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+        x.XGetSelectionOwner.restype = ctypes.c_ulong
+        x.XGetSelectionOwner.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        u, i = ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_int)
+        x.XQueryPointer.restype = ctypes.c_int
+        x.XQueryPointer.argtypes = [ctypes.c_void_p, ctypes.c_ulong, u, u, i, i, i, i, ctypes.POINTER(ctypes.c_uint)]
+        self.dpy = x.XOpenDisplay(None)
+        if not self.dpy:
+            raise OSError("no X display")
+        self.root = x.XDefaultRootWindow(self.dpy)
+        self.xdnd = x.XInternAtom(self.dpy, b"XdndSelection", 0)
+        self._r, self._c = ctypes.c_ulong(), ctypes.c_ulong()
+        self._rx, self._ry, self._wx, self._wy = (ctypes.c_int() for _ in range(4))
+        self._m = ctypes.c_uint()
+
+    def query(self):
+        """(x, y, button1 held)"""
+        self.x.XQueryPointer(self.dpy, self.root, ctypes.byref(self._r), ctypes.byref(self._c),
+                             ctypes.byref(self._rx), ctypes.byref(self._ry), ctypes.byref(self._wx),
+                             ctypes.byref(self._wy), ctypes.byref(self._m))
+        return self._rx.value, self._ry.value, bool(self._m.value & self.BUTTON1)
+
+    def dragging(self):
+        """Some program owns the XDND selection: a drag is (or was last) under way."""
+        return self.x.XGetSelectionOwner(self.dpy, self.xdnd) != 0
+
+
+class ShakeWatch:
+    """Polls the pointer; while a drag is in progress, looks for a quick left-right shake."""
+
+    def __init__(self, on_shake, on_release):
+        self.ptr = X11Pointer()
+        self.on_shake, self.on_release = on_shake, on_release
+        self.held = False
+        self.reset()
+        self.timer = None
+        self.schedule(100)
+
+    def reset(self):
+        self.dir = 0
+        self.anchor = None      # x where the current stroke started
+        self.last_x = None
+        self.turns = []         # times of the direction changes
+        self.fired = False
+
+    def schedule(self, ms):
+        if self.timer:
+            GLib.source_remove(self.timer)
+        self.timer = GLib.timeout_add(ms, self.tick)
+
+    def tick(self):
+        x, _, held = self.ptr.query()
+        if not held:
+            if self.held:
+                self.held = False
+                self.on_release(self.fired)
+                self.reset()
+                self.schedule(100)
+                return False
+            return True                       # idle: 10 checks a second
+        if not self.held:
+            self.held = True
+            self.reset()
+            self.schedule(16)                 # button down: follow the pointer closely
+            return False
+        if self.fired or not self.ptr.dragging():
+            return True
+        now = time.monotonic() * 1000
+        if self.last_x is None:
+            self.last_x = self.anchor = x
+            return True
+        dx = x - self.last_x
+        if dx:
+            d = 1 if dx > 0 else -1
+            if d != self.dir:
+                if self.dir and abs(self.last_x - self.anchor) >= SHAKE_PX:
+                    self.turns.append(now)
+                self.dir, self.anchor = d, self.last_x
+            self.last_x = x
+        self.turns = [t for t in self.turns if now - t <= SHAKE_MS]
+        if len(self.turns) >= SHAKE_TURNS:
+            self.fired = True
+            self.on_shake()
+        return True
+
+
+# ---- shelf items --------------------------------------------------------------------------------
+class Item:
+    def __init__(self, path, text=None, saved=False):
+        self.path = str(path)
+        self.text = text          # for saved text/links: what a text drop gets
+        self.saved = saved        # file lives in our cache (we made it)
+
+    def to_json(self):
+        return {"path": self.path, "text": self.text, "saved": self.saved}
+
+    @property
+    def uri(self):
+        return Gio.File.new_for_path(self.path).get_uri()
+
+    @property
+    def name(self):
+        if self.saved and self.text:
+            return self.text.strip().splitlines()[0][:60] if self.text.strip() else "text"
+        return os.path.basename(self.path.rstrip("/")) or self.path
+
+    def exists(self):
+        return os.path.lexists(self.path)
+
+
+def unique_path(stem, ext):
+    ITEMS.mkdir(parents=True, exist_ok=True)
+    stem = re.sub(r"[^\w.-]+", "-", stem).strip("-")[:40] or "item"
+    p = ITEMS / f"{stem}{ext}"
+    n = 2
+    while p.exists():
+        p = ITEMS / f"{stem}-{n}{ext}"
+        n += 1
+    return p
+
+
+def save_text(text):
+    first = text.strip().splitlines()[0] if text.strip() else "text"
+    if re.match(r"^[a-z][a-z0-9+.-]*://\S+$", text.strip()):
+        u = urlparse(text.strip())
+        p = unique_path((u.netloc + u.path).replace("/", "-"), ".url")
+        p.write_text(f"[InternetShortcut]\nURL={text.strip()}\n")
+    else:
+        p = unique_path(first, ".txt")
+        p.write_text(text)
+    return Item(p, text=text.strip(), saved=True)
+
+
+def save_pixbuf(pb):
+    p = unique_path("image-" + time.strftime("%Y%m%d-%H%M%S"), ".png")
+    pb.savev(str(p), "png", [], [])
+    return Item(p, saved=True)
+
+
+# ---- the window ---------------------------------------------------------------------------------
+def out(cl, text):
+    (getattr(cl, "print_literal", None) or (lambda t: sys.stdout.write(t)))(text)
+
+
+class Shelf(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+        self.items = []
+        self.win = None
+        self.watch = None
+        self.css = Gtk.CssProvider()
+        self.dragging_out = False
+        self.shown_by_shake = False
+        self.pending = {}     # drag context -> what we asked for
+
+    # -- state --
+    def load(self):
+        try:
+            data = json.loads(STATE.read_text())
+            self.items = [Item(**d) for d in data if isinstance(d, dict) and "path" in d]
+        except (OSError, ValueError, TypeError):
+            self.items = []
+        self.prune()
+
+    def save(self):
+        CACHE.mkdir(parents=True, exist_ok=True)
+        tmp = STATE.with_suffix(".tmp")
+        tmp.write_text(json.dumps([i.to_json() for i in self.items], indent=1))
+        tmp.replace(STATE)
+        # Saved files nothing points at any more go away.
+        keep = {i.path for i in self.items}
+        if ITEMS.is_dir():
+            for f in ITEMS.iterdir():
+                if str(f) not in keep:
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+
+    def prune(self):
+        """Forget items whose file was moved or deleted elsewhere."""
+        before = len(self.items)
+        self.items = [i for i in self.items if i.exists()]
+        return len(self.items) != before
+
+    def add_items(self, new):
+        have = {i.path for i in self.items}
+        added = False
+        for it in new:
+            if it.path not in have:
+                self.items.append(it)
+                have.add(it.path)
+                added = True
+        if added:
+            self.save()
+            self.refresh()
+
+    def remove(self, item):
+        self.items = [i for i in self.items if i is not item]
+        self.save()
+        self.refresh()
+        if not self.items:
+            self.hide()
+
+    def clear(self):
+        self.items = []
+        self.save()
+        self.refresh()
+        self.hide()
+
+    # -- app plumbing --
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), self.css,
+                                                 Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.load()
+        self.build()
+        self.hold()           # stay running with the window hidden: the next show is instant
+        if is_x11():
+            try:
+                self.watch = ShakeWatch(self.on_shake, self.on_release)
+            except OSError as e:
+                print(f"tux-shelf: no shake detection ({e})", file=sys.stderr)
+
+    def do_command_line(self, cl):
+        args = cl.get_arguments()[1:]
+        cmd = args[0] if args else "toggle"
+        if cmd in ("toggle", "show") and self.win.get_visible() and cmd == "toggle":
+            self.hide()
+        elif cmd in ("toggle", "show"):
+            self.show(at_pointer=True)
+        elif cmd == "hide":
+            self.hide()
+        elif cmd == "clear":
+            self.clear()
+        elif cmd == "add":
+            cwd = cl.get_cwd() or os.getcwd()
+            new = [Item(os.path.abspath(os.path.join(cwd, a))) for a in args[1:]]
+            new = [i for i in new if i.exists()]
+            if not new:
+                cl.printerr("tux-shelf add: no such file\n")
+                return 1
+            self.add_items(new)
+            self.show(at_pointer=not self.win.get_visible())
+        elif cmd == "list":
+            self.prune()
+            for i in self.items:
+                out(cl, i.path + "\n")
+        elif cmd == "daemon":
+            pass              # just be running (tux-autostart)
+        elif cmd == "quit":
+            self.quit()
+        else:
+            cl.printerr(f"tux-shelf: unknown command '{cmd}' "
+                        "(toggle, show, hide, clear, add FILE..., list, quit)\n")
+            return 2
+        return 0
+
+    # -- building --
+    def build(self):
+        x11 = is_x11()
+        w = Gtk.Window(type=Gtk.WindowType.POPUP if x11 else Gtk.WindowType.TOPLEVEL)
+        w.set_application(self)
+        w.set_title("Shelf")
+        w.set_decorated(False)
+        w.set_keep_above(True)
+        w.set_skip_taskbar_hint(True)
+        w.set_skip_pager_hint(True)
+        w.stick()
+        w.set_type_hint(Gdk.WindowTypeHint.UTILITY)
+        w.set_resizable(False)
+        w.get_style_context().add_class("shelf")
+        vis = w.get_screen().get_rgba_visual()
+        if vis and w.get_screen().is_composited():
+            w.set_visual(vis)
+        w.set_app_paintable(True)
+        w.connect("delete-event", lambda *_: self.hide() or True)
+        w.connect("key-press-event", self.on_key)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        box.get_style_context().add_class("shelf-box")
+        self.box = box
+
+        head = Gtk.Box(spacing=4)
+        head.get_style_context().add_class("shelf-head")
+        self.title = Gtk.Label(label="Shelf", xalign=0)
+        head.pack_start(self.title, True, True, 2)
+        self.all = Gtk.EventBox()
+        lbl = Gtk.Label(label="⠿ all")
+        lbl.get_style_context().add_class("shelf-all")
+        self.all.add(lbl)
+        self.all.set_tooltip_text("Drag everything on the shelf at once")
+        self.make_source(self.all, lambda: self.items)
+        head.pack_start(self.all, False, False, 0)
+        for icon, tip, cb in (("edit-clear-all-symbolic", "Clear the shelf", lambda *_: self.clear()),
+                              ("window-close-symbolic", "Hide (Super+G)", lambda *_: self.hide())):
+            b = Gtk.Button.new_from_icon_name(icon, Gtk.IconSize.MENU)
+            b.set_relief(Gtk.ReliefStyle.NONE)
+            b.set_tooltip_text(tip)
+            b.set_can_focus(False)
+            b.connect("clicked", cb)
+            head.pack_start(b, False, False, 0)
+        box.pack_start(head, False, False, 0)
+
+        self.empty = Gtk.Label(label="Drop things here")
+        self.empty.get_style_context().add_class("shelf-empty")
+        box.pack_start(self.empty, False, False, 0)
+
+        self.flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                                max_children_per_line=4, min_children_per_line=1,
+                                column_spacing=4, row_spacing=4, activate_on_single_click=False)
+        self.scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                         propagate_natural_height=True, propagate_natural_width=True, max_content_height=3 * (TILE + 30))
+        self.scroll.add(self.flow)
+        box.pack_start(self.scroll, True, True, 0)
+
+        # Drops land anywhere on the shelf.
+        w.drag_dest_set(0, [], Gdk.DragAction.COPY)
+        tl = Gtk.TargetList.new([])
+        tl.add_uri_targets(T_URI)
+        tl.add_image_targets(T_IMAGE, False)
+        tl.add_text_targets(T_TEXT)
+        w.drag_dest_set_target_list(tl)
+        w.drag_dest_set_track_motion(True)
+        w.connect("drag-motion", self.on_drag_motion)
+        w.connect("drag-leave", lambda *_: self.box.get_style_context().remove_class("hover"))
+        w.connect("drag-drop", self.on_drag_drop)
+        w.connect("drag-data-received", self.on_data)
+
+        w.add(box)
+        self.win = w
+        self.refresh()
+
+    def tile(self, item):
+        eb = Gtk.EventBox()
+        eb.get_style_context().add_class("shelf-tile")
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        v.set_size_request(TILE, -1)
+        v.set_margin_top(4)
+        v.set_margin_bottom(4)
+        img = Gtk.Image()
+        gicon = self.icon_for(item, img)
+        v.pack_start(img, False, False, 0)
+        lab = Gtk.Label(label=item.name, ellipsize=3, max_width_chars=10, justify=Gtk.Justification.CENTER)
+        v.pack_start(lab, False, False, 0)
+        eb.add(v)
+        eb.set_tooltip_text(item.text if item.saved and item.text else item.path)
+        self.make_source(eb, lambda: [item], gicon)
+        eb.connect("button-press-event", self.on_tile_click, item)
+        return eb
+
+    def icon_for(self, item, img):
+        """Thumbnail for images, the file type's icon for anything else. Returns the GIcon for drags."""
+        gicon = None
+        try:
+            info = Gio.File.new_for_path(item.path).query_info("standard::icon,standard::content-type", 0, None)
+            gicon = info.get_icon()
+            ctype = info.get_content_type() or ""
+        except GLib.Error:
+            ctype = ""
+        if ctype.startswith("image/") and "svg" not in ctype:
+            try:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_scale(item.path, 56, 48, True)
+                img.set_from_pixbuf(pb)
+                return gicon
+            except GLib.Error:
+                pass
+        if item.saved and item.text and item.path.endswith(".url"):
+            gicon = Gio.ThemedIcon.new("text-html")
+        img.set_from_gicon(gicon or Gio.ThemedIcon.new("text-x-generic"), Gtk.IconSize.DIALOG)
+        img.set_pixel_size(48)
+        return gicon
+
+    def refresh(self):
+        for c in self.flow.get_children():
+            self.flow.remove(c)
+        for it in self.items:
+            self.flow.add(self.tile(it))
+        n = len(self.items)
+        self.title.set_text("Shelf" if not n else f"Shelf · {n}")
+        self.empty.set_visible(n == 0)
+        self.empty.set_no_show_all(n != 0)
+        self.scroll.set_visible(n > 0)
+        self.scroll.set_no_show_all(n == 0)
+        self.all.set_visible(n > 1)
+        self.all.set_no_show_all(n <= 1)
+        cols = min(max(n, 1), 4)
+        self.flow.set_min_children_per_line(cols)
+        self.flow.set_max_children_per_line(cols)
+        self.flow.show_all()
+        if self.win:
+            self.win.resize(1, 1)     # shrink back to fit
+
+    # -- showing --
+    def show(self, at_pointer=False):
+        self.css.load_from_data(CSS.format(**palette()).encode())
+        if self.prune():
+            self.save()
+            self.refresh()
+        w = self.win
+        self.box.show_all()
+        self.refresh()
+        # Placed before it maps, so picom does not slide it over from where it was last time.
+        if at_pointer and is_x11():
+            self.place_at_pointer()
+        w.show()
+        if not is_x11():
+            w.present()
+
+    def place_at_pointer(self):
+        disp = Gdk.Display.get_default()
+        _, px, py = disp.get_default_seat().get_pointer().get_position()
+        area = disp.get_monitor_at_point(px, py).get_workarea()
+        ww, wh = self.win.get_preferred_size()[1].width, self.win.get_preferred_size()[1].height
+        x = min(max(px - ww // 2, area.x + 8), area.x + area.width - ww - 8)
+        y = min(max(py - wh // 2, area.y + 8), area.y + area.height - wh - 8)
+        self.win.move(x, y)
+
+    def hide(self):
+        self.shown_by_shake = False
+        if self.win:
+            self.win.hide()
+
+    def on_key(self, _w, ev):
+        if ev.keyval == Gdk.KEY_Escape:
+            self.hide()
+            return True
+        return False
+
+    # -- shake --
+    def on_shake(self):
+        if self.dragging_out:
+            return
+        if not self.win.get_visible():
+            self.shown_by_shake = True
+        self.show(at_pointer=True)
+
+    def on_release(self, fired):
+        # A shake opened the shelf but nothing was dropped: put it away again.
+        if fired and self.shown_by_shake:
+            GLib.timeout_add(400, self._maybe_unshow)
+
+    def _maybe_unshow(self):
+        if self.shown_by_shake and not self.items:
+            self.hide()
+        self.shown_by_shake = False
+        return False
+
+    # -- dropping in --
+    def on_drag_motion(self, w, ctx, x, y, t):
+        # Our own tile is not a new item; neither is something we cannot take.
+        if Gtk.drag_get_source_widget(ctx) is not None or not w.drag_dest_find_target(ctx, None):
+            Gdk.drag_status(ctx, 0, t)
+            return True
+        self.box.get_style_context().add_class("hover")
+        Gdk.drag_status(ctx, Gdk.DragAction.COPY, t)
+        return True
+
+    def on_drag_drop(self, w, ctx, x, y, t):
+        self.box.get_style_context().remove_class("hover")
+        if Gtk.drag_get_source_widget(ctx) is not None:
+            return False
+        target = w.drag_dest_find_target(ctx, None)
+        if not target or target.name() == "NONE":
+            return False
+        offered = {a.name() for a in ctx.list_targets()}
+        self.pending[ctx] = {"offered": offered, "step": target.name()}
+        w.drag_get_data(ctx, target, t)
+        return True
+
+    def on_data(self, w, ctx, x, y, data, info, t):
+        st = self.pending.get(ctx, {"offered": set()})
+        new, retry = [], None
+        if info == T_URI:
+            uris = data.get_uris() or []
+            files = [unquote(urlparse(u).path) for u in uris if u.startswith("file:")]
+            others = [u for u in uris if not u.startswith("file:")]
+            new = [Item(p) for p in files if os.path.lexists(p)]
+            if others and not files:
+                # A web link or image from a browser: the picture itself if it came along, else the link.
+                img = next((a for a in st["offered"] if a.startswith("image/")), None)
+                if img and st.get("step") != img:
+                    retry = img
+                else:
+                    new = [save_text(u) for u in others]
+        elif info == T_IMAGE:
+            pb = data.get_pixbuf()
+            if pb:
+                new = [save_pixbuf(pb)]
+        elif info == T_TEXT:
+            txt = data.get_text()
+            if txt and txt.strip():
+                lines = [ln.strip() for ln in txt.strip().splitlines()]
+                # Paths dragged as text (some terminals do that) are files.
+                if all(ln.startswith("/") and os.path.lexists(ln) for ln in lines):
+                    new = [Item(ln) for ln in lines]
+                else:
+                    new = [save_text(txt)]
+        if retry:
+            st["step"] = retry
+            w.drag_get_data(ctx, Gdk.Atom.intern(retry, False), t)
+            return
+        self.pending.pop(ctx, None)
+        Gtk.drag_finish(ctx, bool(new), False, t)
+        if new:
+            self.shown_by_shake = False
+            self.add_items(new)
+
+    # -- dragging out --
+    def make_source(self, widget, get_items, gicon=None):
+        widget.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, [],
+                               Gdk.DragAction.COPY | Gdk.DragAction.MOVE | Gdk.DragAction.LINK)
+        tl = Gtk.TargetList.new([])
+        tl.add_uri_targets(T_URI)
+        tl.add_text_targets(T_TEXT)
+        widget.drag_source_set_target_list(tl)
+
+        def begin(_w, ctx):
+            self.dragging_out = True
+            its = get_items()
+            if len(its) > 1:
+                Gtk.drag_set_icon_name(ctx, "edit-copy", 0, 0)
+            elif gicon:
+                Gtk.drag_set_icon_gicon(ctx, gicon, 0, 0)
+
+        def get(_w, ctx, data, info, t):
+            its = get_items()
+            if info == T_URI:
+                data.set_uris([i.uri for i in its])
+            else:
+                data.set_text("\n".join(i.text if i.saved and i.text else i.path for i in its), -1)
+
+        def end(_w, ctx):
+            self.dragging_out = False
+            # Moved somewhere (Shift-drag into a folder): the old path is gone, so is the item.
+            GLib.timeout_add(300, self._after_drag_out)
+
+        widget.connect("drag-begin", begin)
+        widget.connect("drag-data-get", get)
+        widget.connect("drag-end", end)
+
+    def _after_drag_out(self):
+        if self.prune():
+            self.save()
+            self.refresh()
+            if not self.items:
+                self.hide()
+        return False
+
+    # -- item menu --
+    def on_tile_click(self, _w, ev, item):
+        if ev.button == 3:
+            m = Gtk.Menu()
+            for label, cb in (("Open", lambda *_: self.open(item.path)),
+                              ("Show in folder", lambda *_: self.open(os.path.dirname(item.path))),
+                              ("Copy path" if not (item.saved and item.text) else "Copy text",
+                               lambda *_: self.copy(item.text if item.saved and item.text else item.path)),
+                              (None, None),
+                              ("Remove from shelf", lambda *_: self.remove(item))):
+                mi = Gtk.SeparatorMenuItem() if label is None else Gtk.MenuItem(label=label)
+                if cb:
+                    mi.connect("activate", cb)
+                m.append(mi)
+            m.show_all()
+            m.attach_to_widget(self.win, None)
+            m.popup_at_pointer(ev)
+            return True
+        if ev.button == 2 or (ev.button == 1 and ev.type == Gdk.EventType._2BUTTON_PRESS):
+            self.open(item.text if item.saved and item.text and item.path.endswith(".url") else item.path)
+            return True
+        return False
+
+    def open(self, target):
+        uri = target if "://" in target else Gio.File.new_for_path(target).get_uri()
+        try:
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+        except GLib.Error:
+            GLib.spawn_async(["xdg-open", target], flags=GLib.SpawnFlags.SEARCH_PATH)
+
+    def copy(self, text):
+        for sel in (Gdk.SELECTION_CLIPBOARD, Gdk.SELECTION_PRIMARY):
+            Gtk.Clipboard.get(sel).set_text(text, -1)
+
+
+if __name__ == "__main__":
+    GLib.set_prgname("tux-shelf")         # WM_CLASS instance: picom and i3 rules match it
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help", "help"):
+        with open(__file__) as f:
+            for line in f.readlines()[1:12]:
+                print(line[2:].rstrip())
+        sys.exit(0)
+    # No shelf running yet: start one in the background, then hand it this command, so a first
+    # `tux-shelf add x` from a terminal returns instead of becoming the long-running shelf.
+    if os.environ.get("TUX_SHELF_FG") != "1":
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        except GLib.Error:
+            bus = None
+
+        def running():
+            r = bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                              "NameHasOwner", GLib.Variant("(s)", (APP_ID,)), None, 0, -1, None)
+            return r.unpack()[0]
+
+        if bus and not running():
+            if sys.argv[1:2] == ["quit"]:
+                sys.exit(0)
+            import subprocess
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "daemon"],
+                             env=dict(os.environ, TUX_SHELF_FG="1"), start_new_session=True,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            for _ in range(60):
+                if running():
+                    break
+                time.sleep(0.05)
+            if sys.argv[1:2] == ["daemon"]:
+                sys.exit(0)
+    sys.exit(Shelf().run(sys.argv))

@@ -448,6 +448,7 @@ square corners, blur and see-through unfocused windows), with **the same keys as
 | Super+F | fullscreen | Super+Shift+Space | float / tile |
 | Super+T | notes | Super+A | web apps |
 | Super+Z | **recent files** (films, music, documents, pictures …; pick one to reopen it) | Super+Shift+Z | **recent programs** (pick one to start it again) |
+| Super+G | **drag shelf**: park files, text, links and images, drag them out later (X11: shake the mouse while dragging to open it) | | |
 | Super+Alt+Tab / +Shift | next / previous window in this workspace | Alt+Tab (hold Alt) | **workspace switcher**, most recent first (tap: last workspace) |
 | Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
 | Super + drag a window to the right / left screen edge | move it to the next / previous workspace and go there | Bar: tile / float icon | this workspace: float every window, click again: tile them all |

@@ -58,6 +58,8 @@ if [[ $session == i3 || $session == sway ]]; then   # these follow i3/sway windo
   tux-overview watch &   # exits at once if one is already running
   tux-recent watch &     # programs list for Super+Shift+Z (one per session too)
 fi
+# Drag shelf (Super+G; on X11 also a mouse shake while dragging). Returns at once if one is running.
+[[ $session == i3 || $session == sway || $session == dwm ]] && tux-shelf daemon
 # Music daemon for rmpc (folder: tux-music folder).
 command -v mpd >/dev/null && tux-music start
 # First login with printing set up but no printer yet: add the ones found on the network / USB.

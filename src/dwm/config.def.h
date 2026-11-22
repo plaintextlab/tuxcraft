@@ -171,6 +171,7 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,             XK_t,                     spawn,          SHCMD(FLOAT "tux-notes --new") },
 	{ MODKEY,                       XK_c,                     spawn,          SHCMD(FLOAT "qalc") },
 	{ MODKEY,                       XK_v,                     spawn,          SHCMD("tux-clip") },
+	{ MODKEY,                       XK_g,                     spawn,          SHCMD("tux-shelf toggle") },   /* drag shelf */
 	{ MODKEY,                       XK_period,                spawn,          SHCMD("tux-emoji") },
 	{ MODKEY,                       XK_z,                     spawn,          SHCMD("tux-recent files") },
 	{ MODKEY|ShiftMask,             XK_z,                     spawn,          SHCMD("tux-recent apps") },
