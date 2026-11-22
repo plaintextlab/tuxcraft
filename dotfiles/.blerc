@@ -5,6 +5,16 @@ bleopt exec_errexit_mark=        # starship already shows a failed exit code
 bleopt exec_elapsed_mark=        # ... and how long a slow command took
 bleopt edit_abell=               # no beep (the flash, edit_vbell, is off by default)
 bleopt complete_menu_style=align-nowrap
+# Hints stay out of the way while typing: they come from history only (no completion run on every
+# key, which also pulled in fzf's completion mid-word), and wait for a short pause before showing.
+bleopt complete_auto_complete=
+bleopt complete_auto_delay=300
+bleopt complete_auto_menu=
+# Tab completion through fzf: tell ble.sh where Debian/Arch keep fzf's scripts (else it prints
+# "failed to find fzf base directory").
+for _d in /usr/share/fzf /usr/share/doc/fzf/examples; do
+  [[ -f $_d/key-bindings.bash ]] && { _ble_contrib_fzf_base=$_d; break; }
+done; unset _d
 # Paths that exist keep ble.sh's colours but are not underlined (its defaults, minus underline).
 ble-face -s filename_directory        fg=33
 ble-face -s filename_directory_sticky fg=231,bg=26
