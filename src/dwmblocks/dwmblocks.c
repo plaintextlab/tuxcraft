@@ -3,6 +3,7 @@
 #include<string.h>
 #include<unistd.h>
 #include<signal.h>
+#include<errno.h>
 #ifndef NO_X
 #include<X11/Xlib.h>
 #endif
@@ -71,7 +72,19 @@ void getcmd(const Block *block, char *output)
 	if (!cmdf)
 		return;
 	int i = strlen(block->icon) + s;
-	fgets(tempstatus+i, CMDLENGTH-i-delimLen, cmdf);
+	/* tuxcraft: a signal arriving mid-read (another block's refresh) used to make fgets fail
+	 * with EINTR, and the block was hidden until its next interval. Retry; on a real read
+	 * error keep what the block showed before instead of hiding it. */
+	char *got;
+	do {
+		clearerr(cmdf);
+		errno = 0;
+		got = fgets(tempstatus+i, CMDLENGTH-i-delimLen, cmdf);
+	} while (!got && errno == EINTR);
+	if (!got && ferror(cmdf)) {
+		pclose(cmdf);
+		return;
+	}
 	i = strlen(tempstatus);
 	if (i > s && tempstatus[i-1] == '\n') /* tuxcraft: an empty line is nothing too */
 		tempstatus[--i] = '\0';
@@ -114,6 +127,17 @@ void getsigcmds(unsigned int signal)
 	}
 }
 
+/* tuxcraft: every block's update signal */
+sigset_t blocksigs()
+{
+	sigset_t set;
+	sigemptyset(&set);
+	for (unsigned int i = 0; i < LENGTH(blocks); i++)
+		if (blocks[i].signal > 0)
+			sigaddset(&set, SIGMINUS+blocks[i].signal);
+	return set;
+}
+
 void setupsignals()
 {
 #ifndef __OpenBSD__
@@ -124,8 +148,10 @@ void setupsignals()
 
 	struct sigaction sa = {0};
 	sa.sa_sigaction = buttonhandler;
-	sa.sa_flags = SA_SIGINFO;
-	sigemptyset(&sa.sa_mask);
+	/* tuxcraft: SA_RESTART so reads in progress go on; while one block's handler runs, the
+	 * other block signals wait (no getcmd/popen nested inside another) */
+	sa.sa_flags = SA_SIGINFO | SA_RESTART;
+	sa.sa_mask = blocksigs();
 	for (unsigned int i = 0; i < LENGTH(blocks); i++) {
 		if (blocks[i].signal > 0)
 			sigaction(SIGMINUS+blocks[i].signal, &sa, NULL);
@@ -178,11 +204,16 @@ void pstdout()
 void statusloop()
 {
 	setupsignals();
+	sigset_t sigs = blocksigs();
 	int i = 0;
+	sigprocmask(SIG_BLOCK, &sigs, NULL);
 	getcmds(-1);
 	while (1) {
+		/* tuxcraft: refresh signals wait until the periodic update is written, then run */
+		sigprocmask(SIG_BLOCK, &sigs, NULL);
 		getcmds(i++);
 		writestatus();
+		sigprocmask(SIG_UNBLOCK, &sigs, NULL);
 		if (!statusContinue)
 			break;
 		sleep(1.0);
