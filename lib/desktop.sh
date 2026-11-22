@@ -267,7 +267,10 @@ WALLPAPER=theme
 EOF
   if [[ -n $keep ]]; then { grep -vE '^(WALLPAPER|TERMINAL)=' "$st"; echo "$keep"; } >"$st.new" && mv "$st.new" "$st"; fi
   fi
-  chown -R "$TUX_USER:" "$TUX_HOME/.config" "$TUX_HOME/.local" "$TUX_HOME"/.[!.]* 2>/dev/null || true
+  # Hand back only what this (root) run created. Never a blanket chown -R: ~/.local holds the
+  # rootless podman storage of every box, and chown strips setuid bits (sudo) and box owners.
+  find "$TUX_HOME/.config" "$TUX_HOME/.local" "$TUX_HOME"/.[!.]* -xdev \
+    -path "$TUX_HOME/.local/share/containers" -prune -o -user 0 -exec chown -h "$TUX_USER:" {} + 2>/dev/null || true
 }
 
 wallpapers_stage() {
