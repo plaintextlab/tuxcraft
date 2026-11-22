@@ -640,6 +640,80 @@ unswallow(Client *c)
 	arrange(c->mon);
 }
 
+/* tuxcraft: colours in the status text. "^c#rrggbb^" draws what follows in that colour, "^d^"
+ * goes back to the bar's own (tux-dwmbar colours the block icons with the theme's palette). */
+static int
+statuscolor(const char *name, Clr *c)
+{
+	static struct { char name[8]; Clr clr; } cache[32];
+	static unsigned int n;
+	unsigned int i;
+
+	for (i = 0; i < n; i++)
+		if (!strcmp(cache[i].name, name)) {
+			*c = cache[i].clr;
+			return 1;
+		}
+	if (n == LENGTH(cache) || !XftColorAllocName(dpy, DefaultVisual(dpy, screen),
+	    DefaultColormap(dpy, screen), name, &cache[n].clr))
+		return 0;
+	strcpy(cache[n].name, name);
+	*c = cache[n++].clr;
+	return 1;
+}
+
+/* The width of one block's text without its colour markers; draws it at x too when draw is set.
+ * The pieces are drawn right to left: an icon is often wider than its advance, and drawing the
+ * piece after it (which fills its own background) would cut off the icon's right edge. */
+static int
+statustext(char *text, int x, int draw)
+{
+	struct { char *s; int len, x, w; Clr fg; } seg[64];
+	char *s = text, *e, *end = NULL, ch, name[8];
+	int w = 0, n = 0, i;
+	Clr fg = scheme[SchemeStatus][ColFg], scm[3];
+
+	while (*s && n < (int)LENGTH(seg)) {
+		for (e = s; *e; e++) /* a piece runs to the next marker; a lone "^" is just text */
+			if (*e == '^' && (end = strchr(e + 1, '^'))
+			&& ((e[1] == 'c' && e[2] == '#' && end - e == 9) || (e[1] == 'd' && end == e + 2)))
+				break;
+		if (e > s) {
+			ch = *e;
+			*e = '\0';
+			seg[n].s = s;
+			seg[n].len = e - s;
+			seg[n].x = w;
+			seg[n].w = TEXTW(s) - lrpad;
+			seg[n].fg = fg;
+			w += seg[n++].w;
+			*e = ch;
+		}
+		if (!*e)
+			break;
+		fg = scheme[SchemeStatus][ColFg];
+		if (e[1] == 'c') {
+			memcpy(name, e + 2, 7);
+			name[7] = '\0';
+			statuscolor(name, &fg);
+		}
+		s = end + 1;
+	}
+	if (!draw)
+		return w;
+	memcpy(scm, scheme[SchemeStatus], sizeof scm);
+	drw_setscheme(drw, scm);
+	for (i = n - 1; i >= 0; i--) {
+		ch = seg[i].s[seg[i].len];
+		seg[i].s[seg[i].len] = '\0';
+		scm[ColFg] = seg[i].fg;
+		drw_text(drw, x + seg[i].x, 0, seg[i].w, bh, 0, seg[i].s, 0);
+		seg[i].s[seg[i].len] = ch;
+	}
+	drw_setscheme(drw, scheme[SchemeStatus]);
+	return w;
+}
+
 void
 buttonpress(XEvent *e)
 { /* handles clickable areas on the bar */
@@ -682,7 +756,7 @@ buttonpress(XEvent *e)
 				if ((unsigned char)(*s) < ' ') { /* sig delim, if block boundaries are off check this */
 					ch = *s; /* measure width */
 					*s = '\0';
-					x += TEXTW(text) - lrpad; /* debug test try (lrpad / 2) */
+					x += statustext(text, 0, 0); /* debug test try (lrpad / 2) */
 					*s = ch;
 					text = s + 1; /* move text to next char after delim */
 					if (x >= ev->x) /* check click pos */
@@ -1067,15 +1141,13 @@ drawbar(Monitor *m) /* take a pointer to the monitor we want to draw the bar on 
 			if ((unsigned char)(*s) < ' ') { /* ctrl chars (ASCII < 32) are used to separate click events */
 				ch = *s;
 				*s = '\0';
-				tw = TEXTW(text) - lrpad;
-				drw_text(drw, m->ww - statusw  + x - stw, 0, tw, bh, 0, text, 0);				
-				x += tw;
+				x += statustext(text, m->ww - statusw + x - stw, 1);
 				*s = ch;
 				text = s + 1;
 			}
 		}
-		tw = TEXTW(text) - lrpad + 2; /* 2px extra right padding */
-		drw_text(drw, m->ww - statusw + x - stw, 0, tw, bh, 0 , text, 0);
+		x += statustext(text, m->ww - statusw + x - stw, 1);
+		drw_rect(drw, m->ww - statusw + x - stw, 0, 2, bh, 1, 1); /* 2px extra right padding */
 		tw = statusw;
 	}
 
@@ -3829,12 +3901,12 @@ updatestatus(void)
 			if ((unsigned char)(*s) < ' ') {
 				ch = *s;
 				*s = '\0';
-				statusw += TEXTW(text) - lrpad;
+				statusw += statustext(text, 0, 0);
 				*s = ch;
 				text = s + 1;
 			}
 		}
-		statusw += TEXTW(text) - lrpad + 2;
+		statusw += statustext(text, 0, 0) + 2;
 
 	}
 	drawbar(selmon);

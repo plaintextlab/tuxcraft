@@ -21,7 +21,24 @@ mkdir -p "$RT"
 declare -A SIG=([music]=1 [music-prev]=14 [music-toggle]=15 [music-next]=16 [collapse]=17 [cpu]=2 [memory]=3 [gpu]=4 [updates]=5 [bluetooth]=6 [volume]=7
                 [network]=8 [battery]=9 [power]=11 [record]=12 [clock]=13)
 
-strip() { sed -E 's/%\{[^}]*\}//g; s/[[:space:]]+$//' | head -n1; }
+# Colours: the active theme's palette (tux-theme writes colors.sh and then refreshes the bar), read
+# every time a block is drawn, so the icons always match the theme. Only the icons get a colour.
+# shellcheck source=/dev/null
+. "${XDG_CONFIG_HOME:-$HOME/.config}/tuxcraft/colors.sh" 2>/dev/null
+declare -A COLOR=([music]='' [music-prev]=${magenta:-} [music-toggle]=${magenta:-} [music-next]=${magenta:-}
+                  [collapse]=${muted:-} [cpu]=${blue:-} [memory]=${green:-} [gpu]=${cyan:-}
+                  [updates]=${yellow:-} [bluetooth]=${blue:-} [volume]=${muted:-} [network]=${cyan:-}
+                  [battery]=${green:-} [power]=${orange:-} [record]=${red:-} [clock]=${accent:-})
+
+# polybar colour tags (%{F#rrggbb} ... %{F-}) become dwm's (^c#rrggbb^ ... ^d^); other tags go.
+strip() { sed -E 's/%\{F(#[0-9A-Fa-f]{6})\}/^c\1^/g; s/%\{F-\}/^d^/g; s/%\{[^}]*\}//g; s/[[:space:]]+$//' | head -n1; }
+GLYPH=$'[\x80-\xff]'   # any byte of a multibyte (UTF-8) character: the Nerd Font icons
+# Colour a block's icons (the non-ASCII glyphs), unless the script coloured them itself.
+paint() {  # paint COLOR
+  local l; IFS= read -r l || return 0
+  if [[ -z $1 || $l == *'^c'* ]]; then printf '%s\n' "$l"
+  else printf '%s\n' "$l" | LC_ALL=C sed -E "s/($GLYPH+)/^c$1^\\1^d^/g"; fi
+}
 refresh() {  # refresh [BLOCK]
   local b
   if [[ -n ${1:-} ]]; then pkill -RTMIN+"${SIG[$1]}" -u "$UID" -x dwmblocks
@@ -139,7 +156,9 @@ block_volume() {
 
 block_network() {
   case $BTN in 1) float tux-net ;; 3) float tux-net nmtui ;; esac
-  tux-netinfo --plain 2>/dev/null | strip
+  local o; o=$(tux-netinfo --plain 2>/dev/null | strip)
+  [[ $o == 󰖪* && -n ${muted:-} ]] && o="^c$muted^$o^d^"   # offline: greyed out, as in polybar
+  [[ -n $o ]] && printf '%s\n' "$o"
 }
 
 block_battery() { "$POLY/battery.sh" 2>/dev/null | strip; }
@@ -166,7 +185,8 @@ block_clock() {
 
 case ${1:-} in
   refresh) refresh "${2:-}" ;;
-  music|collapse|cpu|memory|gpu|updates|bluetooth|volume|network|battery|power|record|clock) "block_$1" ;;
-  music-prev|music-toggle|music-next) "block_${1//-/_}" ;;
+  music|collapse|cpu|memory|gpu|updates|bluetooth|volume|network|battery|power|record|clock|music-prev|music-toggle|music-next)
+    c=${COLOR[$1]}
+    "block_${1//-/_}" | paint "$c" ;;
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
