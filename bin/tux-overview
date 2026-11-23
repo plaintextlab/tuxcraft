@@ -208,7 +208,8 @@ show() {
   # binding moves by rows and pages). Its default ScrollUp/Down bindings are cleared, or rofi
   # complains about a binding used twice.
   local next='Tab' prev='ISO_Left_Tab'
-  local -a kb=(-ml-row-up '' -ml-row-down '')
+  # A single click on a workspace goes there (rofi's default: click selects, double-click goes).
+  local -a kb=(-ml-row-up '' -ml-row-down '' -me-select-entry '' -me-accept-entry 'MousePrimary')
   if [[ $mode == switch ]]; then
     ((n > 1)) || exit 0
     # Most recently used first: this workspace, the last one, ... then the never-visited ones.
