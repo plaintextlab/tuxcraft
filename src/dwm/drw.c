@@ -221,6 +221,42 @@ drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int
 		XDrawRectangle(drw->dpy, drw->drawable, drw->gc, x, y, w - 1, h - 1);
 }
 
+/* tuxcraft: a fallback font that really has the character. XftFontMatch ran fontconfig's
+ * substitution a second time on the already substituted pattern; that pass finds the generic
+ * "emoji" family the first one added and asks for emoji (lang und-zsye, colour) above all, so
+ * the "best" font for ★ was Noto Color Emoji, which has no ★, and the main font's empty box
+ * was drawn instead. This walks fontconfig's whole fallback list for the pattern (the font,
+ * then the user's fallbacks: Nerd Font symbols, Noto Color Emoji, sans-serif and the rest)
+ * and takes the first font that has the character, so any font gets its missing emoji and
+ * symbols from the others. Colour fonts are left out: a fallback one (Reem Kufi Fun for —, ’ or
+ * “) gave colour glyphs the X server refused (BadLength in RenderAddGlyphs), which ended dwm
+ * and the session. Emoji come in colour from Noto Color Emoji in the font list instead, at a
+ * size made for the bar. */
+static FcPattern *
+fallbackfont(Drw *drw, FcPattern *pattern, long codepoint)
+{
+	FcPattern *xpattern, *match = NULL;
+	FcFontSet *set;
+	FcCharSet *charset;
+	FcResult result;
+	FcBool color;
+	int i;
+
+	if (!(set = FcFontSort(NULL, pattern, FcTrue, NULL, &result)))
+		return NULL;
+	xpattern = FcPatternDuplicate(pattern);
+	XftDefaultSubstitute(drw->dpy, drw->screen, xpattern); /* size, dpi, antialias for Xft */
+	for (i = 0; i < set->nfont && !match; i++)
+		if (FcPatternGetBool(set->fonts[i], FC_COLOR, 0, &color) == FcResultMatch && color)
+			continue; /* colour fonts: see below */
+		else if (FcPatternGetCharSet(set->fonts[i], FC_CHARSET, 0, &charset) == FcResultMatch
+		&& FcCharSetHasChar(charset, codepoint))
+			match = FcFontRenderPrepare(NULL, xpattern, set->fonts[i]);
+	FcPatternDestroy(xpattern);
+	FcFontSetDestroy(set);
+	return match;
+}
+
 int
 drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert)
 {
@@ -234,7 +270,6 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 	FcCharSet *fccharset;
 	FcPattern *fcpattern;
 	FcPattern *match;
-	XftResult result;
 	int charexists = 0, overflow = 0;
 	/* keep track of a couple codepoints for which we have no match. */
 	static unsigned int nomatches[128], ellipsis_width, invalid_width;
@@ -356,7 +391,7 @@ drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lp
 
 			FcConfigSubstitute(NULL, fcpattern, FcMatchPattern);
 			FcDefaultSubstitute(fcpattern);
-			match = XftFontMatch(drw->dpy, drw->screen, fcpattern, &result);
+			match = fallbackfont(drw, fcpattern, utf8codepoint);
 
 			FcCharSetDestroy(fccharset);
 			FcPatternDestroy(fcpattern);

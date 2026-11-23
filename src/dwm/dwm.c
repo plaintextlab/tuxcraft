@@ -413,6 +413,7 @@ static int sw, sh;           /* X display screen geometry width, height */
 static int bh;               /* bar height */
 static int lrpad;            /* sum of left and right padding for text */
 static int (*xerrorxlib)(Display *, XErrorEvent *);
+static int renderop = -1; /* tuxcraft: the RENDER extension's request code (xerror) */
 static unsigned int numlockmask = 0;
 static void (*handler[LASTEvent]) (XEvent *) = { /* maps X event type to matching function */
 	[ButtonPress] = buttonpress, /* mouse button */
@@ -3219,6 +3220,11 @@ setup(void)
 	sh = DisplayHeight(dpy, screen);
 	root = RootWindow(dpy, screen); /* dwm attaches to the root window so it can recieve global events */
 	drw = drw_create(dpy, screen, root, sw, sh); /* a drawing context for rendering the UI (like the bar) */
+	{ /* tuxcraft: RENDER draws the bar's text (Xft); see xerror */
+		int ev, er;
+		if (!XQueryExtension(dpy, "RENDER", &renderop, &ev, &er))
+			renderop = -1;
+	}
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
 	lrpad = drw->fonts->h; /* sets lrpad to the height of the font, for correct spacing in bar */
@@ -4432,6 +4438,15 @@ xerror(Display *dpy, XErrorEvent *ee)
 	|| (ee->request_code == X_GrabKey && ee->error_code == BadAccess)
 	|| (ee->request_code == X_CopyArea && ee->error_code == BadDrawable))
 		return 0;
+	/* tuxcraft: a glyph the X server refuses (BadLength from RenderAddGlyphs: a colour glyph
+	 * too big for one request, from a fallback font for a character in a window title) is
+	 * simply not drawn. RENDER only draws text and pictures, so none of its errors is worth
+	 * ending dwm, and with it the session, over. */
+	if (renderop >= 0 && ee->request_code == renderop) {
+		fprintf(stderr, "dwm: ignored RENDER error (minor request %d, error %d)\n",
+			ee->minor_code, ee->error_code);
+		return 0;
+	}
 	fprintf(stderr, "dwm: fatal error: request code=%d, error code=%d\n",
 		ee->request_code, ee->error_code);
 	return xerrorxlib(dpy, ee); /* may call exit */

@@ -1739,6 +1739,33 @@ xresetfontsettings(uint32_t mode, Font **font, int *frcflags)
 }
 #endif // LIGATURES_PATCH
 
+/* tuxcraft: a fallback font that really has the character. The pattern goes through
+ * fontconfig's substitution twice (xloadfont, then here); the second pass finds the generic
+ * "emoji" family the first added and puts emoji fonts first, so the match for ★ was Noto
+ * Color Emoji, which has no ★, and an empty box was drawn. Then the font's sorted fallback
+ * list is walked for the first font that has it. */
+static FcPattern *
+fallbackmatch(FcFontSet **sets, FcPattern *pattern, Rune rune)
+{
+	FcPattern *match;
+	FcCharSet *charset;
+	FcResult result;
+	int i;
+
+	match = FcFontSetMatch(0, sets, 1, pattern, &result);
+	if (match && FcPatternGetCharSet(match, FC_CHARSET, 0, &charset) == FcResultMatch
+	&& FcCharSetHasChar(charset, rune))
+		return match;
+	for (i = 0; sets[0] && i < sets[0]->nfont; i++)
+		if (FcPatternGetCharSet(sets[0]->fonts[i], FC_CHARSET, 0, &charset) == FcResultMatch
+		&& FcCharSetHasChar(charset, rune)) {
+			if (match)
+				FcPatternDestroy(match);
+			return FcFontRenderPrepare(0, pattern, sets[0]->fonts[i]);
+		}
+	return match;
+}
+
 int
 xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x, int y)
 {
@@ -1860,7 +1887,7 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
 				FcConfigSubstitute(0, fcpattern, FcMatchPattern);
 				FcDefaultSubstitute(fcpattern);
 
-				fontpattern = FcFontSetMatch(0, fcsets, 1, fcpattern, &fcres);
+				fontpattern = fallbackmatch(fcsets, fcpattern, rune);
 
 				/* Allocate memory for the new cache entry. */
 				if (frclen >= frccap) {
@@ -1977,7 +2004,7 @@ xmakeglyphfontspecs(XftGlyphFontSpec *specs, const Glyph *glyphs, int len, int x
 			FcDefaultSubstitute(fcpattern);
 			#endif // USE_XFTFONTMATCH_PATCH
 
-			fontpattern = FcFontSetMatch(0, fcsets, 1, fcpattern, &fcres);
+			fontpattern = fallbackmatch(fcsets, fcpattern, rune);
 
 			/* Allocate memory for the new cache entry. */
 			if (frclen >= frccap) {
