@@ -1,12 +1,17 @@
 #!/bin/sh
 # tux-session [i3|sway|xfce|dwm] — started by the login screen. Sets up the environment, then
 # launches i3 (through startx), sway, Xfce or dwm (tux-dwm install). Log: ~/.local/state/tuxcraft/session.log
+# (the session before: session.log.old)
 [ -f /etc/tuxcraft/session.conf ] && . /etc/tuxcraft/session.conf
 session=${1:-${SESSION:-i3}}
 [ -f "$HOME/.config/tuxcraft/session" ] && [ -z "$1" ] && session=$(cat "$HOME/.config/tuxcraft/session")
 
 mkdir -p "$HOME/.local/state/tuxcraft"
-exec >"$HOME/.local/state/tuxcraft/session.log" 2>&1
+# The last session's log stays as session.log.old: after a crash that ended the session, the next
+# login would otherwise write over the only record of what happened.
+log=$HOME/.local/state/tuxcraft/session.log
+[ -f "$log" ] && mv -f "$log" "$log.old"
+exec >"$log" 2>&1
 
 [ -f "$HOME/.config/tuxcraft/env.sh" ] && . "$HOME/.config/tuxcraft/env.sh"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
@@ -58,8 +63,9 @@ case $session in
     if [ -n "$DISPLAY" ]; then            # a display manager already started X
       # tux-autostart must run inside the same D-Bus session as dwm, or the keyring, dunst and
       # pipewire end up on an autolaunched bus the apps never see ("no system keyring").
+      # tux-dwm session: dwm, started again if it crashes (the windows stay; no logout).
       # shellcheck disable=SC2086
-      exec $wrap sh -c 'tux-autostart dwm & exec dwm'
+      exec $wrap sh -c 'tux-autostart dwm & exec tux-dwm session'
     fi
     vt=''
     [ -n "$XDG_VTNR" ] && vt="vt$XDG_VTNR"

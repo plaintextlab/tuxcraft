@@ -10,6 +10,7 @@
 #   tux-dwm layout       layout menu (Super+Ctrl+L)
 #   tux-dwm cmd ARGS     tell dwm to: view N | layout NAME | sticky | floatall | bar | gaps | restart | quit
 #   tux-dwm reload       restart dwm in place (new colours / font); windows keep their tags
+#   tux-dwm session      the session's dwm (tux-session, ~/.xinitrc): started again when it crashes
 #
 # Sources: /usr/share/tuxcraft/src/dwm and src/dmenu (her builds, with tuxcraft's changes marked
 # "tuxcraft"), src/dwmblocks (the status bar; its blocks are tux-dwmbar). Your own config: copy
@@ -198,6 +199,27 @@ layout_menu() {
   cmd layout "${pick%% *}"
 }
 
+# The session's dwm. When dwm dies (a crash, an X error) the session used to end with it and every
+# window was lost; X is still up then, so dwm is started again and takes the windows back. Its exit
+# status goes to the session log (~/.local/state/tuxcraft/session.log; the last session's is
+# session.log.old), so the cause can be found. A clean quit (logout) ends the session as before,
+# and so do 5 crashes within a minute (dwm cannot start at all).
+wm_session() {
+  local rc n=0 first now
+  first=$(date +%s)
+  while :; do
+    dwm; rc=$?
+    ((rc == 0)) && exit 0
+    xprop -root >/dev/null 2>&1 || exit "$rc"   # X went away: nothing to come back to
+    if ((rc > 128)); then echo "tux-dwm: $(date '+%F %T') dwm crashed (signal $((rc - 128))); starting it again" >&2
+    else echo "tux-dwm: $(date '+%F %T') dwm exited with status $rc; starting it again" >&2; fi
+    now=$(date +%s)
+    ((now - first > 60)) && { n=0; first=$now; }
+    ((++n >= 5)) && { echo "tux-dwm: dwm failed 5 times within a minute; ending the session" >&2; exit "$rc"; }
+    sleep 1
+  done
+}
+
 case ${1:-} in
   install)
     if [[ $EUID -eq 0 ]]; then system_install; exit; fi
@@ -228,5 +250,6 @@ case ${1:-} in
   windows) windows ;;
   cmd) shift; [[ $# -gt 0 ]] || die "cmd: what? (view N, layout NAME, sticky, floatall, bar, gaps, restart, quit)"; cmd "$@" ;;
   reload) running && cmd restart ;;
-  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  session) wm_session ;;
+  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
