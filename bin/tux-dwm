@@ -6,7 +6,7 @@
 #   tux-dwm status
 # Inside the dwm session (keys from ~/.config/tuxcraft/wm/common.conf, same as i3):
 #   tux-dwm run          app launcher (Super+D): her dmenu, centred
-#   tux-dwm overview     tags and their windows (Super+Space); pick one to go there
+#   tux-dwm overview     tags with thumbnails and their apps (Super+Space, tux-overview); pick one
 #   tux-dwm layout       layout menu (Super+Ctrl+L)
 #   tux-dwm cmd ARGS     tell dwm to: view N | layout NAME | sticky | floatall | bar | gaps | restart | quit
 #   tux-dwm reload       restart dwm in place (new colours / font); windows keep their tags
@@ -167,6 +167,8 @@ windows() {
 }
 
 overview() {
+  # Thumbnails of every tag (tux-overview; rofi draws the grid), else a plain list of them.
+  command -v tux-overview >/dev/null && command -v rofi >/dev/null && exec tux-overview show
   local cur pick
   cur=$(xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | awk '{print $NF}')
   pick=$(windows | awk -F'\t' -v cur="$cur" '

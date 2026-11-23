@@ -54,10 +54,13 @@ command -v tux-xfce >/dev/null && command -v xfce4-session >/dev/null && tux-xfc
 if [[ $session == i3 || $session == sway ]]; then   # these follow i3/sway windows and workspaces (IPC)
   # Put apps that hide and re-show their main window (Resolve's Cinema Viewer) back in their tiling slot.
   pgrep -u "$UID" -f '^python3 .*/tux-winslot' >/dev/null || { tux-winslot & }
-  # Thumbnails for the workspace overview (Super+O).
-  tux-overview watch &   # exits at once if one is already running
   tux-recent watch &     # programs list for Super+Shift+Z (one per session too)
 fi
+# Thumbnails for the workspace overview (Super+Space; dwm: one per tag). Exits at once if one is
+# already running.
+[[ $session == i3 || $session == sway || $session == dwm ]] && { tux-overview watch & }
+# Hot corner: mouse into the top-left corner = the same overview (X11; HOT_CORNER=0 turns it off).
+[[ $session == i3 || $session == dwm ]] && { tux-hotcorner & }   # exits at once if one is running
 # Drag shelf (Super+G; on X11 also a mouse shake while dragging). Returns at once if one is running.
 [[ $session == i3 || $session == sway || $session == dwm ]] && tux-shelf daemon
 # Music daemon for rmpc (folder: tux-music folder).

@@ -7,18 +7,129 @@
 #   switch  Alt+Tab like Windows, for workspaces: the same grid, most recently used first. A quick
 #           Alt+Tab goes back to the last workspace; hold Alt and Tab / Shift+Tab to pick, release
 #           Alt to go there, Esc cancels. "back" (Alt+Shift+Tab) starts at the least recent one.
-# Works on i3 (ffmpeg x11grab) and sway (grim). Grid: rofi, themed like every other menu.
+# Works on i3 and dwm (ffmpeg x11grab) and sway (grim). Grid: rofi, themed like every other menu.
+# dwm: a workspace is a tag; the grid shows the tags with windows on them (and the one you are on).
 set -uo pipefail
 dir="${XDG_RUNTIME_DIR:-/tmp/tux-$UID}/tux-overview"; mkdir -p "$dir"
-if [[ -n ${SWAYSOCK:-} ]]; then msg=swaymsg; else msg=i3-msg; fi
+if [[ -n ${SWAYSOCK:-} ]]; then wm=sway msg=swaymsg
+elif [[ ${XDG_CURRENT_DESKTOP:-} == dwm ]]; then wm=dwm msg=:
+else wm=i3 msg=i3-msg; fi
 SCALE=4   # thumbnails are 1/4 of the screen size
 mru=$dir/mru   # workspace names, most recently focused first
 
 key() { printf '%s' "$1" | md5sum | cut -c1-12; }   # file name for a workspace name
 
+# ---- the window manager's side: i3/sway over IPC, dwm over EWMH root properties.
+# dwm: the monitor under the pointer ("x y w h"), the whole screen when xrandr cannot say.
+dwm_monitor() {
+  local X=0 Y=0
+  eval "$(xdotool getmouselocation --shell 2>/dev/null | grep -E '^[XY]=')"
+  xrandr --listmonitors 2>/dev/null |
+    sed -nE 's#.* ([0-9]+)/[0-9]+x([0-9]+)/[0-9]+\+([0-9]+)\+([0-9]+) .*#\3 \4 \1 \2#p' |
+    awk -v px="$X" -v py="$Y" '{ if (!first) first = $0 } px >= $1 && px < $1 + $3 && py >= $2 && py < $2 + $4 { print; found = 1; exit }
+                               END { if (!found) print (first ? first : "0 0 1920 1080") }'
+}
+dwm_current() { xprop -root _NET_CURRENT_DESKTOP 2>/dev/null | awk '{ print $NF + 1 }'; }
+
+# The workspace(s) on screen: name<TAB>x<TAB>y<TAB>w<TAB>h.
+ws_visible() {
+  if [[ $wm == dwm ]]; then
+    printf '%s\t%s\n' "$(dwm_current)" "$(dwm_monitor | tr ' ' '\t')"
+  else
+    $msg -t get_workspaces | jq -r '.[] | select(.visible) | [.name, .rect.x, .rect.y, .rect.width, .rect.height] | @tsv'
+  fi
+}
+ws_focused() {
+  if [[ $wm == dwm ]]; then dwm_current
+  else $msg -t get_workspaces | jq -r '.[] | select(.focused) | .name'; fi
+}
+# The screen the overview opens on: "x y width height".
+ws_geom() {
+  if [[ $wm == dwm ]]; then dwm_monitor
+  else
+    local out; out=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .output')
+    $msg -t get_outputs | jq -r --arg o "$out" '.[] | select(.name == $o) | .rect | "\(.x) \(.y) \(.width) \(.height)"'
+  fi
+}
+
+# The backdrop behind the grid: a see-through window over the whole screen (GTK; the compositor
+# blurs what is under it). It prints "ready" once it is on screen, so rofi opens on top of it.
+# Clicks on it are outside rofi's window, and rofi closes (click-to-exit): click the empty area
+# to leave, as in GNOME. Args: x y w h #rrggbbaa.
+BACKDROP='
+import sys
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GLib, Gtk
+import cairo
+x, y, w, h = (int(v) for v in sys.argv[1:5])
+c = sys.argv[5].lstrip("#")
+r, g, b, a = (int(c[i:i + 2], 16) / 255 for i in (0, 2, 4, 6))
+GLib.set_prgname("tux-overview")
+Gdk.set_program_class("tux-overview")
+win = Gtk.Window(type=Gtk.WindowType.POPUP)
+vis = win.get_screen().get_rgba_visual()
+if vis is None:
+    sys.exit(1)
+win.set_visual(vis)
+win.set_app_paintable(True)
+def draw(_w, cr):
+    cr.set_operator(cairo.OPERATOR_SOURCE)
+    cr.set_source_rgba(r, g, b, a)
+    cr.paint()
+win.connect("draw", draw)
+win.connect("map-event", lambda *_: print("ready", flush=True) and False)
+win.move(x, y)
+win.resize(w, h)
+win.show_all()
+Gtk.main()
+'
+# name<TAB>apps for every workspace, in order.
+ws_list() {
+  if [[ $wm == dwm ]]; then
+    local w d cls cur ntags
+    cur=$(dwm_current)
+    ntags=$(xprop -root _NET_NUMBER_OF_DESKTOPS 2>/dev/null | awk '{ print $NF }')
+    for w in $(xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-f]*'); do
+      d=$(xprop -id "$w" _NET_WM_DESKTOP 2>/dev/null | awk '{ print $NF }')
+      cls=$(xprop -id "$w" WM_CLASS 2>/dev/null | awk -F'"' '{ print $4 }')
+      printf '%s\t%s\n' "$d" "${cls:-?}"
+    done | awk -F'\t' -v cur="$cur" -v ntags="${ntags:-9}" '
+      $1 ~ /^[0-9]+$/ && $1 < 100 {   # sticky and scratchpad windows are on every tag: skip them
+        n = $1 + 1; c = $2; sub(/.*\./, "", c)
+        if (!((n, c) in seen)) { seen[n, c] = 1; apps[n] = apps[n] (apps[n] != "" ? " · " : "") c }
+      }
+      END { for (n = 1; n <= ntags; n++) if ((n in apps) || n == cur) printf "%d\t%s\n", n, apps[n] }'
+  else
+    $msg -t get_tree | jq -r '
+      [.. | objects | select(.type == "workspace" and (.name | startswith("__") | not))]
+      | sort_by(.num // 9999)[]
+      | [.name, ([.. | objects | select(.pid != null or .window != null)
+                 | (.app_id // .window_properties.class // .name // "?") | split(".") | last] | unique | join(" · "))]
+      | @tsv'
+  fi
+}
+# A line for every change worth a new thumbnail (until the WM goes away).
+ws_events() {
+  if [[ $wm == dwm ]]; then xprop -root -spy _NET_CURRENT_DESKTOP _NET_CLIENT_LIST _NET_ACTIVE_WINDOW 2>/dev/null
+  else $msg -t subscribe -m '["workspace","window"]' 2>/dev/null; fi
+}
+# The focused workspace's name, every time it changes.
+ws_focus_events() {
+  if [[ $wm == dwm ]]; then xprop -root -spy _NET_CURRENT_DESKTOP 2>/dev/null | awk '{ print $NF + 1; fflush() }'
+  else $msg -t subscribe -m '["workspace"]' 2>/dev/null | jq --unbuffered -r 'select(.change == "focus") | .current.name // empty'; fi
+}
+go() {
+  if [[ $wm == dwm ]]; then xprop -root -f _TUX_DWM_CMD 8s -set _TUX_DWM_CMD "view $1"
+  else $msg workspace "\"$1\"" >/dev/null; fi
+}
+
 # Thumbnail of every workspace that is on screen right now (one per monitor).
 capture() {
   local name x y w h f
+  # Not while a menu is open: the thumbnail would show the menu, not the workspace.
+  [[ $wm == dwm ]] && pgrep -u "$UID" -x 'rofi|dmenu' >/dev/null && return 0
   while IFS=$'\t' read -r name x y w h; do
     f="$dir/$(key "$name").jpg"
     if [[ $msg == swaymsg ]]; then
@@ -27,7 +138,7 @@ capture() {
       ffmpeg -loglevel quiet -y -f x11grab -draw_mouse 0 -video_size "${w}x$h" -i "${DISPLAY:-:0}+$x,$y" \
         -frames:v 1 -vf "scale=iw/$SCALE:-1" -q:v 4 -f image2 "$f.tmp" </dev/null
     fi && mv -f "$f.tmp" "$f"
-  done < <($msg -t get_workspaces | jq -r '.[] | select(.visible) | [.name, .rect.x, .rect.y, .rect.width, .rect.height] | @tsv')
+  done < <(ws_visible)
 }
 
 mru_push() {
@@ -38,9 +149,8 @@ mru_push() {
 
 # Remember the order workspaces get focused in (i3/sway only know the last one).
 mru_track() {
-  mru_push "$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .name')"
-  $msg -t subscribe -m '["workspace"]' 2>/dev/null |
-    jq --unbuffered -r 'select(.change == "focus") | .current.name // empty' |
+  mru_push "$(ws_focused)"
+  ws_focus_events |
     while IFS= read -r name; do mru_push "$name"; done
 }
 
@@ -50,7 +160,7 @@ watch() {
   capture
   # Capture half a second after things change (lets the open/close animations finish), and
   # every 10 s while nothing happens, so video or a long build still looks current.
-  $msg -t subscribe -m '["workspace","window"]' 2>/dev/null | while :; do
+  ws_events | while :; do
     if read -r -t 10 _; then
       while read -r -t 0.5 _; do :; done   # swallow a burst of events
       capture
@@ -70,7 +180,6 @@ alt_held() {
   return 1
 }
 
-go() { $msg workspace "\"$1\"" >/dev/null; }
 
 # show [switch [back]]
 show() {
@@ -86,21 +195,20 @@ show() {
     names+=("$name")
     labels+=("$name   ${apps:-empty}")
     if [[ -f $dir/$(key "$name").jpg ]]; then icons+=("$dir/$(key "$name").jpg"); else icons+=("user-desktop"); fi
-  done < <($msg -t get_tree | jq -r '
-      [.. | objects | select(.type == "workspace" and (.name | startswith("__") | not))]
-      | sort_by(.num // 9999)[]
-      | [.name, ([.. | objects | select(.pid != null or .window != null)
-                 | (.app_id // .window_properties.class // .name // "?") | split(".") | last] | unique | join(" · "))]
-      | @tsv')
+  done < <(ws_list)
   ((${#names[@]})) || exit 0
   # Forget thumbnails of workspaces that no longer exist.
   local keep=" " f; for name in "${names[@]}"; do keep+="$(key "$name").jpg "; done
   for f in "$dir"/*.jpg; do [[ -e $f && $keep != *" ${f##*/} "* ]] && rm -f "$f"; done
-  cur=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .name')
+  cur=$(ws_focused)
   for ((i = 0; i < ${#names[@]}; i++)); do [[ ${names[i]} == "$cur" ]] && sel=$i; done
 
   local n=${#names[@]} cols rows tw
-  local -a kb=()
+  # The mouse wheel steps through the workspaces one at a time, in grid order (rofi's own wheel
+  # binding moves by rows and pages). Its default ScrollUp/Down bindings are cleared, or rofi
+  # complains about a binding used twice.
+  local next='Tab' prev='ISO_Left_Tab'
+  local -a kb=(-ml-row-up '' -ml-row-down '')
   if [[ $mode == switch ]]; then
     ((n > 1)) || exit 0
     # Most recently used first: this workspace, the last one, ... then the never-visited ones.
@@ -120,9 +228,8 @@ show() {
     if [[ -n ${SWAYSOCK:-} ]] || ! alt_held; then go "${names[sel]}"; exit 0; fi
     # Tab / Shift+Tab step through (with or without Alt: rofi starts with Alt already down, so it
     # may not know). Esc cancels.
-    kb=(-kb-element-next 'Tab,Alt+Tab'
-        -kb-element-prev 'ISO_Left_Tab,Shift+ISO_Left_Tab,Alt+ISO_Left_Tab,Alt+Shift+ISO_Left_Tab'
-        -kb-cancel 'Escape,Alt+Escape')
+    next='Tab,Alt+Tab' prev='ISO_Left_Tab,Shift+ISO_Left_Tab,Alt+ISO_Left_Tab,Alt+Shift+ISO_Left_Tab'
+    kb+=(-kb-cancel 'Escape,Alt+Escape')
     # Releasing Alt picks. rofi never saw Alt go down, so it cannot see it come up either: watch
     # the key here and press Return for it. Let go before rofi showed up (a quick tap): close it
     # and go to the last workspace.
@@ -144,23 +251,63 @@ show() {
     ) &
   fi
 
+  kb+=(-kb-element-next "$next,ScrollDown" -kb-element-prev "$prev,ScrollUp")
+
   cols=$(( n < 4 ? n : (n <= 6 ? 3 : 4) )); rows=$(( (n + cols - 1) / cols ))
-  # Thumbnail width so the grid fills ~80% of the screen width.
-  local sw; sw=$($msg -t get_workspaces | jq -r '.[] | select(.focused) | .rect.width'); sw=${sw:-1920}
+  # Like GNOME's overview: the grid in the middle of the screen over the whole desktop, blurred.
+  # Thumbnails as wide as fit in ~80% of the screen width (at most 480 px), and small enough
+  # that every row fits in ~85% of its height. Each element is the icon box (square, tw) plus
+  # ~52 px of padding and label; the search bar above takes ~48 px.
+  local sx sy sw sh; read -r sx sy sw sh < <(ws_geom)
+  [[ $sx =~ ^-?[0-9]+$ && $sy =~ ^-?[0-9]+$ ]] || sx=0 sy=0
+  [[ $sw =~ ^[0-9]+$ ]] || sw=1920; [[ $sh =~ ^[0-9]+$ ]] || sh=1080
   tw=$(( sw * 80 / 100 / cols - 40 ))
-  ((tw > 420)) && tw=420; ((tw < 160)) && tw=160
+  local th=$(( (sh * 85 / 100 - 48 - (rows - 1) * 16) / rows - 52 ))
+  ((tw > th)) && tw=$th
+  ((tw > 480)) && tw=480; ((tw < 160)) && tw=160
+  local gw=$(( cols * (tw + 20) + (cols - 1) * 16 )) gh=$(( rows * (tw + 52) + (rows - 1) * 16 + 48 ))
+  local padx=$(( (sw - gw) / 2 )) pady=$(( (sh - gh) / 2 ))
+  ((padx < 24)) && padx=24; ((pady < 24)) && pady=24
+
+  # The backdrop's tint: the theme's own colour (~/.config/rofi/theme.rasi, from tux-theme) at
+  # OVERVIEW_ALPHA (hex 00-ff, default 80 = half; in the state file), the blur shows through.
+  local bgc alpha=80
+  # shellcheck source=/dev/null
+  [[ -f $HOME/.config/tuxcraft/state ]] && alpha=$(. "$HOME/.config/tuxcraft/state"; echo "${OVERVIEW_ALPHA:-80}")
+  [[ $alpha =~ ^[0-9a-fA-F]{2}$ ]] || alpha=80
+  bgc=$(sed -nE 's/^[[:space:]]*bg:[[:space:]]*(#[0-9a-fA-F]{6}).*/\1/p' "$HOME/.config/rofi/theme.rasi" 2>/dev/null | head -n1)
+  bgc=${bgc:-#1e1e2e}
+
+  # The backdrop up first; rofi then only covers the grid itself, with no background of its own.
+  # No backdrop (no GTK, no compositor): rofi fills the screen itself, tinted the same way
+  # (Esc closes it then).
+  local bfd= bpid= ok=
+  exec {bfd}< <(exec python3 -c "$BACKDROP" "$sx" "$sy" "$sw" "$sh" "$bgc$alpha" 2>/dev/null)
+  bpid=$!
+  read -r -t 1 -u "$bfd" ok
+  local win_css
+  if [[ $ok == ready ]]; then
+    win_css="width: ${gw}px; border: 0; padding: 0; background-color: transparent;"
+    padx=0 pady=0
+  else
+    kill "$bpid" 2>/dev/null; exec {bfd}<&-; bfd= bpid=
+    win_css="fullscreen: true; width: 100%; height: 100%; border: 0; padding: 0; background-color: $bgc$alpha;"
+  fi
 
   local pick prompt=workspaces
   [[ $mode == switch ]] && prompt="alt+tab"
   pick=$(for ((i = 0; i < n; i++)); do printf '%s\0icon\x1f%s\n' "${labels[i]}" "${icons[i]}"; done |
     rofi -dmenu -i -show-icons -format i -selected-row "$sel" -p "$prompt" -no-custom "${kb[@]}" \
-      -theme-str "window { width: $(( (tw + 40) * cols + 40 ))px; }
+      -click-to-exit -window-title tux-overview \
+      -theme-str "window { $win_css }
+                  mainbox { padding: ${pady}px ${padx}px; spacing: 12px; }
                   listview { columns: $cols; lines: $rows; flow: horizontal; fixed-columns: true; spacing: 16px; scrollbar: false; }
                   element { orientation: vertical; padding: 10px; spacing: 8px; border-radius: 6px; }
                   element-icon { size: ${tw}px; horizontal-align: 0.5; }
                   element-text { horizontal-align: 0.5; }
                   inputbar { children: [prompt, entry]; }")
   local rc=$?
+  [[ -n $bpid ]] && { kill "$bpid" 2>/dev/null; exec {bfd}<&-; }
   if ((rc == 0)) && [[ -n $pick ]]; then go "${names[pick]}"
   elif [[ -e $dir/tap ]]; then go "${names[sel]}"
   fi
