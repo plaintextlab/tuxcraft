@@ -21,6 +21,7 @@
  * To understand everything else, start reading main().
  */
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -30,6 +31,7 @@
 #include <strings.h> /* strncasecmp */
 #include <unistd.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <poll.h>
 #include <time.h>
@@ -151,6 +153,7 @@ struct Client { /* a window that dwm is managing */
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen, issticky, isterminal, noswallow; /* window states */
 	int isscratch; /* tuxcraft: sent to the scratchpad (Super+Shift+minus) */
 	float cfact;   /* tuxcraft: share of its column (cfacts; 1 = equal), set by Super + right drag */
+	int order;     /* tuxcraft: place in the tiling before a restart (-1: none), see sortclients() */
 	int hidden;    /* tuxcraft: moved off screen (its tag is not shown); _TUX_DWM_HIDDEN is set */
 	int glide;     /* tuxcraft: came back with its tag, _TUX_DWM_GLIDE is set until it next moves */
 	int leaving;   /* tuxcraft: sliding out with its tag (leaveframe), from lx0 to lx1, then parked */
@@ -177,6 +180,7 @@ typedef struct { /* layouts */
 	void (*arrange)(Monitor *);
 } Layout;
 
+#define PERTAGSLOTS 32 /* tags (at most 31, see NumTags) + one for several tags at once */
 struct Monitor {
 	char ltsymbol[16];
 	float mfact;
@@ -206,6 +210,13 @@ struct Monitor {
 	Monitor *next;
 	Window barwin;
 	const Layout *lt[2];
+	/* tuxcraft: every tag keeps its own layout, master size and master count (dwm's pertag
+	 * patch, by tag index; the last slot is for several tags viewed at once). Saved in
+	 * ~/.local/state/tuxcraft/dwm-layouts, so restarts and new logins keep them too. */
+	unsigned int ptlt[PERTAGSLOTS][2];
+	unsigned int ptsellt[PERTAGSLOTS];
+	float ptmfact[PERTAGSLOTS];
+	int ptnmaster[PERTAGSLOTS];
 };
 
 typedef struct {
@@ -358,6 +369,12 @@ static void zoom(const Arg *arg);
 static void viewtag(const Arg *arg);
 static void shiftviewocc(const Arg *arg);
 static void setlayoutidx(const Arg *arg);
+static void pertagload(Monitor *m, unsigned int ts);
+static void movetiled(Client *c);
+static void sortclients(void);
+static void pertagkeep(Monitor *m);
+static void pertagsave(void);
+static void pertagread(void);
 static void togglesplit(const Arg *arg);
 static void togglefloatall(const Arg *arg);
 static void scratchhide(const Arg *arg);
@@ -1053,6 +1070,13 @@ createmon(void)
 	m->lt[0] = &layouts[0];
 	m->lt[1] = &layouts[1 % LENGTH(layouts)];
 	strncpy(m->ltsymbol, layouts[0].symbol, sizeof m->ltsymbol);
+	for (int s = 0; s < PERTAGSLOTS; s++) {
+		m->ptlt[s][0] = 0;
+		m->ptlt[s][1] = 1 % LENGTH(layouts);
+		m->ptsellt[s] = 0;
+		m->ptmfact[s] = mfact;
+		m->ptnmaster[s] = nmaster;
+	}
 	return m;
 }
 
@@ -1510,6 +1534,8 @@ void
 incnmaster(const Arg *arg)
 {
 	selmon->nmaster = MAX(selmon->nmaster + arg->i, 0);
+	pertagkeep(selmon);
+	pertagsave();
 	arrange(selmon);
 }
 
@@ -1638,15 +1664,30 @@ manage(Window w, XWindowAttributes *wa)
 	if (XGetTransientForHint(dpy, w, &trans) && (t = wintoclient(trans))) { /* if transient, it inherits tags+mon of parent */
 		c->mon = t->mon;
 		c->tags = t->tags;
+		c->cfact = 1.0;
+		c->order = -1;
 	} else {
 		c->mon = selmon; /* assigns to selected monitor */
+		c->cfact = 1.0;
+		c->order = -1;
 		term = termforwin(c); /* tries to find a terminal for swallowing */
 		applyrules(c); /* apply any matching tag rules from config.h */
-		{ /* tuxcraft: a restart (Super+Shift+R, theme change) keeps each window on its tag */
+		{ /* tuxcraft: a restart (Super+Shift+R, theme change) keeps each window on its tag,
+		   * its monitor, its place in the tiling and its share of the column (savestate()) */
 			Atom type; int fmt; unsigned long n, after; unsigned char *p = NULL;
-			if (XGetWindowProperty(dpy, w, tuxtagsatom, 0, 2, True, XA_CARDINAL, &type, &fmt,
+			if (XGetWindowProperty(dpy, w, tuxtagsatom, 0, 5, True, XA_CARDINAL, &type, &fmt,
 			    &n, &after, &p) == Success && p) {
-				if (n == 2) {
+				if (n == 5) {
+					long *v = (long *)p;
+					Monitor *om;
+					for (om = mons; om && om->num != v[4]; om = om->next);
+					if (om)
+						c->mon = om;
+					c->order = (int)v[2];
+					if (v[3] > 0)
+						c->cfact = MAX(0.1, MIN(10.0, v[3] / 1000.0));
+				}
+				if (n >= 2) {
 					long *v = (long *)p;
 					if (v[0] & (TAGMASK | SPTAG)) {
 						c->tags = v[0] & (TAGMASK | SPTAG);
@@ -1660,7 +1701,6 @@ manage(Window w, XWindowAttributes *wa)
 		}
 	}
 	c->desktop = -2;
-	c->cfact = 1.0;
 	XDeleteProperty(dpy, w, tuxhiddenatom); /* left from before a restart */
 	XDeleteProperty(dpy, w, tuxglideatom);
 	XDeleteProperty(dpy, w, tuxstillatom);
@@ -1780,6 +1820,12 @@ movemouse(const Arg *arg)
 		return;
 	if (c->isfullscreen) /* no support moving fullscreen windows by mouse */
 		return;
+	/* tuxcraft: Super + drag on a tiled window keeps it tiled and moves it to another place in
+	 * the tiling (arg->i 0); Super + Shift + drag (arg->i 1) floats it and moves it freely. */
+	if (!arg->i && !c->isfloating && selmon->lt[selmon->sellt]->arrange) {
+		movetiled(c);
+		return;
+	}
 	restack(selmon);
 	ocx = c->x;
 	ocy = c->y;
@@ -1823,6 +1869,77 @@ movemouse(const Arg *arg)
 	XUngrabPointer(dpy, CurrentTime);
 	stillmark(c, 0);
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
+		sendmon(c, m);
+		selmon = m;
+		focus(NULL);
+	}
+}
+
+/* tuxcraft: put c just before t in its monitor's client list (the tiling order). */
+static void
+insertbefore(Client *c, Client *t)
+{
+	Client **tc;
+
+	for (tc = &t->mon->clients; *tc && *tc != t; tc = &(*tc)->next);
+	c->next = t;
+	*tc = c;
+}
+
+/* tuxcraft: Super + drag on a tiled window. While the pointer is over another tiled window, c
+ * takes its place in the tiling (the windows in between move up one). Let go over another
+ * monitor: c goes there. Nothing floats. */
+static void
+movetiled(Client *c)
+{
+	Client *t, *last = NULL, *i;
+	Monitor *m;
+	XEvent ev;
+	Time lasttime = 0;
+	int px, py, after;
+
+	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
+		None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
+		return;
+	do {
+		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
+		switch(ev.type) {
+		case ConfigureRequest:
+		case Expose:
+		case MapRequest:
+			handler[ev.type](&ev);
+			break;
+		case MotionNotify:
+			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
+				continue;
+			lasttime = ev.xmotion.time;
+			px = ev.xmotion.x_root;
+			py = ev.xmotion.y_root;
+			if (px >= c->x && px < c->x + WIDTH(c) && py >= c->y && py < c->y + HEIGHT(c)) {
+				last = NULL; /* back over itself: the next window it reaches moves it again */
+				continue;
+			}
+			for (t = nexttiled(c->mon->clients); t; t = nexttiled(t->next))
+				if (t != c && px >= t->x && px < t->x + WIDTH(t) && py >= t->y && py < t->y + HEIGHT(t))
+					break;
+			if (!t || t == last)
+				continue;
+			last = t;
+			/* moving down the list (t after c): c goes after t, else before it */
+			for (after = 0, i = c->next; i; i = i->next)
+				if (i == t) { after = 1; break; }
+			detach(c);
+			if (after) {
+				c->next = t->next;
+				t->next = c;
+			} else
+				insertbefore(c, t);
+			arrange(c->mon);
+			break;
+		}
+	} while (ev.type != ButtonRelease);
+	XUngrabPointer(dpy, CurrentTime);
+	if ((m = recttomon(ev.xbutton.x_root, ev.xbutton.y_root, 1, 1)) != c->mon) {
 		sendmon(c, m);
 		selmon = m;
 		focus(NULL);
@@ -2171,6 +2288,10 @@ rsend(void)
 	rs.c = NULL;
 	if (!c)
 		return;
+	if (rs.tiled) { /* the master size may have moved: keep it for this tag */
+		pertagkeep(selmon);
+		pertagsave();
+	}
 	stillall(c->mon, 0);
 	if (rs.tiled)
 		return;
@@ -2379,8 +2500,10 @@ swipelayout(unsigned int tags)
 	sg.laid |= tags;
 	XGrabServer(dpy);
 	m->tagset[m->seltags] = tags;
+	pertagload(m, tags); /* that tag's own layout */
 	arrangemon(m);
 	m->tagset[m->seltags] = save;
+	pertagload(m, save);
 	sg.shown = 0;
 	swipeplace();
 	XUngrabServer(dpy);
@@ -3045,6 +3168,8 @@ setlayout(const Arg *arg)
 	if (arg && arg->v)
 		selmon->lt[selmon->sellt] = (Layout *)arg->v;
 	strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, sizeof selmon->ltsymbol);
+	pertagkeep(selmon);
+	pertagsave();
 	if (selmon->sel)
 		arrange(selmon);
 	else
@@ -3063,6 +3188,8 @@ setmfact(const Arg *arg)
 	if (f < 0.05 || f > 0.95)
 		return;
 	selmon->mfact = f;
+	pertagkeep(selmon);
+	pertagsave();
 	arrange(selmon);
 }
 
@@ -3606,6 +3733,7 @@ toggleview(const Arg *arg)
 
 	if (newtagset) {
 		selmon->tagset[selmon->seltags] = newtagset;
+		pertagload(selmon, newtagset);
 		focus(NULL);
 		arrange(selmon);
 	}
@@ -3823,6 +3951,7 @@ updategeom(void)
 	if (dirty) {
 		selmon = mons;
 		selmon = wintomon(root);
+		pertagread(); /* new or changed monitors: their saved layouts per tag */
 	}
 	return dirty;
 }
@@ -4083,6 +4212,7 @@ view(const Arg *arg)
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK)
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
+	pertagload(selmon, selmon->tagset[selmon->seltags]);
 	focus(NULL);
 	arrange(selmon);
 }
@@ -4403,6 +4533,121 @@ shiftviewocc(const Arg *arg)
 	}
 }
 
+/* ---- tuxcraft: layouts per tag ---- */
+static unsigned int
+pertagslot(unsigned int ts)
+{
+	ts &= TAGMASK;
+	if (ts && !(ts & (ts - 1)))
+		return (unsigned int)__builtin_ctz(ts); /* one tag: its index */
+	return PERTAGSLOTS - 1;                       /* several tags at once */
+}
+
+/* The layout, master size and master count kept for tags, into the monitor. */
+static void
+pertagload(Monitor *m, unsigned int ts)
+{
+	unsigned int s = pertagslot(ts);
+
+	m->lt[0] = &layouts[m->ptlt[s][0] % LENGTH(layouts)];
+	m->lt[1] = &layouts[m->ptlt[s][1] % LENGTH(layouts)];
+	m->sellt = m->ptsellt[s] & 1;
+	m->mfact = m->ptmfact[s];
+	m->nmaster = m->ptnmaster[s];
+	strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, sizeof m->ltsymbol);
+}
+
+/* The monitor's current layout, master size and count: kept for the tag(s) it shows. */
+static void
+pertagkeep(Monitor *m)
+{
+	unsigned int s = pertagslot(m->tagset[m->seltags]), i;
+
+	for (i = 0; i < 2; i++)
+		if (m->lt[i] >= layouts && m->lt[i] < layouts + LENGTH(layouts))
+			m->ptlt[s][i] = (unsigned int)(m->lt[i] - layouts);
+	m->ptsellt[s] = m->sellt;
+	m->ptmfact[s] = m->mfact;
+	m->ptnmaster[s] = m->nmaster;
+}
+
+static int
+pertagpath(char *buf, size_t n, int mkdirs)
+{
+	const char *state = getenv("XDG_STATE_HOME"), *home = getenv("HOME");
+	char dir[PATH_MAX];
+
+	if (state && *state)
+		snprintf(dir, sizeof dir, "%s", state);
+	else if (home && *home)
+		snprintf(dir, sizeof dir, "%s/.local/state", home);
+	else
+		return 0;
+	if (mkdirs)
+		mkdir(dir, 0755);
+	strncat(dir, "/tuxcraft", sizeof dir - strlen(dir) - 1);
+	if (mkdirs)
+		mkdir(dir, 0755);
+	return snprintf(buf, n, "%s/dwm-layouts", dir) < (int)n;
+}
+
+/* Every monitor's layouts per tag, into the state file: "monitor slot layout0 layout1 sellt
+ * mfact nmaster" per line (layouts by their index in layouts[]). */
+static void
+pertagsave(void)
+{
+	char path[PATH_MAX], tmp[PATH_MAX + 8];
+	Monitor *m;
+	FILE *f;
+	int s;
+
+	if (!pertagpath(path, sizeof path, 1))
+		return;
+	snprintf(tmp, sizeof tmp, "%s.tmp", path);
+	if (!(f = fopen(tmp, "w")))
+		return;
+	for (m = mons; m; m = m->next)
+		for (s = 0; s < PERTAGSLOTS; s++)
+			fprintf(f, "%d %d %u %u %u %.4f %d\n", m->num, s, m->ptlt[s][0], m->ptlt[s][1],
+			        m->ptsellt[s], m->ptmfact[s], m->ptnmaster[s]);
+	if (fclose(f) == 0)
+		rename(tmp, path);
+	else
+		unlink(tmp);
+}
+
+/* The state file into the monitors, and each monitor's current tag's layout applied. */
+static void
+pertagread(void)
+{
+	char path[PATH_MAX], line[128];
+	unsigned int l0, l1, sl;
+	int mon, s, nm;
+	float mf;
+	Monitor *m;
+	FILE *f;
+
+	if (pertagpath(path, sizeof path, 0) && (f = fopen(path, "r"))) {
+		while (fgets(line, sizeof line, f)) {
+			if (sscanf(line, "%d %d %u %u %u %f %d", &mon, &s, &l0, &l1, &sl, &mf, &nm) != 7
+			|| s < 0 || s >= PERTAGSLOTS || l0 >= LENGTH(layouts) || l1 >= LENGTH(layouts)
+			|| mf < 0.05 || mf > 0.95 || nm < 0)
+				continue;
+			for (m = mons; m && m->num != mon; m = m->next);
+			if (!m)
+				continue;
+			m->ptlt[s][0] = l0;
+			m->ptlt[s][1] = l1;
+			m->ptsellt[s] = sl & 1;
+			m->ptmfact[s] = mf;
+			m->ptnmaster[s] = nm;
+		}
+		fclose(f);
+	}
+	for (m = mons; m; m = m->next)
+		pertagload(m, m->tagset[m->seltags]);
+}
+
 void
 setlayoutidx(const Arg *arg)
 {
@@ -4611,21 +4856,56 @@ updatedesktops(void)
 		}
 }
 
-/* Before a restart: each window's tags and float/sticky state, and the shown tags. manage()
- * and main() read them back. */
+/* tuxcraft: after a restart, put each monitor's windows back in the order they had (scan()
+ * takes them in stacking order, so master and stack would come back shuffled). Windows with
+ * no saved place (new ones) go first, as a new window would. */
+static void
+sortclients(void)
+{
+	Monitor *m;
+	Client *c, **v, **tail;
+	int n, i, j;
+
+	for (m = mons; m; m = m->next) {
+		for (n = 0, c = m->clients; c; c = c->next, n++);
+		if (n < 2)
+			continue;
+		v = ecalloc(n, sizeof *v);
+		for (i = 0, c = m->clients; c; c = c->next)
+			v[i++] = c;
+		for (i = 1; i < n; i++) /* insertion sort, stable */
+			for (j = i; j > 0 && v[j - 1]->order > v[j]->order; j--) {
+				c = v[j]; v[j] = v[j - 1]; v[j - 1] = c;
+			}
+		tail = &m->clients;
+		for (i = 0; i < n; i++) {
+			*tail = v[i];
+			tail = &v[i]->next;
+		}
+		*tail = NULL;
+		free(v);
+	}
+}
+
+/* Before a restart: each window's tags, float/sticky state, monitor, place in the tiling and
+ * column share, and the shown tags. manage(), sortclients() and main() read them back. */
 void
 savestate(void)
 {
 	Monitor *m;
 	Client *c;
-	long v[2];
+	long v[5];
+	int i;
 
 	for (m = mons; m; m = m->next)
-		for (c = m->clients; c; c = c->next) {
+		for (c = m->clients, i = 0; c; c = c->next, i++) {
 			v[0] = c->tags;
 			v[1] = (c->isfloating && !c->isfullscreen ? 1 : 0) | (c->issticky ? 2 : 0);
+			v[2] = i;                          /* place in the tiling order */
+			v[3] = (long)(c->cfact * 1000.0 + 0.5);
+			v[4] = m->num;
 			XChangeProperty(dpy, c->win, tuxtagsatom, XA_CARDINAL, 32,
-				PropModeReplace, (unsigned char *)v, 2);
+				PropModeReplace, (unsigned char *)v, 5);
 		}
 	v[0] = selmon->tagset[selmon->seltags];
 	XChangeProperty(dpy, root, tuxviewatom, XA_CARDINAL, 32,
@@ -4655,6 +4935,7 @@ main(int argc, char *argv[])
 		die("pledge");
 #endif /* __OpenBSD__ */
 	scan(); /* see if other applications are already running */
+	sortclients(); /* tuxcraft: after a restart, every window back in its place in the tiling */
 	{ /* tuxcraft: after a restart, show the tags that were shown before */
 		Atom type; int fmt; unsigned long n, after; unsigned char *p = NULL;
 		if (XGetWindowProperty(dpy, root, tuxviewatom, 0, 1, True, XA_CARDINAL, &type, &fmt,

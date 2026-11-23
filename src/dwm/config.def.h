@@ -7,8 +7,10 @@
  * sticky, swallow, vanitygaps, xrdb. tuxcraft adds (dwm.c, "tuxcraft" comments): i3-style
  * back-and-forth tags, next/previous occupied tag, scratchpad, resize mode, float-all, move a
  * tag to the other monitor, bottom-stack and deck layouts, case-insensitive rules with floating
- * size, focus on _NET_ACTIVE_WINDOW, EWMH desktops, tags kept across restarts, a bar font from
- * Xresources, and commands from scripts (tux-dwm cmd ...).
+ * size, focus on _NET_ACTIVE_WINDOW, EWMH desktops, tags kept across restarts, a layout per tag
+ * (with its own master size and count; kept across restarts and logins in
+ * ~/.local/state/tuxcraft/dwm-layouts), a bar font from Xresources, and commands from scripts
+ * (tux-dwm cmd ...).
  *
  * Colours and the bar font come from ~/.Xresources (tux-theme writes dwm.* there), so
  * tux-theme / tux-font re-theme dwm like everything else. Rebuild after editing: tux-dwm build.
@@ -301,9 +303,11 @@ static const Button buttons[] = {
 	{ ClkStatusText,        0,              Button3,        sigstatusbar,   {.i = 3} },
 	{ ClkStatusText,        0,              Button4,        sigstatusbar,   {.i = 4} },
 	{ ClkStatusText,        0,              Button5,        sigstatusbar,   {.i = 5} },
-	/* Super + drag: move, Super + right drag: resize (i3: floating_modifier $mod). On a tiled window
-	 * right drag moves the split, as in i3; on a floating one it resizes the window. */
-	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {0} },
+	/* Super + drag: move. A tiled window stays tiled and takes the place of the one under the
+	 * pointer; Super + Shift + drag floats it and moves it freely. Super + right drag: resize
+	 * (i3: floating_modifier $mod); on a tiled window it moves the split, as in i3. */
+	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {.i = 0} },
+	{ ClkClientWin,         MODKEY|ShiftMask, Button1,      movemouse,      {.i = 1} },
 	{ ClkClientWin,         MODKEY,         Button2,        togglefloating, {0} },
 	{ ClkClientWin,         MODKEY,         Button3,        resizemouse,    {0} },
 	/* Super + two-finger touchpad drag resizes as Super + right drag does (dwm reads the

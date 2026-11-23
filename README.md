@@ -453,6 +453,7 @@ square corners, blur and see-through unfocused windows), with **the same keys as
 | Super+F1 … F11 | brightness (+ monitor contrast) 0% … 100% | Super+Alt+Up / Down | brightness; below 0% dims to −80% |
 | Super + drag a window to the right / left screen edge | move it to the next / previous workspace and go there | Bar: tile / float icon | this workspace: float every window, click again: tile them all |
 | Touchpad: 4 fingers left / right | next / previous workspace (the workspace follows your fingers, as on GNOME and macOS; in dwm it slides along live while you drag, and goes back if you let go before a third) | Touchpad: 4 fingers up | workspace overview |
+| Super + drag a tiled window (dwm) | move it to another place in the tiling: it takes the place of the window under the pointer, nothing floats | Super+Shift + drag (dwm) | float the window and move it freely |
 | Super + two-finger drag (touchpad, dwm) | resize, as Super + right drag: the split follows the fingers, a floating window grows from its corner | | |
 
 ## Commands
