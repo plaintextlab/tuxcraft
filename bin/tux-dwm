@@ -149,14 +149,15 @@ cmd() {
 
 running() { pgrep -u "$UID" -x dwm >/dev/null; }
 
-# App launcher: .desktop apps through her dmenu (j4-dmenu-desktop), else every command (dmenu_run).
+# App launcher: rofi with the apps' icons, themed like every menu; without rofi her dmenu
+# (j4-dmenu-desktop for the .desktop apps, else every command: dmenu_run).
 run_menu() {
-  if command -v j4-dmenu-desktop >/dev/null; then
+  if command -v rofi >/dev/null; then
+    exec rofi -show drun -show-icons
+  elif command -v j4-dmenu-desktop >/dev/null; then
     exec j4-dmenu-desktop --dmenu="dmenu -i -l 12 -p run" --term="${TERMINAL:-tux-term}" --no-generic
   elif command -v dmenu_run >/dev/null; then
     exec dmenu_run -i -l 12 -p run
-  else
-    exec rofi -show drun -show-icons
   fi
 }
 

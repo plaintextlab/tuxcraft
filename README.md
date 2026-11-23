@@ -400,8 +400,10 @@ entry works too, but without tuxcraft's environment).
 **i3 and dwm** in the installer's Desktop question (the default), or `tux-dwm install` on an i3 system later,
 adds a dwm session: **F3** on the login screen → **tuxcraft (dwm)**; the login screen remembers each user's last pick. It is
 [BreadOnPenguins' dwm build](https://github.com/BreadOnPenguins/dwm) and her look (20 px gaps,
-1 px borders, a flat bar with the tag numbers, empty tags hidden, her dmenu centred, picom with
-square corners, blur and see-through unfocused windows), with **the same keys as i3**.
+1 px borders, a flat bar with the tag numbers, empty tags hidden, picom with square corners, blur
+and see-through unfocused windows), with **the same keys as i3**. The menus are rofi, as on i3
+(app icons, the Super+Space thumbnails of every tag, images in the clipboard history); her dmenu
+is the fallback when rofi is missing.
 
 - **Built from source**, as dwm always is: `src/dwm` and `src/dmenu` are her builds (MIT, like
   dwm), `src/dwmblocks` is torrinfail's dwmblocks (ISC), with tuxcraft's changes marked `tuxcraft` in the code. They are compiled into
