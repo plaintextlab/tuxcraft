@@ -2,7 +2,8 @@
 # tux-clip — clipboard history (Super+V). On X11 (i3, dwm, Xfce): BreadOnPenguins' clipboard
 # scripts (txtcliphist, imgcliphist in github.com/BreadOnPenguins/scripts), made to record by
 # themselves. On Wayland (sway): cliphist.
-#   tux-clip              pick from the history (dmenu in dwm, rofi in i3); "Images" opens the image one
+#   tux-clip              pick from the history: rofi, texts wrapped and cut short ("…"), images
+#                         as thumbnails (CLIP_COLS / CLIP_ROWS: how much text shows, default 46 x 3)
 #   tux-clip images       image history: fzf with previews in a floating terminal
 #   tux-clip watch        record every copy (tux-autostart starts it; one per session)
 #   tux-clip add          copy the highlighted text and keep it (her "cliphist add"; no key by default)
@@ -83,7 +84,77 @@ watch_loop() {
 
 images_count() { compgen -G "$IMG/*.png" | wc -l; }
 
+# What a text looks like in the picker: wrapped at word breaks into at most CLIP_ROWS lines of
+# CLIP_COLS characters, "…" when there is more (a huge copy shows only its start). Line breaks
+# inside the copy show as ⏎.
+CLIP_COLS=${CLIP_COLS:-46} CLIP_ROWS=${CLIP_ROWS:-3}
+preview() {
+  local t=$1 out='' line n=0
+  t=${t//$NL/ ⏎ }; t=${t//$'\t'/ }
+  t=${t:0:$((CLIP_COLS * CLIP_ROWS + CLIP_COLS))}   # never more than this is shown
+  while [[ $t == ' '* ]]; do t=${t# }; done
+  while [[ -n $t ]] && ((n < CLIP_ROWS)); do
+    if ((${#t} <= CLIP_COLS)); then line=$t
+    else
+      line=${t:0:CLIP_COLS}
+      # Break at the last space unless the word is longer than a whole line.
+      [[ ${t:CLIP_COLS:1} != ' ' && $line == *' '* ]] && line=${line% *}
+    fi
+    t=${t:${#line}}; while [[ $t == ' '* ]]; do t=${t# }; done
+    out+=${out:+$'\n'}$line; ((n++))
+  done
+  if [[ -n $t ]]; then
+    ((${#line} >= CLIP_COLS)) && out=${out:0:-1}
+    out+='…'
+  fi
+  printf '%s' "$out"
+}
+
+# rofi: texts wrapped and cut short, images as thumbnails, newest first. Enter copies.
+# Without rofi (or on a plain terminal): one line per copy in dmenu / fzf, "Images" opens the
+# image picker.
 pick() {
+  if ! [[ -n ${DISPLAY:-} ]] || ! command -v rofi >/dev/null; then pick_plain; return; fi
+  local -a kind=() val=() texts=() imgs=() new=() old=()
+  local f t sep=$'\x1e' i sel stamp
+  mapfile -t texts < <(tac "$HIST")
+  mapfile -t imgs < <(ls -t "$IMG"/*.png 2>/dev/null)
+  # Images have a time, texts do not: the images copied after the last text go first, the rest
+  # after the newest text.
+  stamp=$(stat -c %Y "$HIST" 2>/dev/null || echo 0)
+  for f in "${imgs[@]}"; do if (( $(stat -c %Y "$f") > stamp )); then new+=("$f"); else old+=("$f"); fi; done
+  for f in "${new[@]}"; do kind+=(img); val+=("$f"); done
+  ((${#texts[@]})) && { kind+=(text); val+=("${texts[0]}"); }
+  for f in "${old[@]}"; do kind+=(img); val+=("$f"); done
+  for t in "${texts[@]:1}"; do kind+=(text); val+=("$t"); done
+  ((${#val[@]})) || { note "The clipboard history is empty"; exit 0; }
+  sel=$(for ((i = 0; i < ${#val[@]}; i++)); do
+          if [[ ${kind[i]} == img ]]; then
+            f=${val[i]##*/}   # 20261121-084324-<sum>.png
+            printf '󰋩  Image\n%s\0icon\x1f%s%s' \
+              "$(date -d "${f:0:8} ${f:9:2}:${f:11:2}" '+%d %b %H:%M' 2>/dev/null)" "${val[i]}" "$sep"
+          else
+            printf '%s%s' "$(preview "${val[i]}")" "$sep"
+          fi
+        done |
+        rofi -dmenu -i -show-icons -format i -sep "$sep" -eh "$CLIP_ROWS" -p clipboard -no-custom \
+          -theme-str "window { width: $((CLIP_COLS * 10 + 150))px; }
+                      listview { lines: 6; spacing: 6px; }
+                      element { padding: 8px 10px; }
+                      element-icon { size: 4.2em; vertical-align: 0.5; }
+                      element-text { vertical-align: 0; }") || exit 0
+  [[ $sel =~ ^[0-9]+$ ]] || exit 0
+  if [[ ${kind[sel]} == img ]]; then
+    setsid -f xclip -selection clipboard -t image/png -i "${val[sel]}" >/dev/null 2>&1
+    touch "${val[sel]}"
+    note "Image copied to clipboard" "${val[sel]}"
+  else
+    printf '%s' "${val[sel]//$NL/$'\n'}" | xclip -selection clipboard -i
+    note "Copied to clipboard"
+  fi
+}
+
+pick_plain() {
   local n sel
   n=$(images_count)
   sel=$({ ((n)) && echo "󰋩  Images ($n)"; tac "$HIST"; } | tux-menu "clipboard") || exit 0

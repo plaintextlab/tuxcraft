@@ -197,7 +197,7 @@ lines keep its built-in font) and the GRUB menu, which gets the same font as a G
 | Compositor | picom: Hyprland-style animations (springy open, gliding tiles, workspace crossfade) at the monitor's refresh rate, blurred background behind terminals and menus | built in (no blur: sway cannot) |
 | Lock / idle | i3lock + xss-lock (xtrlock: see-through) | swaylock + swayidle |
 | Wallpaper | feh | swaybg |
-| Clipboard history | tux-clip: BreadOnPenguins' text + image history (dmenu/rofi, fzf previews) | cliphist |
+| Clipboard history | tux-clip: BreadOnPenguins' text + image history (rofi: wrapped, cut-short texts and image thumbnails) | cliphist |
 | Screenshots / recording | maim, ffmpeg | grim, slurp, wf-recorder |
 | Monitors | autorandr / arandr | kanshi |
 
