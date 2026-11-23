@@ -1,0 +1,8 @@
+# tuxcraft keys for yazi, on top of its own (these come first; everything else stays as yazi
+# ships it). A terminal cannot start a drag, so files go to the drag shelf instead: drag them
+# out of it into any app (browser uploads, chat, editors) whenever you like.
+
+[[mgr.prepend_keymap]]
+on   = "b"
+run  = 'shell --orphan -- tux-shelf add "$@"'
+desc = "Put the selected files (or the one under the cursor) on the drag shelf (tux-shelf)"
