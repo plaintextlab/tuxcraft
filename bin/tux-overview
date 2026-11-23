@@ -17,7 +17,8 @@ else wm=i3 msg=i3-msg; fi
 SCALE=4   # thumbnails are 1/4 of the screen size
 mru=$dir/mru   # workspace names, most recently focused first
 
-key() { printf '%s' "$1" | md5sum | cut -c1-12; }   # file name for a workspace name
+# File name for a workspace name, without starting a program (it runs for every workspace).
+key() { local k=${1//[^[:alnum:]_.-]/_}; printf 'ws-%s' "$k"; }
 
 # ---- the window manager's side: i3/sway over IPC, dwm over EWMH root properties.
 # dwm: the monitor under the pointer ("x y w h"), the whole screen when xrandr cannot say.
@@ -52,53 +53,26 @@ ws_geom() {
   fi
 }
 
-# The backdrop behind the grid: a see-through window over the whole screen (GTK; the compositor
-# blurs what is under it). It prints "ready" once it is on screen, so rofi opens on top of it.
-# Clicks on it are outside rofi's window, and rofi closes (click-to-exit): click the empty area
-# to leave, as in GNOME. Args: x y w h #rrggbbaa.
-BACKDROP='
-import sys
-import gi
-gi.require_version("Gtk", "3.0")
-gi.require_version("Gdk", "3.0")
-from gi.repository import Gdk, GLib, Gtk
-import cairo
-x, y, w, h = (int(v) for v in sys.argv[1:5])
-c = sys.argv[5].lstrip("#")
-r, g, b, a = (int(c[i:i + 2], 16) / 255 for i in (0, 2, 4, 6))
-GLib.set_prgname("tux-overview")
-Gdk.set_program_class("tux-overview")
-win = Gtk.Window(type=Gtk.WindowType.POPUP)
-vis = win.get_screen().get_rgba_visual()
-if vis is None:
-    sys.exit(1)
-win.set_visual(vis)
-win.set_app_paintable(True)
-def draw(_w, cr):
-    cr.set_operator(cairo.OPERATOR_SOURCE)
-    cr.set_source_rgba(r, g, b, a)
-    cr.paint()
-win.connect("draw", draw)
-win.connect("map-event", lambda *_: print("ready", flush=True) and False)
-win.move(x, y)
-win.resize(w, h)
-win.show_all()
-Gtk.main()
-'
 # name<TAB>apps for every workspace, in order.
 ws_list() {
   if [[ $wm == dwm ]]; then
-    local w d cls cur ntags
-    cur=$(dwm_current)
-    ntags=$(xprop -root _NET_NUMBER_OF_DESKTOPS 2>/dev/null | awk '{ print $NF }')
-    for w in $(xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -o '0x[0-9a-f]*'); do
-      d=$(xprop -id "$w" _NET_WM_DESKTOP 2>/dev/null | awk '{ print $NF }')
-      cls=$(xprop -id "$w" WM_CLASS 2>/dev/null | awk -F'"' '{ print $4 }')
-      printf '%s\t%s\n' "$d" "${cls:-?}"
-    done | awk -F'\t' -v cur="$cur" -v ntags="${ntags:-9}" '
-      $1 ~ /^[0-9]+$/ && $1 < 100 {   # sticky and scratchpad windows are on every tag: skip them
-        n = $1 + 1; c = $2; sub(/.*\./, "", c)
-        if (!((n, c) in seen)) { seen[n, c] = 1; apps[n] = apps[n] (apps[n] != "" ? " · " : "") c }
+    # One xprop for the root and one per window (both properties at once): this runs every time
+    # the overview opens, and every program started here adds to the wait.
+    local root cur ntags w
+    root=$(xprop -root _NET_CURRENT_DESKTOP _NET_NUMBER_OF_DESKTOPS _NET_CLIENT_LIST 2>/dev/null)
+    cur=$(awk '/^_NET_CURRENT_DESKTOP/ { print $NF + 1 }' <<<"$root")
+    ntags=$(awk '/^_NET_NUMBER_OF_DESKTOPS/ { print $NF }' <<<"$root")
+    for w in $(grep '^_NET_CLIENT_LIST' <<<"$root" | grep -o '0x[0-9a-f]*'); do
+      xprop -id "$w" _NET_WM_DESKTOP WM_CLASS 2>/dev/null
+    done | awk -v cur="$cur" -v ntags="${ntags:-9}" '
+      /^_NET_WM_DESKTOP/ { d = ($0 ~ / = /) ? $NF : ""; next }
+      /^WM_CLASS/ {
+        q = split($0, f, "\""); c = (q >= 5) ? f[4] : "?"
+        if (d ~ /^[0-9]+$/ && d < 100) {   # sticky and scratchpad windows are on every tag: skip them
+          n = d + 1; sub(/.*\./, "", c)
+          if (!((n, c) in seen)) { seen[n, c] = 1; apps[n] = apps[n] (apps[n] != "" ? " · " : "") c }
+        }
+        d = ""
       }
       END { for (n = 1; n <= ntags; n++) if ((n in apps) || n == cur) printf "%d\t%s\n", n, apps[n] }'
   else
@@ -186,7 +160,9 @@ show() {
   local mode=${1:-} back=${2:-}
   if [[ -z $mode ]]; then
     pgrep -x rofi >/dev/null && { pkill -x rofi; exit 0; }   # pressing Super+Space again closes it
-    capture
+    # The watcher's thumbnails are at most ~10 s old: use them, so the grid opens at once. Only
+    # without a watcher, take one now (ffmpeg / grim are slow to start).
+    flock -n "$dir/watch.lock" true && capture
   fi
   local -a names labels icons
   local name apps cur i=0 sel=0
@@ -255,60 +231,39 @@ show() {
   kb+=(-kb-element-next "$next,ScrollDown" -kb-element-prev "$prev,ScrollUp")
 
   cols=$(( n < 4 ? n : (n <= 6 ? 3 : 4) )); rows=$(( (n + cols - 1) / cols ))
-  # Like GNOME's overview: the grid in the middle of the screen over the whole desktop, blurred.
   # Thumbnails as wide as fit in ~80% of the screen width (at most 480 px), and small enough
   # that every row fits in ~85% of its height. Each element is the icon box (square, tw) plus
   # ~52 px of padding and label; the search bar above takes ~48 px.
-  local sx sy sw sh; read -r sx sy sw sh < <(ws_geom)
-  [[ $sx =~ ^-?[0-9]+$ && $sy =~ ^-?[0-9]+$ ]] || sx=0 sy=0
+  local sw sh; read -r _ _ sw sh < <(ws_geom)
   [[ $sw =~ ^[0-9]+$ ]] || sw=1920; [[ $sh =~ ^[0-9]+$ ]] || sh=1080
   tw=$(( sw * 80 / 100 / cols - 40 ))
   local th=$(( (sh * 85 / 100 - 48 - (rows - 1) * 16) / rows - 52 ))
   ((tw > th)) && tw=$th
   ((tw > 480)) && tw=480; ((tw < 160)) && tw=160
-  local gw=$(( cols * (tw + 20) + (cols - 1) * 16 )) gh=$(( rows * (tw + 52) + (rows - 1) * 16 + 48 ))
-  local padx=$(( (sw - gw) / 2 )) pady=$(( (sh - gh) / 2 ))
-  ((padx < 24)) && padx=24; ((pady < 24)) && pady=24
 
-  # The backdrop's tint: the theme's own colour (~/.config/rofi/theme.rasi, from tux-theme) at
-  # OVERVIEW_ALPHA (hex 00-ff, default 80 = half; in the state file), the blur shows through.
-  local bgc alpha=80
+  # See-through background, so the compositor's blur shows the desktop frosted behind the grid
+  # (picom blurs behind rofi in dwm and i3). The theme's own colour (~/.config/rofi/theme.rasi,
+  # from tux-theme) at OVERVIEW_ALPHA (hex 00-ff, default 80 = half), in the state file.
+  # A click outside the grid closes it (click-to-exit).
+  local bgc alpha=80 win_bg=""
   # shellcheck source=/dev/null
   [[ -f $HOME/.config/tuxcraft/state ]] && alpha=$(. "$HOME/.config/tuxcraft/state"; echo "${OVERVIEW_ALPHA:-80}")
   [[ $alpha =~ ^[0-9a-fA-F]{2}$ ]] || alpha=80
   bgc=$(sed -nE 's/^[[:space:]]*bg:[[:space:]]*(#[0-9a-fA-F]{6}).*/\1/p' "$HOME/.config/rofi/theme.rasi" 2>/dev/null | head -n1)
-  bgc=${bgc:-#1e1e2e}
-
-  # The backdrop up first; rofi then only covers the grid itself, with no background of its own.
-  # No backdrop (no GTK, no compositor): rofi fills the screen itself, tinted the same way
-  # (Esc closes it then).
-  local bfd= bpid= ok=
-  exec {bfd}< <(exec python3 -c "$BACKDROP" "$sx" "$sy" "$sw" "$sh" "$bgc$alpha" 2>/dev/null)
-  bpid=$!
-  read -r -t 1 -u "$bfd" ok
-  local win_css
-  if [[ $ok == ready ]]; then
-    win_css="width: ${gw}px; border: 0; padding: 0; background-color: transparent;"
-    padx=0 pady=0
-  else
-    kill "$bpid" 2>/dev/null; exec {bfd}<&-; bfd= bpid=
-    win_css="fullscreen: true; width: 100%; height: 100%; border: 0; padding: 0; background-color: $bgc$alpha;"
-  fi
+  [[ -n $bgc ]] && win_bg="background-color: $bgc$alpha;"
 
   local pick prompt=workspaces
   [[ $mode == switch ]] && prompt="alt+tab"
   pick=$(for ((i = 0; i < n; i++)); do printf '%s\0icon\x1f%s\n' "${labels[i]}" "${icons[i]}"; done |
     rofi -dmenu -i -show-icons -format i -selected-row "$sel" -p "$prompt" -no-custom "${kb[@]}" \
-      -click-to-exit -window-title tux-overview \
-      -theme-str "window { $win_css }
-                  mainbox { padding: ${pady}px ${padx}px; spacing: 12px; }
+      -click-to-exit \
+      -theme-str "window { width: $(( (tw + 40) * cols + 40 ))px; $win_bg }
                   listview { columns: $cols; lines: $rows; flow: horizontal; fixed-columns: true; spacing: 16px; scrollbar: false; }
                   element { orientation: vertical; padding: 10px; spacing: 8px; border-radius: 6px; }
                   element-icon { size: ${tw}px; horizontal-align: 0.5; }
                   element-text { horizontal-align: 0.5; }
                   inputbar { children: [prompt, entry]; }")
   local rc=$?
-  [[ -n $bpid ]] && { kill "$bpid" 2>/dev/null; exec {bfd}<&-; }
   if ((rc == 0)) && [[ -n $pick ]]; then go "${names[pick]}"
   elif [[ -e $dir/tap ]]; then go "${names[sel]}"
   fi

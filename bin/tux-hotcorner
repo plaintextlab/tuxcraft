@@ -9,7 +9,6 @@ import ctypes
 import ctypes.util
 import fcntl
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -46,11 +45,8 @@ def fullscreen_focused():
 
 
 def open_overview():
-    if os.environ.get("XDG_CURRENT_DESKTOP") == "dwm" and shutil.which("tux-dwm"):
-        cmd = ["tux-dwm", "overview"]
-    else:
-        cmd = ["tux-overview", "show"]
-    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, start_new_session=True)
+    # Straight to tux-overview (on dwm too, not through tux-dwm): one script less to start.
+    subprocess.Popen(["tux-overview", "show"], stdin=subprocess.DEVNULL, start_new_session=True)
 
 
 def main():
