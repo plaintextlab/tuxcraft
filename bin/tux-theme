@@ -123,6 +123,7 @@ reload_all() {
     tux-dwmbar refresh >/dev/null 2>&1 || true
   fi
   pkill -USR1 -x kitty 2>/dev/null || true   # kitty re-reads kitty.conf (+ theme.conf)
+  pkill -USR1 -x st 2>/dev/null || true      # st re-reads ~/.Xresources (colours, font)
   if pgrep -x dunst >/dev/null; then
     dunstctl reload 2>/dev/null || { pkill -x dunst; setsid -f dunst >/dev/null 2>&1; }
   fi

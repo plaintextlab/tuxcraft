@@ -15,7 +15,8 @@
 # "tuxcraft"), src/dwmblocks (the status bar; its blocks are tux-dwmbar). Your own config: copy
 # src/dwm/config.def.h to ~/.config/tuxcraft/dwm/config.h (or src/dwmblocks/blocks.def.h to
 # ~/.config/tuxcraft/dwm/blocks.h), edit it, then tux-dwm build. Built programs go to
-# /usr/local/bin (dwm, dmenu, dmenu_run, stest, dwmblocks).
+# /usr/local/bin (dwm, dmenu, dmenu_run, stest, dwmblocks, and st: the terminal for TERMINAL=st;
+# your own st config: ~/.config/tuxcraft/dwm/st-config.h from src/st/config.def.h).
 set -uo pipefail
 SHARE=${TUX_SHARE:-/usr/share/tuxcraft}
 # shellcheck source=/dev/null
@@ -90,8 +91,8 @@ user_config() {  # user_config [config.h|blocks.h]
 }
 
 checksum() {
-  { find "$SHARE/src/dwm" "$SHARE/src/dmenu" "$SHARE/src/dwmblocks" -type f -print0 | sort -z | xargs -0 cat
-    local c; c=$(user_config) && cat "$c"; c=$(user_config blocks.h) && cat "$c"; } | sha256sum | cut -d' ' -f1
+  { find "$SHARE/src/dwm" "$SHARE/src/dmenu" "$SHARE/src/dwmblocks" $([[ -d $SHARE/src/st ]] && echo "$SHARE/src/st") -type f -print0 | sort -z | xargs -0 cat
+    local c; c=$(user_config) && cat "$c"; c=$(user_config blocks.h) && cat "$c"; c=$(user_config st-config.h) && cat "$c"; } | sha256sum | cut -d' ' -f1
 }
 
 build() {  # build [force]
@@ -106,14 +107,19 @@ build() {  # build [force]
   # shellcheck disable=SC2064
   trap "rm -rf '$t'" RETURN
   cp -a "$SHARE/src/dwm" "$SHARE/src/dmenu" "$SHARE/src/dwmblocks" "$t"/
+  [[ -d $SHARE/src/st ]] && cp -a "$SHARE/src/st" "$t"/
+  if c=$(user_config st-config.h); then say "Using your st config: $c"; cp "$c" "$t/st/config.h"; fi
   if c=$(user_config); then say "Using your config: $c"; cp "$c" "$t/dwm/config.h"; fi
   if c=$(user_config blocks.h); then say "Using your blocks: $c"; cp "$c" "$t/dwmblocks/blocks.h"; fi
   say "Building dwm, dmenu and dwmblocks"
   make -s -C "$t/dwm" PREFIX="$PREFIX" install >/dev/null || die "dwm did not build (see the errors above)"
   make -s -C "$t/dmenu" PREFIX="$PREFIX" install >/dev/null || die "dmenu did not build (see the errors above)"
   make -s -C "$t/dwmblocks" PREFIX="$PREFIX" install >/dev/null || die "dwmblocks did not build (see the errors above)"
+  # st (TERMINAL=st): its own build failing does not stop dwm; it needs the harfbuzz and imlib2
+  # headers (ligatures, sixel images).
+  if [[ -d $t/st ]]; then make -s -C "$t/st" PREFIX="$PREFIX" install >/dev/null || echo "tux-dwm: st did not build (see the errors above)" >&2; fi
   mkdir -p "${STAMP%/*}"; echo "$sum" >"$STAMP"
-  say "Installed $PREFIX/bin/dwm, dmenu and dwmblocks"
+  say "Installed $PREFIX/bin/dwm, dmenu and dwmblocks$([[ -x $PREFIX/bin/st && -d $t/st ]] && echo ", st")"
 }
 
 system_install() {
@@ -130,7 +136,7 @@ system_install() {
 
 system_remove() {
   [[ $EUID -eq 0 ]] || die "system-remove: run as root"
-  rm -f "$PREFIX"/bin/{dwm,dmenu,dmenu_run,dmenu_path,stest,dwmblocks} "$PREFIX"/share/man/man1/{dwm,dmenu,stest}.1
+  rm -f "$PREFIX"/bin/{dwm,dmenu,dmenu_run,dmenu_path,stest,dwmblocks,st} "$PREFIX"/share/man/man1/{dwm,dmenu,stest,st}.1
   rm -f "$STAMP" "${XSESSIONS[@]}"
   answers_session del
 }

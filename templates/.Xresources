@@ -37,6 +37,8 @@ dwm.selfgcolor: {{bg}}
 dwm.selbordercolor: {{muted}}
 dwm.font: {{term_font}}:size={{font_size}}
 dwm.iconfont: Symbols Nerd Font:size={{font_size}}
+! st (TERMINAL=st): colours from the *.color lines above; reloads on tux-theme
+st.font: {{term_font}}:size={{term_font_size}}:antialias=true:autohint=true
 dmenu.font: {{term_font}}:size={{font_size}}
 dmenu.background: {{bg}}
 dmenu.foreground: {{fg}}

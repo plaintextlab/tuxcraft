@@ -53,8 +53,9 @@ fi
 
 # kitty sets TERM=xterm-kitty; hosts/containers without its terminfo (ssh, distrobox) get a safe one.
 [[ $TERM == xterm-kitty ]] && ! infocmp xterm-kitty >/dev/null 2>&1 && export TERM=xterm-256color
-# img: show pictures in the terminal (real images in kitty, block art elsewhere, e.g. over ssh)
-img() { chafa --align mid,mid "$@"; }
+[[ $TERM == st-256color ]] && ! infocmp st-256color >/dev/null 2>&1 && export TERM=xterm-256color
+# img: show pictures in the terminal (real images in kitty and st (sixel), block art elsewhere, e.g. over ssh)
+img() { if [[ $TERM == st-* ]]; then chafa -f sixels --align mid,mid "$@"; else chafa --align mid,mid "$@"; fi; }
 # rmpc needs mpd running; start it first (no-op when it already runs)
 rmpc() { command -v tux-music >/dev/null && tux-music start; command rmpc "$@"; }
 
