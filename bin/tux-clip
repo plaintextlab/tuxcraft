@@ -167,7 +167,7 @@ pick_plain() {
 # Her imgcliphist: fzf with previews (chafa: real pixels in kitty). Enter copies, Ctrl+D deletes.
 images() {
   if [[ ${1:-} != --here ]]; then
-    exec "${TERMINAL:-tux-term}" --class tux-float-big -e "$0" images --here
+    exec tux-term --class tux-float-big -e "$0" images --here
   fi
   local list="ls -t $IMG/*.png 2>/dev/null | xargs -rn1 basename"
   local sel

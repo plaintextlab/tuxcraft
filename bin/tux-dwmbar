@@ -13,7 +13,7 @@
 set -uo pipefail
 RT=${XDG_RUNTIME_DIR:-/tmp}/tux-dwmbar-$UID
 POLY=$HOME/.config/polybar/scripts   # the polybar block scripts, shared (their colour tags are dropped)
-T=${TERMINAL:-tux-term}
+T=tux-term   # not $TERMINAL: the --class / -e arguments below are tux-term's (it picks the terminal)
 BTN=${BLOCK_BUTTON:-}
 mkdir -p "$RT"
 

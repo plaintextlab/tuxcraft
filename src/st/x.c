@@ -3948,6 +3948,52 @@ usage(void)
 		" [stty_args ...]\n", argv0, argv0);
 }
 
+/* tuxcraft: the other terminals' long options, so a script written for tux-term, Alacritty,
+ * kitty or foot can start st directly ($TERMINAL=st): --class/--app-id NAME become -c NAME,
+ * --title NAME -t NAME, and --working-directory/--directory/--cd DIR start st in DIR (also
+ * the --opt=VALUE forms). Returns a new argument list for st's own parsing; -e or -- ends it. */
+static char **
+longopts(int *argc, char *argv[])
+{
+	static const struct { const char *name, *flag; } map[] = {
+		{ "--class", "-c" }, { "--app-id", "-c" }, { "--title", "-t" },
+		{ "--working-directory", NULL }, { "--directory", NULL }, { "--cd", NULL },
+	};
+	char **out = xmalloc((2 * *argc + 1) * sizeof *out), *val;
+	int i, k, n = 0, opts = 1;
+	size_t len;
+
+	out[n++] = argv[0];
+	for (i = 1; i < *argc; i++) {
+		if (!strcmp(argv[i], "-e") || !strcmp(argv[i], "--") || argv[i][0] != '-')
+			opts = 0;
+		for (k = 0; opts && k < (int)LEN(map); k++) {
+			len = strlen(map[k].name);
+			if (!strncmp(argv[i], map[k].name, len) && (!argv[i][len] || argv[i][len] == '='))
+				break;
+		}
+		if (!opts || k == (int)LEN(map)) {
+			out[n++] = argv[i];
+			continue;
+		}
+		if (argv[i][len] == '=')
+			val = argv[i] + len + 1;
+		else if (i + 1 < *argc)
+			val = argv[++i];
+		else
+			break;
+		if (map[k].flag) {
+			out[n++] = (char *)map[k].flag;
+			out[n++] = val;
+		} else if (chdir(val) < 0) { /* the shell st starts inherits this folder */
+			fprintf(stderr, "st: cannot change to %s: %s\n", val, strerror(errno));
+		}
+	}
+	out[n] = NULL;
+	*argc = n;
+	return out;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -3958,6 +4004,8 @@ main(int argc, char *argv[])
 	#else
 	xsetcursor(cursorshape);
 	#endif // BLINKING_CURSOR_PATCH
+
+	argv = longopts(&argc, argv);
 
 	ARGBEGIN {
 	case 'a':
