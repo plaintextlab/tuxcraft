@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# tux-hotcorner — hot corner like GNOME's: push the mouse into the top-left corner of the screen
-# and the workspace overview opens (the same grid as Super+Space). Push it there again to close it.
+# tux-hotcorner — hot corner like GNOME's: rest the mouse in the top-left corner of the screen for
+# half a second and the workspace overview opens (the same grid as Super+Space); passing through
+# the corner on the way to something does nothing. Rest it there again to close the overview.
 # X11 sessions (dwm, i3); tux-autostart starts it. Off with HOT_CORNER=0 in ~/.config/tuxcraft/state.
 #   It fires once per visit: move away from the corner before it can fire again. Not while a mouse
 #   button is held (dragging a window or a file there) or while a fullscreen window has focus
@@ -16,6 +17,7 @@ import time
 CORNER = 1      # pixels from the edges that count as "in the corner"
 REARM = 40      # pixels the pointer has to move away before the corner works again
 POLL = 0.04     # seconds between pointer checks
+DWELL = 0.5     # seconds the pointer has to stay in the corner
 BUTTONS = 0x1F00  # Button1..5 held
 
 
@@ -80,6 +82,7 @@ def main():
             ctypes.byref(wx), ctypes.byref(wy), ctypes.byref(mask))
 
     armed = True
+    since = None   # when the pointer got into the corner
     # The X connection closing (logout) ends this process: Xlib's default I/O error handler exits.
     while True:
         time.sleep(POLL)
@@ -90,10 +93,19 @@ def main():
             if px > REARM or py > REARM:
                 armed = True
             continue
-        if px < CORNER and py < CORNER:
-            armed = False
-            if mask.value & BUTTONS or fullscreen_focused():
-                continue
+        if not (px < CORNER and py < CORNER):
+            since = None
+            continue
+        if mask.value & BUTTONS:   # dragging something there: not now, and not until it leaves
+            armed, since = False, None
+            continue
+        now = time.monotonic()
+        if since is None:
+            since = now
+        if now - since < DWELL:
+            continue
+        armed, since = False, None
+        if not fullscreen_focused():
             open_overview()
 
 
