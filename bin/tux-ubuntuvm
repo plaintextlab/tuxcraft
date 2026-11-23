@@ -133,14 +133,34 @@ chpasswd:
   users: [{name: $VMUSER, password: ubuntu, type: text}]
 ssh_pwauth: false
 EOF
+    # The share is its own systemd unit, not an fstab line: experiments that edit or break
+    # /etc/fstab inside the VM leave it alone.
     if [[ -n ${SHARE:-} ]]; then
-      echo 'mounts: [[host, /mnt/host, 9p, "trans=virtio,version=9p2000.L,msize=262144,nofail", "0", "0"]]'
+      cat <<EOF
+write_files:
+  - path: /etc/systemd/system/mnt-host.mount
+    content: |
+      [Unit]
+      Description=Host folder shared by tux-ubuntuvm
+      [Mount]
+      What=host
+      Where=/mnt/host
+      Type=9p
+      Options=$SHARE_OPTS
+      [Install]
+      WantedBy=multi-user.target
+EOF
     fi
     if ((DESKTOP)); then
       cat <<EOF
 package_update: true
 packages: [ubuntu-desktop-minimal, spice-vdagent]
-runcmd:
+EOF
+    fi
+    if [[ -n ${SHARE:-} ]] || ((DESKTOP)); then
+      echo 'runcmd:'
+      [[ -n ${SHARE:-} ]] && echo '  - systemctl enable --now mnt-host.mount'
+      ((DESKTOP)) && cat <<EOF
   - printf '[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=$VMUSER\nWaylandEnable=false\n' > /etc/gdm3/custom.conf
   - systemctl set-default graphical.target
 power_state: {mode: reboot, message: desktop installed, condition: true}
@@ -240,7 +260,7 @@ vm_ssh() { ssh "${SSH_OPTS[@]}" -i "$DIR/id_ed25519" -p "$(port)" "$VMUSER@127.0
 wait_ssh() {  # first boot: cloud-init sets up the user, which takes a little while
   local i
   for ((i = 0; i < 600; i++)); do
-    vm_ssh -o BatchMode=yes true 2>/dev/null && return 0
+    vm_ssh -n -o BatchMode=yes true 2>/dev/null && return 0
     running || die "the VM stopped while booting (tux-ubuntuvm log)"
     ((i == 3)) && say "Waiting for the VM to boot…"
     sleep 2
@@ -249,10 +269,17 @@ wait_ssh() {  # first boot: cloud-init sets up the user, which takes a little wh
 }
 push_terminfo() {  # Ubuntu lacks e.g. xterm-kitty: copy this terminal's description in (as kitten ssh does)
   local t=${TERM:-}; [[ -n $t ]] && have infocmp || return 0
-  vm_ssh -o BatchMode=yes "infocmp $(printf %q "$t")" >/dev/null 2>&1 && return 0
+  vm_ssh -n -o BatchMode=yes "infocmp $(printf %q "$t")" >/dev/null 2>&1 && return 0
   infocmp -x "$t" 2>/dev/null | vm_ssh -o BatchMode=yes 'sudo tic -x /dev/stdin' >/dev/null 2>&1 || true
 }
-cmd_ssh() { load; cmd_start; wait_ssh; push_terminfo; vm_ssh "$@"; }
+SHARE_OPTS=trans=virtio,version=9p2000.L,msize=262144
+ensure_share() {  # a restored snapshot or an fstab experiment can lose the mount: put it back
+  [[ -n ${SHARE:-} ]] || return 0
+  vm_ssh -n -o BatchMode=yes "mountpoint -q /mnt/host || sudo systemctl start mnt-host.mount 2>/dev/null \
+    || { sudo mkdir -p /mnt/host && sudo mount -t 9p -o $SHARE_OPTS host /mnt/host; }" >/dev/null 2>&1 \
+    || warn "could not mount the shared folder at /mnt/host in the VM"
+}
+cmd_ssh() { load; cmd_start; wait_ssh; ensure_share; push_terminfo; vm_ssh "$@"; }
 
 cmd_copy() {  # tar over the VM's SSH: folders, permissions and odd file names come along
   local from=0 to='' p src=() q cnt=0
