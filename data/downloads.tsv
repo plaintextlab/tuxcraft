@@ -14,7 +14,7 @@ wifitui	latest:shazow/wifitui	v0.13.0	https://github.com/shazow/wifitui/releases
 neovim	latest:neovim/neovim	v0.12.6	https://github.com/neovim/neovim/releases/download/{v}/nvim-linux-x86_64.tar.gz	474430d53e6264f6d6dd18db42d6dc9df3a1b56ca9e88a325bbf860e1a811d87
 tree-sitter	latest:tree-sitter/tree-sitter	v0.27.2	https://github.com/tree-sitter/tree-sitter/releases/download/{v}/tree-sitter-cli-linux-x64.zip	b4233ecc4f0e648d6d8ccc4bac96c00c712ca1a5eb1e0ca7197d29b750bffa6d
 starship	latest:starship/starship	v1.27.0	https://github.com/starship/starship/releases/download/{v}/starship-x86_64-unknown-linux-musl.tar.gz	10c8eb4cb3b761d9bf59ea828444c2dab36c900b7d69a69e08814b286969df89
-bluetui	latest:pythops/bluetui	v0.8.2	https://github.com/pythops/bluetui/releases/download/{v}/bluetui-x86_64-linux-musl	b476ee473cb4f7a48cd75d440e991bedc835ff5ac704aac1f1992f8e826222fd
+bluetui	latest:pythops/bluetui	v0.8.3	https://github.com/pythops/bluetui/releases/download/{v}/bluetui-x86_64-linux-musl	45df073c86b6e09fe5cb605532aa05e05632ff820ab48489001c5e758ec021a4
 lazygit	latest:jesseduffield/lazygit	v0.66.3	https://github.com/jesseduffield/lazygit/releases/download/{v}/lazygit_{V}_linux_x86_64.tar.gz	0a23f429a95f0d09db298b3c291536d818de066aa5a85c255806f0490ff6656b
 adw-gtk3	latest:lassekongo83/adw-gtk3	v6.5	https://github.com/lassekongo83/adw-gtk3/releases/download/{v}/adw-gtk3{v}.tar.xz	a81780fadfc432be0fc3d89c4ebb41aa28e4f032d42c36f9789c57dd10cfa41c
 papirus-folders	commit:PapirusDevelopmentTeam/papirus-folders@master	0f838ee5679229e3a3e97e3b333c222c9e9615b4	https://raw.githubusercontent.com/PapirusDevelopmentTeam/papirus-folders/{v}/papirus-folders	b30a6848a00690302accffc050549218b0b114d3178b28bd3a16891817821b06
