@@ -247,6 +247,9 @@ sys_dns() {
 [main]
 rc-manager=file
 EOF
+  # An update on a running system: apply it now rather than at the next boot, so the stale
+  # copy is replaced at once. No-op in the installer's chroot, where NetworkManager is not running.
+  nmcli general reload conf dns-rc >/dev/null 2>&1 || true
 }
 
 # Settings that keep the desktop responsive. Runs on install and on every update, so existing
