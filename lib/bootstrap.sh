@@ -178,6 +178,8 @@ live_prereqs() {
 
 # Unmount the new system and lock the encrypted disk again.
 target_release() {
+  # The live system's DNS server, borrowed for the install: NetworkManager writes the real one.
+  rm -f "$TARGET/etc/resolv.conf"
   sync
   umount -R "$TARGET" 2>/dev/null || warn "Could not unmount $TARGET cleanly"
   if [[ -e /dev/mapper/$CRYPT_NAME ]]; then cryptsetup close "$CRYPT_NAME" 2>/dev/null || warn "Could not close $CRYPT_NAME"; fi

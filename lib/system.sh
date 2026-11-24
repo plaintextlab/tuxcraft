@@ -235,6 +235,20 @@ EOF
   esac
 }
 
+# DNS follows the network you are on. The installer's chroot borrowed the live system's
+# resolv.conf (lib/bootstrap.sh); left as is, every network but the install one resolves nothing.
+# rc-manager=file: NetworkManager writes /etc/resolv.conf itself, also on Void, where it otherwise
+# left dhcpcd's copy alone. Skipped when resolv.conf is a symlink (systemd-resolved owns it then).
+sys_dns() {
+  [[ -L /etc/resolv.conf ]] && return 0
+  mkdir -p /etc/NetworkManager/conf.d
+  cat >/etc/NetworkManager/conf.d/90-tuxcraft-dns.conf <<'EOF'
+# tuxcraft: NetworkManager writes /etc/resolv.conf with each network's DNS servers
+[main]
+rc-manager=file
+EOF
+}
+
 # Settings that keep the desktop responsive. Runs on install and on every update, so existing
 # systems get them too; takes effect at the next boot (or at once on an update, for sysctl).
 sys_tuning() {

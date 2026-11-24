@@ -92,6 +92,7 @@ section "Services"
 check "NetworkManager enabled" enabled NetworkManager
 check "NetworkManager running" active NetworkManager
 check "network reachable" bash -c 'curl -fsI --max-time 8 https://github.com || ping -c1 -W3 1.1.1.1'
+check "DNS resolves (resolv.conf from NetworkManager)" bash -c 'getent hosts github.com && { [[ -L /etc/resolv.conf ]] || grep -q NetworkManager /etc/resolv.conf; }'
 if command -v tuigreet >/dev/null; then
   check "greetd enabled" enabled greetd
   check "greetd uses tuigreet + tux-session" grep -q 'tuigreet.*--cmd tux-session' /etc/greetd/config.toml
