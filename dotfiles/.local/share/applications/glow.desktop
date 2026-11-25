@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Glow
+GenericName=Markdown Viewer
+Comment=Read Markdown in the terminal
+Icon=text-markdown
+Exec=tux-term --class glow --title Glow -e tux-md %f
+Terminal=false
+MimeType=text/markdown;text/x-markdown;
+Categories=Utility;TextTools;

@@ -58,6 +58,13 @@ fi
 img() { if [[ $TERM == st-* ]]; then chafa -f sixels --align mid,mid "$@"; else chafa --align mid,mid "$@"; fi; }
 # rmpc needs mpd running; start it first (no-op when it already runs)
 rmpc() { command -v tux-music >/dev/null && tux-music start; command rmpc "$@"; }
+# glow (Markdown). Inside a distrobox/toolbox container without its own glow, borrow the host's.
+[[ -f /run/.containerenv ]] && ! command -v glow >/dev/null && [[ -x /run/host/usr/bin/glow ]] &&
+  glow() { /run/host/usr/bin/glow "$@"; }
+# less keeps colours (-R, for glow -p, git and others) and quits at once on short output (-F).
+export LESS="-RF"
+md()  { tux-md "$@"; }          # md file.md: read it (fits the window); md / md DIR: browse every .md file below
+mds() { glow -t -a "${@:-.}"; } # the same, with hidden and git-ignored files too
 
 # Modern defaults
 if command -v eza >/dev/null; then

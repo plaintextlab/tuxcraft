@@ -1,0 +1,16 @@
+# glow settings (glow 3). Flags on the command line override these.
+# Theme: dark, light, dracula, tokyo-night, pink, notty, ascii, auto, or a path to a JSON style.
+style: "dark"
+# On: the wheel scrolls. To select and copy text, hold Shift while you drag (st and kitty),
+# then Ctrl+Shift+C. `c` in glow copies the whole file.
+mouse: true
+# `glow file.md` prints to the terminal; `md file.md` (tux-md) opens it to scroll.
+pager: false
+# Wrap long lines at this many columns (0 = don't wrap).
+width: 100
+# Line numbers in the TUI.
+showLineNumbers: false
+# Keep single newlines inside paragraphs as they are in the file.
+preserveNewLines: false
+# Browse hidden and git-ignored files too (same as -a).
+all: false

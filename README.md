@@ -229,6 +229,8 @@ picture (chafa; block art over ssh/tmux). Everything opens the terminal through 
 Alacritty instead, put `TERMINAL=alacritty` in `~/.config/tuxcraft/state` (no images there).
 kitty runs as one process for all windows, so a new terminal opens instantly, and its cursor
 leaves a short trail when it jumps.
+In st, dropping files from Thunar (or anywhere) types their paths at the prompt, with spaces and
+other special characters escaped.
 
 **Shell:** bash with **ble.sh**: grey command hints from history as you type (→ or End accepts,
 Alt+F takes one word), syntax colours and a completion menu (off: `touch ~/.config/tuxcraft/no-blesh`).
@@ -300,9 +302,13 @@ one that still holds a terminal or Thunar window closes with that window.
   the status bar (nothing selected), a usage bar in Properties (right-click a drive), and used/free in
   the side-pane tooltip.
 - **Set as wallpaper** (one image).
+- **Open With → Glow** (Markdown files): reads the file in the terminal, rendered; `q` closes it.
 
 **TUI apps:** yazi (files), btop, lazygit, wifitui (Wi-Fi; nmtui for wired/VPN), bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
 fzf, bat, eza, fd, ripgrep, zoxide, starship, fastfetch, calcurse, qalc, tealdeer, tmux, rmpc, cava.
+glow reads Markdown: `md README.md` to scroll one file, `md` to browse every `.md` file below
+the current folder (`/` filters, `e` edits), `mds` to include hidden and git-ignored ones. A file opens
+in less, fitted to the window: the wheel scrolls, a plain drag selects text, `q` closes (`tux-md`).
 
 ## One theme, everywhere
 

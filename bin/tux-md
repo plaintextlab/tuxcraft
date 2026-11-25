@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# tux-md [FILE|DIR] — read Markdown in the terminal with glow (`md` in bash, Open With → Glow).
+#   FILE: rendered to fit the window (at most 100 columns) and shown in less: the wheel and
+#         j/k/Space scroll, / searches, q quits, and a plain drag selects text to copy.
+#   DIR (default: the current folder): glow's browser of every .md file below it.
+# Files don't use glow's own viewer (glow -t FILE): in glow 3.0.0 it goes blank for good when the
+# window is resized (charmbracelet/glow#983), and dwm resizes a window as soon as another opens.
+# The ~/.config/glow/glow.yml settings (style, width) still apply.
+set -u
+glow=$(command -v glow) || glow=/run/host/usr/bin/glow   # a distrobox borrows the host's
+[[ -x $glow ]] || { echo "tux-md: glow is not installed" >&2; exit 1; }
+
+target=${1:-.}
+if [[ -d $target ]]; then exec "$glow" -t "$@"; fi
+[[ -r $target ]] || { echo "tux-md: cannot read $target" >&2; exit 1; }
+
+w=$(tput cols 2>/dev/null) || w=100
+((w > 100)) && w=100
+# -R: colours. No -F: a short file stays open (the Thunar window would close at once otherwise).
+PAGER="less -R -i" exec "$glow" -p -w "$w" "$target"
