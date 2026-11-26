@@ -295,8 +295,11 @@ one that still holds a terminal or Thunar window closes with that window.
 - **Move the latest file here** (empty area of a folder): moves your newest download, screenshot or
   recording into that folder. Hidden files, partial downloads, files still being written and the
   wallpaper pack are skipped; an existing file is never overwritten (the moved one becomes `name (2).ext`).
-- **Remove audio** (video files): saves a copy without sound as `name (no audio).ext`, losslessly
-  (`ffmpeg -c copy`, video and subtitles kept). The original is left alone.
+- **Utilities** (video files), both lossless (`ffmpeg -c copy`, seconds even for long videos) and
+  leaving the original alone:
+  - **Remove audio**: saves a copy without sound as `name (no audio).ext`; video and subtitles kept.
+  - **Extract audio**: saves the sound as `name (audio).m4a` (`.mp3`, `.opus`, `.flac`, `.wav` … to
+    match the track); a video with several audio tracks gives one file per track.
 - **Drive space**: a used/free bar for every mounted drive, like Explorer's "This PC"; pick one to open
   it. Thunar itself cannot draw bars in its side pane. It shows the free space of the current drive in
   the status bar (nothing selected), a usage bar in Properties (right-click a drive), and used/free in

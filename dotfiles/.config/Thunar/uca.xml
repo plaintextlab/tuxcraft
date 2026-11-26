@@ -37,10 +37,21 @@
 <action>
 	<icon>audio-volume-muted</icon>
 	<name>Remove audio</name>
-	<submenu></submenu>
+	<submenu>Utilities</submenu>
 	<unique-id>1792921976998965-4</unique-id>
 	<command>tux-strip-audio %F</command>
 	<description>Save a copy without sound, "name (no audio).ext", next to the original</description>
+	<range></range>
+	<patterns>*</patterns>
+	<video-files/>
+</action>
+<action>
+	<icon>audio-x-generic</icon>
+	<name>Extract audio</name>
+	<submenu>Utilities</submenu>
+	<unique-id>1792921976998965-6</unique-id>
+	<command>tux-extract-audio %F</command>
+	<description>Save the sound as an audio file, "name (audio).m4a", next to the original</description>
 	<range></range>
 	<patterns>*</patterns>
 	<video-files/>

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# tux-extract-audio VIDEO… — save the sound of each video as an audio file. Thunar runs it
+# from right-click → Utilities → "Extract audio" on video files.
+#
+# The copy is lossless (ffmpeg -c copy: no re-encoding, so it takes seconds) into the file type
+# that fits the track: AAC → .m4a, MP3 → .mp3, Opus → .opus, FLAC → .flac, PCM → .wav, others
+# → .mka. It is saved next to the original as "name (audio).m4a" (or "name (audio 2).m4a" …); a
+# video with several audio tracks gives "name (audio track 1).m4a" …. The original is never touched.
+set -uo pipefail
+
+[[ ${1:-} == -h || ${1:-} == --help || $# -eq 0 ]] && { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+command -v ffmpeg >/dev/null || { echo "tux-extract-audio: ffmpeg is not installed" >&2; exit 1; }
+
+gui() { [[ -n ${DISPLAY:-}${WAYLAND_DISPLAY:-} && ! -t 1 ]] && command -v notify-send >/dev/null; }
+nid=''  # one notification that each step replaces (libnotify ≥ 0.7.9; older ones just stack)
+note() {  # title body [urgency]
+  if ! gui; then printf '%s: %s\n' "$1" "$2"; return; fi
+  local id
+  id=$(notify-send -a video -i audio-x-generic -u "${3:-normal}" -p ${nid:+-r "$nid"} "$1" "$2" 2>/dev/null) ||
+    { notify-send -a video -u "${3:-normal}" "$1" "$2"; return; }
+  nid=$id
+}
+tilde() { printf '%s' "${1/#$HOME/\~}"; }
+
+# The codec of every audio track, one per line.
+audio_codecs() { ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 -- "$1" 2>/dev/null | grep .; }
+
+# ext_for CODEC → the file extension a lossless copy of that codec goes into.
+ext_for() {
+  case $1 in
+    aac | alac)            echo m4a ;;
+    mp3)                   echo mp3 ;;
+    opus)                  echo opus ;;
+    vorbis)                echo ogg ;;
+    flac)                  echo flac ;;
+    pcm_s16le | pcm_s24le | pcm_s32le | pcm_u8 | pcm_f32le | pcm_f64le) echo wav ;;
+    ac3)                   echo ac3 ;;
+    eac3)                  echo eac3 ;;
+    *)                     echo mka ;;  # Matroska audio holds anything (DTS, TrueHD, big-endian PCM …)
+  esac
+}
+
+# out_name FILE LABEL EXT → "dir/name (LABEL).EXT", numbered when that already exists.
+out_name() {
+  local f=$1 label=$2 ext=$3 dir name base o n=2
+  dir=$(dirname -- "$f") name=${f##*/} base=$name
+  [[ $name == ?*.* ]] && base=${name%.*}
+  o="$dir/$base ($label).$ext"
+  while [[ -e $o || -L $o ]]; do o="$dir/$base ($label $n).$ext"; n=$((n + 1)); done
+  printf '%s' "$o"
+}
+
+# copy_track FILE INDEX LABEL CODEC → 0 when the audio track INDEX of FILE is saved; sets last.
+copy_track() {
+  local f=$1 a=$2 label=$3 ext out tmp
+  ext=$(ext_for "$4") out=$(out_name "$f" "$label" "$ext")
+  # Write to a hidden temporary file first so a half-written copy never looks finished.
+  tmp="$(dirname -- "$out")/.tux-extract-audio.$$.$a.$ext"
+  log=$(ffmpeg -nostdin -hide_banner -loglevel error -y -i "$f" \
+          -map "0:a:$a" -vn -sn -dn -c copy -map_metadata 0 "$tmp" 2>&1)
+  rc=$?
+  if ((rc != 0)) && [[ $ext != mka ]]; then
+    # The fitting container refused the track (odd profile, missing headers): Matroska takes it.
+    rm -f -- "$tmp"; out=$(out_name "$f" "$label" mka) tmp=${tmp%.*}.mka
+    log=$(ffmpeg -nostdin -hide_banner -loglevel error -y -i "$f" \
+            -map "0:a:$a" -vn -sn -dn -c copy -map_metadata 0 "$tmp" 2>&1)
+    rc=$?
+  fi
+  if ((rc == 0)) && [[ -s $tmp ]] && mv -n -- "$tmp" "$out" && [[ ! -e $tmp ]]; then
+    last=$out; return 0
+  fi
+  rm -f -- "$tmp"; return 1
+}
+
+ok=0 failed=0 i=0 total=$# last='' errs='' log=''
+for f in "$@"; do
+  i=$((i + 1))
+  name=${f##*/}
+  if [[ ! -f $f ]]; then failed=$((failed + 1)); errs+="$name: not a file"$'\n'; continue; fi
+  mapfile -t codecs < <(audio_codecs "$f")
+  if ((${#codecs[@]} == 0)); then
+    errs+="$name: has no audio"$'\n'; failed=$((failed + 1)); continue
+  fi
+  if [[ ! -w $(dirname -- "$f") ]]; then failed=$((failed + 1)); errs+="$name: folder is read-only"$'\n'; continue; fi
+  note "Extracting audio ($i/$total)" "$name"
+  good=1
+  for a in "${!codecs[@]}"; do
+    label=audio; ((${#codecs[@]} > 1)) && label="audio track $((a + 1))"
+    if ! copy_track "$f" "$a" "$label" "${codecs[a]}"; then
+      good=0; errs+="$name: ${log##*$'\n'}"$'\n'
+    fi
+  done
+  if ((good)); then ok=$((ok + 1)); else failed=$((failed + 1)); fi
+done
+
+errs=${errs%$'\n'}
+if ((failed == 0)); then
+  if ((ok == 1)); then note "Audio extracted" "Saved as $(tilde "$last")"
+  else note "Audio extracted" "Sound of $ok videos saved"; fi
+elif ((ok == 0)); then
+  note "Extracting audio failed" "$errs" critical; exit 1
+else
+  note "Audio extracted from $ok of $total" "$errs" critical; exit 1
+fi

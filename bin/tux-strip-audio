@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tux-strip-audio VIDEO… — copy each video without its sound. Thunar runs it from
-# right-click → "Remove audio" on video files.
+# right-click → Utilities → "Remove audio" on video files.
 #
 # The copy is lossless (ffmpeg -c copy: no re-encoding, so it takes seconds) and keeps every
 # video and subtitle track; only the audio tracks go. It is saved next to the original as
