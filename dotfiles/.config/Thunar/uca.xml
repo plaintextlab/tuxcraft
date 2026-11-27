@@ -115,4 +115,20 @@
 	<text-files/>
 	<video-files/>
 </action>
+<action>
+	<icon>go-jump</icon>
+	<name>Go to original location</name>
+	<submenu>Tags</submenu>
+	<unique-id>1792921976998965-10</unique-id>
+	<command>tux-tag goto %f</command>
+	<description>Leave ~/Tags: show this folder (or the folder this file is in) where it really is</description>
+	<range>1-1</range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
 </actions>

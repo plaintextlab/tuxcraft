@@ -8,10 +8,11 @@
   tux-tag color TAG COLOUR     red, orange, yellow, green, blue, purple or grey
   tux-tag delete TAG           delete a tag; the files themselves stay
   tux-tag list [TAG]           the tags, or what has one tag
+  tux-tag goto PATH            take this Thunar window to where PATH really is (not ~/Tags/…)
   tux-tag fix                  catch up with changes, find tagged files that were moved
   tux-tag watch                keep everything in step (tux-autostart runs it, one per session)
 
-Thunar: right-click → Tags → Add tag… / Remove tag… / Manage tags….
+Thunar: right-click → Tags → Add tag… / Remove tag… / Manage tags… / Go to original location.
 Each tag is a folder ~/Tags/<name> of links to what has the tag, shown in Thunar's side pane as
 a bookmark, "🔴 Taxes". Click it to see everything tagged Taxes. In there, deleting a link takes
 the tag off (the file stays); a link made into it (Ctrl+Shift+drag) adds the tag. Renaming the
@@ -768,6 +769,42 @@ def cmd_watch(_args):
     GLib.MainLoop().run()
 
 
+def cmd_goto(args):
+    """A folder opened from a tag shows ~/Tags/<tag>/<link>/… — Thunar keeps a link's path.
+    Go to the real one, in the same window: Thunar has no call for that, so this types it into
+    the location bar (Ctrl+L) of the Thunar window you right-clicked in."""
+    if len(args) != 1:
+        die("tux-tag goto PATH")
+    p = os.path.abspath(uri_path(args[0]) if args[0].startswith("file://") else args[0])
+    real = os.path.realpath(p)
+    if not os.path.exists(real):
+        die(f"The original of {os.path.basename(p)} is not there any more")
+    folder = real if os.path.isdir(real) else os.path.dirname(real)
+    here = p if os.path.isdir(real) else os.path.dirname(p)
+    if os.path.normpath(here) == folder:
+        notify("Already there", f"{tilde(folder)} is the original location")
+        return
+    xdo = shutil.which("xdotool")
+    if xdo and os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        import time
+        time.sleep(0.15)  # the menu closes, the window gets the keyboard back
+        cls = subprocess.run([xdo, "getactivewindow", "getwindowclassname"],
+                             capture_output=True, text=True).stdout.strip()
+        if cls.lower() == "thunar":
+            run = lambda *a: subprocess.run([xdo, *a], check=False)
+            run("key", "--clearmodifiers", "ctrl+l")
+            time.sleep(0.1)
+            run("key", "--clearmodifiers", "ctrl+a")
+            run("type", "--clearmodifiers", "--delay", "2", folder.rstrip("/") + "/")
+            time.sleep(0.35)
+            run("key", "--clearmodifiers", "Delete")  # what the entry completed by itself: not wanted
+            run("key", "--clearmodifiers", "Return")
+            return
+    # Wayland, no xdotool, or not called from Thunar: a window at the real place.
+    subprocess.Popen(["thunar", folder] if shutil.which("thunar") else ["xdg-open", folder],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def lock_single():
     os.makedirs(STATE, exist_ok=True)
     fd = os.open(os.path.join(STATE, "tags-watch.lock"), os.O_CREAT | os.O_RDWR, 0o600)
@@ -789,6 +826,8 @@ def main():
         return
     if args[0] == "watch":
         return cmd_watch(args[1:])
+    if args[0] == "goto":
+        return cmd_goto(args[1:])
     fn = COMMANDS.get(args[0]) or die(f"tux-tag: unknown command {args[0]} (tux-tag --help)")
     fd = lock()
     try:

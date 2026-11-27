@@ -316,6 +316,9 @@ one that still holds a terminal or Thunar window closes with that window.
   - Files carry their tags themselves (`user.xdg.tags`, the one KDE's Dolphin uses), so a tagged
     file that is moved or renamed is found again. FAT/exFAT drives cannot hold them: tagging works
     there, but a file moved on such a drive drops out of the tag.
+  - A folder opened from a tag shows its path under `~/Tags` (Thunar keeps a link's path).
+    **Go to original location** takes the window to where it really is: right-click it, or empty
+    space inside it (X11; on Wayland it opens a new window there).
   - `tux-tag --help` for the same from a terminal.
 - **Open With → Glow** (Markdown files): reads the file in the terminal, rendered; `q` closes it.
 
