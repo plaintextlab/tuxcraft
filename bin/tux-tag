@@ -1,0 +1,805 @@
+#!/usr/bin/env python3
+"""tux-tag — tags for files and folders, named by you, like Finder's tags.
+
+  tux-tag add [-t TAG] FILE…   tag files and folders (no -t: pick a tag or type a new name)
+  tux-tag remove [-t TAG] FILE… take a tag off them (no -t: pick one of the tags they have)
+  tux-tag manage               rename a tag, change its colour, delete it
+  tux-tag rename OLD NEW       rename a tag
+  tux-tag color TAG COLOUR     red, orange, yellow, green, blue, purple or grey
+  tux-tag delete TAG           delete a tag; the files themselves stay
+  tux-tag list [TAG]           the tags, or what has one tag
+  tux-tag fix                  catch up with changes, find tagged files that were moved
+  tux-tag watch                keep everything in step (tux-autostart runs it, one per session)
+
+Thunar: right-click → Tags → Add tag… / Remove tag… / Manage tags….
+Each tag is a folder ~/Tags/<name> of links to what has the tag, shown in Thunar's side pane as
+a bookmark, "🔴 Taxes". Click it to see everything tagged Taxes. In there, deleting a link takes
+the tag off (the file stays); a link made into it (Ctrl+Shift+drag) adds the tag. Renaming the
+bookmark (right-click it → Rename) or the folder renames the tag. Tagged files get the tag's
+colour as their background in Thunar.
+
+Each file also carries its tags itself (extended attributes user.xdg.tags, the ones KDE uses,
+and user.tuxcraft.tag-ids), so a tagged file that is moved or renamed is found again.
+"""
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import uuid
+
+HOME = os.path.expanduser("~")
+TAGS_DIR = os.path.join(HOME, "Tags")
+CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "tuxcraft")
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local/state"), "tuxcraft")
+REGISTRY = os.path.join(CONFIG, "tags.tsv")          # id <TAB> name <TAB> colour <TAB> hidden
+SEEN = os.path.join(STATE, "tags-seen.json")         # {id: [targets]}: what each folder linked last time
+BOOKMARKS = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "gtk-3.0/bookmarks")
+
+X_NAMES = "user.xdg.tags"              # comma-separated names: the freedesktop / KDE convention
+X_IDS = "user.tuxcraft.tag-ids"        # comma-separated ids: survive renaming a tag
+X_FOLDER = "user.tuxcraft.tag-id"      # on a tag folder: which tag it is
+HL_BG = "metadata::thunar-highlight-color-background"
+HL_FG = "metadata::thunar-highlight-color-foreground"
+
+# name, background, dot shown in the side pane
+COLOURS = [
+    ("red", "#c0392b", "🔴"), ("orange", "#d35400", "🟠"), ("yellow", "#f1c40f", "🟡"),
+    ("green", "#27ae60", "🟢"), ("blue", "#2e86de", "🔵"), ("purple", "#8e44ad", "🟣"),
+    ("grey", "#7f8c8d", "⚫"),
+]
+COLOUR = {c[0]: c for c in COLOURS}
+DOTS = tuple(c[2] for c in COLOURS)
+OUR_BGS = {c[1] for c in COLOURS}
+SKIP_DIRS = {"node_modules", "__pycache__", "lost+found"}
+
+
+# --- small helpers -------------------------------------------------------------------------
+
+def tilde(p):
+    return "~" + p[len(HOME):] if p == HOME or p.startswith(HOME + "/") else p
+
+
+def gui():
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) and not sys.stdout.isatty()
+
+
+def notify(title, body="", urgent=False):
+    if gui() and shutil.which("notify-send"):
+        subprocess.run(["notify-send", "-a", "tags", "-i", "tag", *(["-u", "critical"] if urgent else []),
+                        title, body], check=False)
+    else:
+        print(f"{title}: {body}" if body else title, file=sys.stderr if urgent else sys.stdout)
+
+
+def die(msg):
+    notify("Tags", msg, urgent=True)
+    sys.exit(1)
+
+
+def lock():
+    os.makedirs(STATE, exist_ok=True)
+    fd = os.open(os.path.join(STATE, "tags.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def getx(path, attr):
+    try:
+        v = os.getxattr(path, attr, follow_symlinks=False).decode(errors="replace")
+    except OSError:
+        return []
+    return [s.strip() for s in v.split(",") if s.strip()]
+
+
+def setx(path, attr, values):
+    try:
+        if values:
+            os.setxattr(path, attr, ",".join(values).encode(), follow_symlinks=False)
+        else:
+            os.removexattr(path, attr, follow_symlinks=False)
+    except OSError:
+        pass  # FAT/exFAT, read-only, not ours: the link in ~/Tags still holds the tag
+
+
+_gio = None
+def gio():
+    global _gio
+    if _gio is None:
+        try:
+            import gi
+            gi.require_version("Gio", "2.0")
+            from gi.repository import Gio
+            _gio = Gio
+        except (ImportError, ValueError):
+            _gio = False
+    return _gio
+
+
+def highlight(path, bg):
+    """Thunar's file highlight (gvfs metadata). Only replaces / clears one of our own colours."""
+    Gio = gio()
+    if not Gio:
+        return
+    f = Gio.File.new_for_path(path)
+    try:
+        cur = f.query_info(HL_BG, Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None).get_attribute_string(HL_BG)
+    except Exception:
+        return
+    if cur and cur not in OUR_BGS:
+        return  # you chose this one in Properties → Highlight
+    try:
+        if bg:
+            r, g, b = (int(bg[i:i + 2], 16) for i in (1, 3, 5))
+            fg = "#000000" if 0.299 * r + 0.587 * g + 0.114 * b > 150 else "#ffffff"
+            f.set_attribute_string(HL_BG, bg, Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None)
+            f.set_attribute_string(HL_FG, fg, Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None)
+        elif cur:
+            for a in (HL_BG, HL_FG):
+                f.set_attribute(a, Gio.FileAttributeType.INVALID, None, Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, None)
+    except Exception:
+        pass
+
+
+def file_uri(path):
+    Gio = gio()
+    if Gio:
+        return Gio.File.new_for_path(path).get_uri()
+    from urllib.parse import quote
+    return "file://" + quote(path)
+
+
+def uri_path(uri):
+    Gio = gio()
+    if Gio:
+        return Gio.File.new_for_uri(uri).get_path()
+    from urllib.parse import unquote, urlparse
+    return unquote(urlparse(uri).path)
+
+
+def bad_name(name):
+    if not name:
+        return "A tag needs a name"
+    if "/" in name or "," in name:
+        return "A tag name cannot hold / or ,"
+    if name.startswith(".") or name in (".", ".."):
+        return "A tag name cannot start with a dot"
+    if len(name) > 60:
+        return "That name is too long (60 characters at most)"
+    return None
+
+
+def clean_name(s):
+    s = re.sub(r"\s+", " ", s or "").strip()
+    for d in DOTS:  # a dot left in front from the side pane label
+        if s.startswith(d):
+            s = s[len(d):].strip()
+    return s
+
+
+# --- the tags ------------------------------------------------------------------------------
+
+class Tag:
+    def __init__(self, id, name, colour, hidden=False):
+        self.id, self.name, self.colour, self.hidden = id, name, colour, hidden
+
+    @property
+    def dir(self):
+        return os.path.join(TAGS_DIR, self.name)
+
+    @property
+    def dot(self):
+        return COLOUR.get(self.colour, COLOURS[-1])[2]
+
+    @property
+    def bg(self):
+        return COLOUR.get(self.colour, COLOURS[-1])[1]
+
+    @property
+    def label(self):
+        return f"{self.dot} {self.name}"
+
+
+class Tags:
+    def __init__(self):
+        self.tags = []
+        try:
+            with open(REGISTRY) as fh:
+                for line in fh:
+                    p = line.rstrip("\n").split("\t")
+                    if len(p) >= 3 and p[0] and p[1]:
+                        self.tags.append(Tag(p[0], p[1], p[2], len(p) > 3 and p[3] == "1"))
+        except FileNotFoundError:
+            pass
+        try:
+            with open(SEEN) as fh:
+                self.seen = {k: set(v) for k, v in json.load(fh).items()}
+        except (OSError, ValueError):
+            self.seen = {}
+
+    def save(self):
+        os.makedirs(CONFIG, exist_ok=True)
+        tmp = REGISTRY + ".tmp"
+        with open(tmp, "w") as fh:
+            fh.write("".join(f"{t.id}\t{t.name}\t{t.colour}\t{int(t.hidden)}\n" for t in self.tags))
+        os.replace(tmp, REGISTRY)
+        os.makedirs(STATE, exist_ok=True)
+        tmp = SEEN + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({t.id: sorted(self.seen.get(t.id, ())) for t in self.tags}, fh)
+        os.replace(tmp, SEEN)
+
+    def by_name(self, name):
+        n = name.casefold()
+        return next((t for t in self.tags if t.name.casefold() == n), None)
+
+    def by_id(self, id):
+        return next((t for t in self.tags if t.id == id), None)
+
+    def new(self, name, colour=None):
+        err = bad_name(name)
+        if err:
+            die(err)
+        if self.by_name(name):
+            return self.by_name(name)
+        if not colour:
+            used = [t.colour for t in self.tags]
+            colour = min((c[0] for c in COLOURS), key=lambda c: (used.count(c), [x[0] for x in COLOURS].index(c)))
+        t = Tag(uuid.uuid4().hex[:12], name, colour)
+        self.tags.append(t)
+        os.makedirs(t.dir, exist_ok=True)
+        setx(t.dir, X_FOLDER, [t.id])
+        self.seen[t.id] = set()
+        return t
+
+    # links: ~/Tags/<name>/<link> → target
+    def links(self, t):
+        out = {}
+        try:
+            entries = list(os.scandir(t.dir))
+        except OSError:
+            return out
+        for e in entries:
+            if e.is_symlink():
+                tgt = os.readlink(e.path)
+                out[e.path] = os.path.normpath(os.path.join(t.dir, tgt))
+            elif not e.name.startswith("."):
+                out[e.path] = e.path  # a real file put in the folder: it has the tag where it is
+        return out
+
+    def targets(self, t):
+        return set(self.links(t).values())
+
+    def tags_of(self, path):
+        return [t for t in self.tags if path in self.targets(t)]
+
+    def mirror(self, path):
+        """Write a file's tags onto the file itself, and its colour."""
+        if not os.path.lexists(path):
+            return
+        mine = self.tags_of(path)
+        ids = [i for i in getx(path, X_IDS) if self.by_id(i) and self.by_id(i) in mine]
+        ids += [t.id for t in mine if t.id not in ids]
+        setx(path, X_IDS, ids)
+        setx(path, X_NAMES, [self.by_id(i).name for i in ids])
+        highlight(path, self.by_id(ids[-1]).bg if ids else None)
+
+    def link(self, t, path):
+        if path in self.targets(t):
+            return False
+        os.makedirs(t.dir, exist_ok=True)
+        name = os.path.basename(path.rstrip("/")) or "root"
+        base, ext = (name, "") if os.path.isdir(path) else os.path.splitext(name)
+        dst, n = os.path.join(t.dir, name), 2
+        while os.path.lexists(dst):
+            dst, n = os.path.join(t.dir, f"{base} ({n}){ext}"), n + 1
+        os.symlink(path, dst)
+        self.seen.setdefault(t.id, set()).add(path)
+        return True
+
+    def tag(self, t, path):
+        changed = self.link(t, path)
+        t.hidden = False
+        self.mirror(path)
+        return changed
+
+    def untag(self, t, path):
+        changed = False
+        for ln, tgt in self.links(t).items():
+            if tgt == path and os.path.islink(ln):
+                os.unlink(ln)
+                changed = True
+        self.seen.get(t.id, set()).discard(path)
+        self.mirror(path)
+        return changed
+
+    def rename(self, t, new):
+        new = clean_name(new)
+        err = bad_name(new)
+        if err:
+            die(err)
+        other = self.by_name(new)
+        if other and other is not t:
+            die(f"There is a tag “{other.name}” already")
+        if new == t.name:
+            return
+        old_dir = t.dir
+        t.name = new
+        if os.path.isdir(old_dir) and old_dir != t.dir:
+            if os.path.lexists(t.dir):  # only the case changed on a case-insensitive drive, or a stray folder
+                if old_dir.casefold() != t.dir.casefold():
+                    die(f"{tilde(t.dir)} is there already")
+            os.rename(old_dir, t.dir)
+        else:
+            os.makedirs(t.dir, exist_ok=True)
+        setx(t.dir, X_FOLDER, [t.id])
+        for p in self.targets(t):
+            self.mirror(p)
+
+    def delete(self, t):
+        targets = self.targets(t)
+        for ln in self.links(t):
+            if os.path.islink(ln):
+                os.unlink(ln)
+        self.tags.remove(t)
+        self.seen.pop(t.id, None)
+        for p in targets:
+            self.mirror(p)
+        try:
+            os.rmdir(t.dir)
+        except OSError:
+            pass  # real files were put in there: they stay, and so does the folder
+
+    # --- catching up with what happened in Thunar -------------------------------------------
+
+    def sync(self):
+        """Folders, bookmarks and links in ~/Tags → the tags. Returns the number of broken links."""
+        os.makedirs(TAGS_DIR, exist_ok=True)
+        # 1. folders: renamed in Thunar (same id, other name), new ones, deleted ones
+        dirs = {}
+        for e in os.scandir(TAGS_DIR):
+            if e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                ids = getx(e.path, X_FOLDER)
+                dirs[e.name] = ids[0] if ids else None
+        by_id = {}
+        for name, id in dirs.items():
+            t = self.by_id(id) if id else None
+            if t and t.id not in by_id:
+                by_id[t.id] = name
+        for t in list(self.tags):
+            if t.id in by_id:
+                if by_id[t.id] != t.name:            # folder renamed: rename the tag
+                    t.name = by_id[t.id]
+                    for p in self.targets(t):
+                        self.mirror(p)
+            elif t.name in dirs and dirs[t.name] is None:
+                setx(t.dir, X_FOLDER, [t.id])         # folder lost its mark (copied back …)
+                by_id[t.id] = t.name
+            else:                                    # folder deleted: the tag goes with it
+                gone = self.seen.pop(t.id, set())
+                self.tags.remove(t)
+                for p in gone:
+                    self.mirror(p)
+        for name, id in dirs.items():                # a new folder made in ~/Tags is a new tag
+            if not any(t.name == name for t in self.tags) and not bad_name(name):
+                t = self.new(name)
+        # 2. side pane: a renamed bookmark renames the tag; a removed one hides it
+        self.sync_bookmarks()
+        # 3. links added or deleted in the folders
+        broken = 0
+        for t in self.tags:
+            now = self.links(t)
+            targets = set(now.values())
+            before = self.seen.get(t.id, set())
+            for p in before - targets:               # link deleted: tag taken off
+                self.mirror(p)
+            for ln, p in now.items():
+                if not os.path.lexists(p):
+                    broken += 1
+                elif p not in before:                 # link made: tag put on
+                    self.mirror(p)
+            self.seen[t.id] = targets
+        self.write_bookmarks()
+        return broken
+
+    def read_bookmarks(self):
+        try:
+            with open(BOOKMARKS) as fh:
+                return fh.read().splitlines()
+        except FileNotFoundError:
+            return []
+
+    def bookmark_for(self, line):
+        uri, _, label = line.partition(" ")
+        path = uri_path(uri) if uri.startswith("file://") else None
+        if path and os.path.dirname(path) == TAGS_DIR:
+            return path, label
+        return None, None
+
+    def sync_bookmarks(self):
+        lines = self.read_bookmarks()
+        listed = {}
+        for line in lines:
+            path, label = self.bookmark_for(line)
+            if path:
+                listed[os.path.basename(path)] = label
+        last = self._last_written()
+        if last is None:
+            return  # never written yet: nothing you could have changed
+        mine = {os.path.basename(p): l for p, l in (self.bookmark_for(x) for x in last) if p}
+        for t in list(self.tags):
+            if t.hidden:
+                continue
+            if t.name not in listed:
+                if t.name in mine:
+                    t.hidden = True                   # you removed it from the side pane
+                continue
+            label = clean_name(listed[t.name])
+            if label and label != t.name and listed[t.name] != mine.get(t.name):
+                if not bad_name(label) and not self.by_name(label):
+                    self.rename(t, label)
+
+    def _last_written(self):
+        try:
+            with open(os.path.join(STATE, "tags-bookmarks")) as fh:
+                return fh.read().splitlines()
+        except FileNotFoundError:
+            return None
+
+    def write_bookmarks(self):
+        lines = self.read_bookmarks()
+        keep = [x for x in lines if not self.bookmark_for(x)[0]]
+        ours = [f"{file_uri(t.dir)} {t.label}" for t in self.tags if not t.hidden]
+        new = keep + ours
+        if new != lines:
+            os.makedirs(os.path.dirname(BOOKMARKS), exist_ok=True)
+            tmp = BOOKMARKS + ".tux-tag"
+            with open(tmp, "w") as fh:
+                fh.write("".join(x + "\n" for x in new))
+            os.replace(tmp, BOOKMARKS)
+        os.makedirs(STATE, exist_ok=True)
+        with open(os.path.join(STATE, "tags-bookmarks"), "w") as fh:
+            fh.write("".join(x + "\n" for x in ours))
+
+    def scan(self):
+        """Find tagged files that moved (their links broke), and tagged copies."""
+        found = {}  # id → [paths]
+        # Your home folder; a drive only when a tagged file that was on it went missing.
+        tops = [HOME]
+        for t in self.tags:
+            for p in self.targets(t):
+                if os.path.lexists(p) or p.startswith(HOME + "/"):
+                    continue
+                d = os.path.dirname(p)
+                while d != "/" and not os.path.isdir(d):
+                    d = os.path.dirname(d)
+                while d != "/" and not os.path.ismount(d):
+                    d = os.path.dirname(d)
+                if d != "/" and d not in tops:
+                    tops.append(d)
+
+        def walk(d):
+            try:
+                it = list(os.scandir(d))
+            except OSError:
+                return
+            for e in it:
+                if e.name.startswith(".") or e.path == TAGS_DIR:
+                    continue
+                for i in getx(e.path, X_IDS):
+                    found.setdefault(i, []).append(e.path)
+                if e.is_dir(follow_symlinks=False) and e.name not in SKIP_DIRS:
+                    walk(e.path)
+        for top in tops:
+            walk(top)
+        fixed = 0
+        for t in self.tags:
+            links = self.links(t)
+            have = set(links.values())
+            broken = {ln: p for ln, p in links.items() if not os.path.lexists(p)}
+            for p in found.get(t.id, []):
+                if p in have:
+                    continue
+                # a moved file: its old link has the same name; otherwise a tagged copy
+                same = [ln for ln, q in broken.items() if os.path.basename(q) == os.path.basename(p)]
+                old = same[0] if same else (next(iter(broken)) if len(broken) == 1 else None)
+                if old:
+                    os.unlink(old)
+                    broken.pop(old)
+                    self.seen.get(t.id, set()).discard(links[old])
+                self.link(t, p)
+                self.mirror(p)
+                have.add(p)
+                fixed += 1
+            for ln, p in broken.items():
+                # gone for good — unless it lives on a drive that is not plugged in now
+                if p.startswith(HOME + "/") or os.path.isdir(os.path.dirname(p)):
+                    os.unlink(ln)
+                    self.seen.get(t.id, set()).discard(p)
+        return fixed
+
+
+# --- the picker ----------------------------------------------------------------------------
+
+def pick(prompt, rows, prefill=None):
+    """→ ('row', index) | ('text', typed) | None. rofi / fuzzel / dmenu / fzf through tux-menu."""
+    extra = []
+    if not os.environ.get("WAYLAND_DISPLAY") and os.environ.get("DISPLAY") and shutil.which("rofi"):
+        extra = ["-no-show-icons"] + (["-filter", prefill] if prefill else [])
+    cmd = ["tux-menu", prompt] + (["--"] + extra if extra else [])
+    try:
+        r = subprocess.run(cmd, input="".join(x + "\n" for x in rows), capture_output=True, text=True)
+    except FileNotFoundError:
+        die("tux-menu is missing")
+    out = r.stdout.strip("\n")
+    if r.returncode != 0 or not out.strip():
+        return None
+    if out in rows:
+        return ("row", rows.index(out))
+    return ("text", out.strip())
+
+
+NEW = "＋ New tag…"
+
+
+def ask_name(prompt, prefill=None):
+    r = pick(prompt, [], prefill)
+    return clean_name(r[1]) if r else None
+
+
+def choose_tag(db, prompt, allow_new=True, among=None):
+    tags = among if among is not None else [t for t in db.tags]
+    rows = [t.label for t in tags] + ([NEW] if allow_new else [])
+    if allow_new and not tags:
+        name = ask_name("Name of the new tag")
+        return db.new(name) if name else None
+    r = pick(prompt, rows)
+    if not r:
+        return None
+    if r[0] == "row":
+        if allow_new and r[1] == len(tags):
+            name = ask_name("Name of the new tag")
+            return db.new(name) if name else None
+        return tags[r[1]]
+    if not allow_new:
+        return next((t for t in tags if t.name.casefold() == clean_name(r[1]).casefold()), None)
+    return db.by_name(clean_name(r[1])) or db.new(clean_name(r[1]))
+
+
+def resolve(paths):
+    out = []
+    for p in paths:
+        if p.startswith("file://"):
+            p = uri_path(p)
+        p = os.path.abspath(p)
+        if os.path.islink(p) and os.path.dirname(os.path.dirname(p)) == TAGS_DIR:
+            p = os.path.normpath(os.path.join(os.path.dirname(p), os.readlink(p)))  # a link in ~/Tags
+        if not os.path.lexists(p):
+            die(f"{tilde(p)} is not there")
+        out.append(p)
+    return out
+
+
+def items(n):
+    return "1 item" if n == 1 else f"{n} items"
+
+
+# --- commands ------------------------------------------------------------------------------
+
+def opt_tag(args):
+    if len(args) >= 2 and args[0] in ("-t", "--tag"):
+        return args[1], args[2:]
+    return None, args
+
+
+def cmd_add(db, args):
+    name, files = opt_tag(args)
+    if not files:
+        die("Nothing to tag")
+    paths = resolve(files)
+    t = (db.by_name(clean_name(name)) or db.new(clean_name(name))) if name else \
+        choose_tag(db, f"Tag {items(len(paths)) if len(paths) > 1 else os.path.basename(paths[0])} as")
+    if not t:
+        return
+    for p in paths:
+        db.tag(t, p)
+    db.write_bookmarks()
+    notify(f"Tagged {t.label}", "\n".join(tilde(p) for p in paths[:5]) + (f"\n… {len(paths) - 5} more" if len(paths) > 5 else ""))
+
+
+def cmd_remove(db, args):
+    name, files = opt_tag(args)
+    if not files:
+        die("Nothing to untag")
+    paths = resolve(files)
+    have = [t for t in db.tags if any(p in db.targets(t) for p in paths)]
+    if not have:
+        notify("No tags", "None of these has a tag")
+        return
+    if name:
+        t = db.by_name(clean_name(name))
+        if not t:
+            die(f"There is no tag “{name}”")
+        chosen = [t]
+    else:
+        rows = [t.label for t in have] + (["All their tags"] if len(have) > 1 else [])
+        r = pick("Take off the tag", rows)
+        if not r or r[0] != "row":
+            return
+        chosen = have if r[1] == len(have) else [have[r[1]]]
+    for t in chosen:
+        for p in paths:
+            db.untag(t, p)
+    notify("Tag taken off", ", ".join(t.label for t in chosen) + f" — {items(len(paths))}")
+
+
+def cmd_manage(db, _args):
+    if not db.tags:
+        notify("No tags yet", "Right-click files or folders → Tags → Add tag…")
+        return
+    rows = [f"{t.label}   ({items(len(db.targets(t)))})" for t in db.tags]
+    r = pick("Tag", rows)
+    if not r or r[0] != "row":
+        return
+    t = db.tags[r[1]]
+    acts = ["Rename…", "Change colour…", "Open", "Show in the side pane" if t.hidden else None,
+            "Delete the tag (the files stay)"]
+    acts = [a for a in acts if a]
+    r = pick(t.label, acts)
+    if not r or r[0] != "row":
+        return
+    a = acts[r[1]]
+    if a == "Rename…":
+        new = ask_name(f"New name for {t.name}", prefill=t.name)
+        if new and new != t.name:
+            old = t.name
+            db.rename(t, new)
+            notify("Tag renamed", f"{old} → {t.label}")
+    elif a == "Change colour…":
+        cr = pick(f"Colour of {t.name}", [f"{c[2]} {c[0].capitalize()}" for c in COLOURS])
+        if cr and cr[0] == "row":
+            t.colour = COLOURS[cr[1]][0]
+            for p in db.targets(t):
+                db.mirror(p)
+    elif a == "Open":
+        subprocess.Popen(["thunar", t.dir] if shutil.which("thunar") else ["xdg-open", t.dir],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    elif a.startswith("Show"):
+        t.hidden = False
+    else:
+        n = len(db.targets(t))
+        cr = pick(f"Delete {t.name}?", ["No, keep it", f"Yes, delete the tag ({items(n)} keep their files)"])
+        if cr and cr == ("row", 1):
+            db.delete(t)
+            notify("Tag deleted", f"{t.name} — the {items(n)} stay where they are")
+
+
+def cmd_rename(db, args):
+    if len(args) != 2:
+        die("tux-tag rename OLD NEW")
+    t = db.by_name(clean_name(args[0])) or die(f"There is no tag “{args[0]}”")
+    db.rename(t, args[1])
+
+
+def cmd_color(db, args):
+    if len(args) != 2 or args[1].lower() not in COLOUR:
+        die("tux-tag color TAG " + "|".join(COLOUR))
+    t = db.by_name(clean_name(args[0])) or die(f"There is no tag “{args[0]}”")
+    t.colour = args[1].lower()
+    for p in db.targets(t):
+        db.mirror(p)
+
+
+def cmd_delete(db, args):
+    if len(args) != 1:
+        die("tux-tag delete TAG")
+    t = db.by_name(clean_name(args[0])) or die(f"There is no tag “{args[0]}”")
+    db.delete(t)
+
+
+def cmd_list(db, args):
+    if args:
+        t = db.by_name(clean_name(" ".join(args))) or die(f"There is no tag “{' '.join(args)}”")
+        for p in sorted(db.targets(t)):
+            print(p + ("" if os.path.lexists(p) else "   (missing)"))
+        return
+    for t in db.tags:
+        print(f"{t.label}\t{t.colour}\t{len(db.targets(t))}" + ("\thidden" if t.hidden else ""))
+
+
+def cmd_fix(db, _args):
+    db.sync()
+    n = db.scan()
+    db.write_bookmarks()
+    if n:
+        print(f"found {items(n)} again")
+
+
+def cmd_watch(_args):
+    """Follow ~/Tags and the side pane bookmarks; catch up a moment after each change."""
+    Gio = gio()
+    if not Gio:
+        die("tux-tag watch needs python3-gobject")
+    from gi.repository import GLib
+    me = lock_single()
+    if me is None:
+        return
+    monitors, pending = [], [None]
+
+    def run(scan=False):
+        pending[0] = None
+        fd = lock()
+        try:
+            db = Tags()
+            broken = db.sync()
+            if scan or broken:
+                db.scan()
+                db.write_bookmarks()
+            db.save()
+        except Exception as e:  # keep watching whatever one change did
+            print(f"tux-tag: {e}", file=sys.stderr)
+        finally:
+            os.close(fd)
+        rewatch()
+        return False
+
+    def changed(*_):
+        if pending[0]:
+            GLib.source_remove(pending[0])
+        pending[0] = GLib.timeout_add(700, run)
+
+    def rewatch():
+        for m in monitors:
+            m.cancel()
+        monitors.clear()
+        paths = [TAGS_DIR] + [e.path for e in os.scandir(TAGS_DIR) if e.is_dir(follow_symlinks=False)]
+        for p in paths:
+            m = Gio.File.new_for_path(p).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, None)
+            m.connect("changed", changed)
+            monitors.append(m)
+        m = Gio.File.new_for_path(BOOKMARKS).monitor_file(Gio.FileMonitorFlags.NONE, None)
+        m.connect("changed", changed)
+        monitors.append(m)
+
+    os.makedirs(TAGS_DIR, exist_ok=True)
+    run(scan=True)   # at login: also find what was moved or restored from the bin meanwhile
+    GLib.MainLoop().run()
+
+
+def lock_single():
+    os.makedirs(STATE, exist_ok=True)
+    fd = os.open(os.path.join(STATE, "tags-watch.lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return None  # one watcher per session
+    return fd
+
+
+COMMANDS = {"add": cmd_add, "remove": cmd_remove, "manage": cmd_manage, "rename": cmd_rename,
+            "color": cmd_color, "colour": cmd_color, "delete": cmd_delete, "list": cmd_list, "fix": cmd_fix}
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    if args[0] == "watch":
+        return cmd_watch(args[1:])
+    fn = COMMANDS.get(args[0]) or die(f"tux-tag: unknown command {args[0]} (tux-tag --help)")
+    fd = lock()
+    try:
+        db = Tags()
+        db.sync()
+        fn(db, args[1:])
+        db.sync()
+        db.save()
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    main()

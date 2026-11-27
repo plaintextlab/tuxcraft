@@ -49,6 +49,8 @@ rm -f "${XDG_RUNTIME_DIR:-/tmp}/tux-dim" "${XDG_RUNTIME_DIR:-/tmp}/tux-nightligh
 [[ -s /run/tux-gamevm.notice ]] && { sleep 3; notify-send -u critical "Gaming VM" "$(cat /run/tux-gamevm.notice)"; } &
 # Volume popup for changes made anywhere (bar scroll, mixers), not only the volume keys.
 pgrep -u "$UID" -f 'tux-osd watch' >/dev/null || { tux-osd watch & }
+# Tags (Thunar → Tags): ~/Tags and the side pane follow renames, links and moved files. One per session.
+command -v tux-tag >/dev/null && { tux-tag watch & }
 # Xfce installed (tux-xfce): its look follows the theme, and each session lists its own apps.
 command -v tux-xfce >/dev/null && command -v xfce4-session >/dev/null && tux-xfce apply
 if [[ $session == i3 || $session == sway ]]; then   # these follow i3/sway windows and workspaces (IPC)

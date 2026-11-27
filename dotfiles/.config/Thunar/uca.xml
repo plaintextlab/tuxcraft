@@ -67,4 +67,52 @@
 	<patterns>*.jpg;*.jpeg;*.png;*.webp;*.JPG;*.JPEG;*.PNG;*.WEBP</patterns>
 	<image-files/>
 </action>
+<action>
+	<icon>tag</icon>
+	<name>Add tag…</name>
+	<submenu>Tags</submenu>
+	<unique-id>1792921976998965-7</unique-id>
+	<command>tux-tag add %F</command>
+	<description>Tag these with one of your tags, or type a new tag name</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>edit-clear</icon>
+	<name>Remove tag…</name>
+	<submenu>Tags</submenu>
+	<unique-id>1792921976998965-8</unique-id>
+	<command>tux-tag remove %F</command>
+	<description>Take a tag off these; the files stay</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>preferences-other</icon>
+	<name>Manage tags…</name>
+	<submenu>Tags</submenu>
+	<unique-id>1792921976998965-9</unique-id>
+	<command>tux-tag manage</command>
+	<description>Rename a tag, change its colour or delete it</description>
+	<range></range>
+	<patterns>*</patterns>
+	<directories/>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
 </actions>

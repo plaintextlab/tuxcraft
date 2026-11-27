@@ -305,6 +305,18 @@ one that still holds a terminal or Thunar window closes with that window.
   the status bar (nothing selected), a usage bar in Properties (right-click a drive), and used/free in
   the side-pane tooltip.
 - **Set as wallpaper** (one image).
+- **Tags** (any files and folders), like Finder's tags, named by you ("Taxes", "Current projects"):
+  - **Add tag…** picks one of your tags, or type a new name to make one. **Remove tag…**, and
+    **Manage tags…** to rename one, change its colour or delete it (the files stay).
+  - Each tag is in the side pane under Places, "🔴 Taxes": click it to see everything tagged Taxes,
+    wherever it is. Tagged files get the tag's colour as their background.
+  - It is a folder, `~/Tags/Taxes`, of links. Deleting a link there takes the tag off; a link made
+    into it (Ctrl+Shift+drag) adds it. Renaming the bookmark (right-click → Rename) or the folder
+    renames the tag; a new folder in `~/Tags` is a new tag.
+  - Files carry their tags themselves (`user.xdg.tags`, the one KDE's Dolphin uses), so a tagged
+    file that is moved or renamed is found again. FAT/exFAT drives cannot hold them: tagging works
+    there, but a file moved on such a drive drops out of the tag.
+  - `tux-tag --help` for the same from a terminal.
 - **Open With → Glow** (Markdown files): reads the file in the terminal, rendered; `q` closes it.
 
 **TUI apps:** yazi (files), btop, lazygit, wifitui (Wi-Fi; nmtui for wired/VPN), bluetui, wiremix/pulsemixer, ncdu, micro + neovim,
